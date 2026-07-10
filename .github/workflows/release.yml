@@ -1,0 +1,60 @@
+name: Release standalone binaries
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: linux-x64
+          - runner: macos-13
+            target: darwin-x64
+          - runner: macos-14
+            target: darwin-arm64
+          - runner: windows-latest
+            target: windows-x64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: oven-sh/setup-bun@v2
+      - run: pnpm install --frozen-lockfile
+      - run: bun scripts/build-standalone.js ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: conduit-${{ matrix.target }}
+          path: dist/release/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/release
+          merge-multiple: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: |
+          cp install.sh dist/release/install.sh
+          sed "s|__CONDUIT_REPOSITORY__|${{ github.repository }}|g" install.ps1 > dist/release/install.ps1
+          chmod +x dist/release/install.sh
+      - run: node scripts/write-checksums.mjs
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/release/*

@@ -1,0 +1,52 @@
+version: 1
+specsDir: specs
+stateDir: .conduit
+roles:
+  architect:
+    description: "Turns a story into an approved, implementation-ready specification."
+    runner: codex
+    mode: primary
+    skill:
+      source: file:.conduit/roles/architect.md
+  researcher:
+    description: "Investigates the repository and reports evidence without changing code."
+    runner: opencode
+    mode: subagent
+    readOnly: true
+    skill:
+      source: file:.conduit/roles/researcher.md
+  frontend:
+    description: "Implements approved user-interface work within its owned paths."
+    runner: opencode
+    mode: subagent
+    owns: [apps/web, packages/ui]
+    skill:
+      source: file:.conduit/roles/frontend.md
+  backend:
+    description: "Implements approved API, service, and data-contract work."
+    runner: opencode
+    mode: subagent
+    owns: [apps/api, packages/contracts]
+    skill:
+      source: file:.conduit/roles/backend.md
+  qa:
+    description: "Converts approved cases into tests and reports reproducible defects."
+    runner: opencode
+    mode: subagent
+    owns: [tests, e2e]
+    skill:
+      source: file:.conduit/roles/qa.md
+  documentation:
+    description: "Writes and verifies user, operator, and developer documentation."
+    runner: opencode
+    mode: subagent
+    owns: [docs, README.md]
+    skill:
+      source: file:.conduit/roles/documentation.md
+  reviewer:
+    description: "Independently checks the integrated change against the approved spec."
+    runner: codex
+    mode: primary
+    readOnly: true
+    skill:
+      source: file:.conduit/roles/reviewer.md
