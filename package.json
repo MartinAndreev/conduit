@@ -1,8 +1,9 @@
 {
   "name": "conduit-orchestrator",
-  "version": "0.2.20",
+  "version": "0.2.21",
   "packageManager": "pnpm@10.32.1",
   "description": "Spec-driven, local-first orchestration for coding agents.",
+  "license": "MIT",
   "files": [
     "dist",
     "skills",
@@ -36,9 +37,9 @@
   "devDependencies": {
     "@commitlint/cli": "^21.0.0",
     "@commitlint/config-conventional": "^21.0.0",
-    "@eslint/js": "^9.0.0",
-    "@hkdobrev/run-if-changed": "^0.6.0",
-    "eslint": "^9.0.0",
+    "@eslint/js": "^10.0.1",
+    "@hkdobrev/run-if-changed": "^0.9.0",
+    "eslint": "^10.7.0",
     "globals": "^17.0.0",
     "husky": "^9.0.0",
     "lint-staged": "^17.0.0",

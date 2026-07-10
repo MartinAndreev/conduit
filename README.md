@@ -33,11 +33,11 @@ install -m 755 conduit-linux-x64 ~/.local/bin/conduit
 Release assets also include installers:
 
 ```bash
-curl -fsSL https://github.com/<owner>/<repo>/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/MartinAndreev/conduit/releases/latest/download/install.sh | sh
 ```
 
 ```powershell
-irm https://github.com/<owner>/<repo>/releases/latest/download/install.ps1 | iex
+irm https://github.com/MartinAndreev/conduit/releases/latest/download/install.ps1 | iex
 ```
 
 ### Development package
@@ -199,6 +199,10 @@ Build a self-contained Linux binary with Bun:
 pnpm build:standalone -- linux-x64
 dist/release/conduit-linux-x64 --version
 ```
+
+## License
+
+MIT. See [LICENSE](LICENSE).
 
 Install that local binary onto your `PATH` with:
 
