@@ -211,7 +211,3 @@ pnpm install:local
 ```
 
 The release workflow builds Linux, macOS, and Windows binaries when a version tag is pushed.
-
-## License
-
-Choose and add a license before publishing the first public release.
