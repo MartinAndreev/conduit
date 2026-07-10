@@ -1,6 +1,6 @@
 {
   "name": "conduit-orchestrator",
-  "version": "0.2.21",
+  "version": "0.2.22",
   "packageManager": "pnpm@10.32.1",
   "description": "Spec-driven, local-first orchestration for coding agents.",
   "license": "MIT",
