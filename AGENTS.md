@@ -20,3 +20,7 @@ Only implement the approved task group named in your assignment. Do not begin a 
 ## Verification and handoff
 
 Run the checks named by the active task group. For runtime changes, also verify `pnpm start --help`, package build, and the appropriate standalone target. Report changed files, commands run, failures, and contract risks concisely. Do not commit; the architect reviews and commits accepted groups.
+
+## Review correction protocol
+
+If a group fails review once, the architect's next correction request must include concrete guidance: the violated contract or rule, affected file(s), the intended design, and the exact verification command or test to satisfy. Do not send a second vague retry. If it fails review again, stop further implementation retries and let the architect take over or explicitly narrow the remaining work.
