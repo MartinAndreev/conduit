@@ -1,18 +1,6 @@
-import type { CredentialStore } from "../types/credential-store.js";
+import type { CredentialStore } from "../interfaces/credential-store.js";
+import type { KeytarModule } from "../interfaces/keytar.js";
 import { VaultUnavailableError } from "../errors/credential-errors.js";
-
-interface KeytarModule {
-  getPassword(service: string, account: string): Promise<string | null>;
-  setPassword(
-    service: string,
-    account: string,
-    password: string,
-  ): Promise<void>;
-  deletePassword(service: string, account: string): Promise<boolean>;
-  findCredentials(
-    service: string,
-  ): Promise<Array<{ account: string; password: string }>>;
-}
 
 const SERVICE_NAME = "conduit-orchestrator";
 

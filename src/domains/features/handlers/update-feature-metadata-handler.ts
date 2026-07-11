@@ -1,9 +1,9 @@
-import type { CommandHandler } from "../../../system/bus/command-bus.js";
-import type { FeatureProvider } from "../types/feature-provider.js";
+import type { CommandHandler } from "@system/bus/index.js";
+import type { FeatureProvider } from "../interfaces/feature-provider.js";
 import type {
   UpdateFeatureMetadataCommand,
   UpdateFeatureMetadataResult,
-} from "../commands/update-feature-metadata.js";
+} from "../interfaces/commands/update-feature-metadata.js";
 
 export function createUpdateFeatureMetadataHandler(
   provider: FeatureProvider,
@@ -12,6 +12,6 @@ export function createUpdateFeatureMetadataHandler(
     await provider.updateMetadata(command.featureId, {
       lifecycle: command.lifecycle,
     });
-    return { success: true, data: { success: true } };
+    return { success: true, data: { updated: true } };
   };
 }

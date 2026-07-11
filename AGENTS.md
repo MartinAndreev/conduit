@@ -10,6 +10,8 @@ Only implement the approved task group named in your assignment. Do not begin a 
 
 - Use strict TypeScript and TSX. Keep types, enums, and interfaces out of implementation files except for narrow local inference.
 - Organize code by domain. Each domain owns `commands`, `queries`, `handlers`, `repositories`, `types`, `interfaces`, `enums`, and `errors` as needed; never add a global catch-all `src/types`, `src/interfaces`, or `src/enums` module.
+- Do not leave application behavior at the `src/` root. Configuration, features, runs, roles/skills, credentials, and refinement behavior must live in their owning `src/domains/<domain>/` subdirectories. `src/system` is infrastructure only; `src/tui` is presentation only.
+- Do not define interfaces, enums, or shared value types in `commands`, `queries`, `handlers`, `repositories`, or implementation files. Command/query message contracts belong in the owning domain's `interfaces/commands` or `interfaces/queries`; repository contracts belong in `interfaces`; value types belong in `types`; enums belong in `enums`; errors belong in `errors`.
 - Views in `src/tui/components`, `src/tui/sections`, and `src/tui/screens` render state and delegate actions. They do not read files, spawn processes, access secrets, or implement business rules.
 - State-changing work goes through a command and command handler. Read models go through a query and query handler. Do not bypass the bus from a screen.
 - Core services belong in `src/system`; pure non-business helpers belong in `src/helpers/<category>`.

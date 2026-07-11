@@ -1,11 +1,11 @@
 import { readFile, readdir, stat, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
+import type { FeatureProvider } from "../interfaces/feature-provider.js";
 import type {
-  FeatureProvider,
   FeatureReadModel,
   FeatureMetadata,
   FeatureLifecycle,
-} from "../types/feature-provider.js";
+} from "../types/feature.js";
 import { pathExists } from "../../../config.js";
 
 const METADATA_FILE = "metadata.yml";

@@ -1,4 +1,4 @@
-import type { CredentialStore } from "../types/credential-store.js";
+import type { CredentialStore } from "../interfaces/credential-store.js";
 
 export class InMemoryCredentialStore implements CredentialStore {
   private store = new Map<string, Map<string, string>>();

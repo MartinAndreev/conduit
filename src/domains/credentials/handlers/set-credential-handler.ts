@@ -1,9 +1,9 @@
 import type { CommandHandler } from "../../../system/bus/command-bus.js";
-import type { CredentialStore } from "../types/credential-store.js";
+import type { CredentialStore } from "../interfaces/credential-store.js";
 import type {
   SetCredentialCommand,
   SetCredentialResult,
-} from "../commands/set-credential.js";
+} from "../interfaces/commands/set-credential.js";
 
 export function createSetCredentialHandler(
   store: CredentialStore,

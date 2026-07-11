@@ -1,4 +1,4 @@
-import type { Command } from "../../../system/bus/command-bus.js";
+import type { Command } from "../../../../system/bus/command-bus.js";
 
 export interface DeleteCredentialCommand extends Command {
   readonly type: "deleteCredential";

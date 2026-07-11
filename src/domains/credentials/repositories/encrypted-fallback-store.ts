@@ -7,7 +7,8 @@ import {
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { CredentialStore } from "../types/credential-store.js";
+import type { CredentialStore } from "../interfaces/credential-store.js";
+import type { EncryptedPayload, VaultData } from "../types/encrypted-vault.js";
 import {
   CredentialStoreError,
   EncryptionError,
@@ -20,18 +21,6 @@ const ALGORITHM = "aes-256-gcm";
 const KEY_LENGTH = 32;
 const IV_LENGTH = 16;
 const SALT_LENGTH = 32;
-
-interface VaultData {
-  readonly version: number;
-  readonly salt: string;
-  readonly entries: Record<string, Record<string, string>>;
-}
-
-interface EncryptedPayload {
-  readonly iv: string;
-  readonly tag: string;
-  readonly data: string;
-}
 
 export class EncryptedFallbackStore implements CredentialStore {
   private vaultPath: string;

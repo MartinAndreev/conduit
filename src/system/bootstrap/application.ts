@@ -1,9 +1,9 @@
 import type { Config } from "../../domains/configuration/types/config.js";
 import type { ConfigurationRepository } from "../../domains/configuration/repositories/configuration-repository.js";
-import type { CredentialStore } from "../../domains/credentials/types/credential-store.js";
-import type { FeatureProvider } from "../../domains/features/types/feature-provider.js";
+import type { CredentialStore } from "../../domains/credentials/interfaces/credential-store.js";
+import type { FeatureProvider } from "../../domains/features/interfaces/feature-provider.js";
 import type { Feature } from "../../domains/features/types/feature.js";
-import type { PortraitRegistry } from "../../domains/roles/types/portrait.js";
+import type { PortraitRegistry } from "../../domains/roles/interfaces/portrait-registry.js";
 import type { Run } from "../../domains/runs/types/run.js";
 import { CommandBus } from "../bus/command-bus.js";
 import type { Command, CommandHandler } from "../bus/command-bus.js";

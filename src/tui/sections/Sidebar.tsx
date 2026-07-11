@@ -1,5 +1,6 @@
-import type { FeatureReadModel } from "../../domains/features/types/feature-provider.js";
-import type { Theme } from "../theme.js";
+import type { FeatureReadModel } from "@domains/features/types/feature.js";
+import { ConduitMark } from "@tui/components/ConduitMark.js";
+import type { Theme } from "@tui/theme.js";
 
 interface SidebarProps {
   features: readonly FeatureReadModel[];
@@ -43,6 +44,7 @@ export function Sidebar({
       borderColor={theme.text.muted}
     >
       <box flexDirection="column" padding={0}>
+        <ConduitMark theme={theme} />
         <text content=" Features" fg={theme.text.strong} />
         <text content="" />
         <text

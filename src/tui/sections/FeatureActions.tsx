@@ -1,23 +1,24 @@
-import type { FeatureReadModel } from "../../domains/features/types/feature-provider.js";
-import type { RolePortrait } from "../../domains/roles/types/portrait.js";
-import type { Theme } from "../theme.js";
+import type { FeatureReadModel } from "@domains/features/types/feature.js";
+import { AgentActivity } from "@tui/components/AgentActivity.js";
+import { AgentEventFeed } from "@tui/components/AgentEventFeed.js";
+import type { Theme } from "@tui/theme.js";
 
 interface FeatureActionsProps {
   feature: FeatureReadModel | undefined;
-  portraits: readonly RolePortrait[];
   theme: Theme;
   actionModalOpen: boolean;
   selectedAction: number;
+  tip: string;
 }
 
 const FEATURE_ACTIONS = ["View", "Refine", "Run", "Status"] as const;
 
 export function FeatureActions({
   feature,
-  portraits,
   theme,
   actionModalOpen,
   selectedAction,
+  tip,
 }: FeatureActionsProps) {
   if (!feature) {
     return (
@@ -29,10 +30,7 @@ export function FeatureActions({
           fg={theme.text.default}
         />
         <text content="" />
-        <text
-          content="Tip: Use / to search, arrow keys to navigate, Enter to select."
-          fg={theme.text.muted}
-        />
+        <text content={`Tip: ${tip}`} fg={theme.text.muted} />
       </box>
     );
   }
@@ -51,6 +49,16 @@ export function FeatureActions({
               : theme.status.error
         }
       />
+      <text content="" />
+      <text content="Activity" fg={theme.text.strong} />
+      <text content="Live runner events appear here." fg={theme.text.muted} />
+      <AgentActivity
+        role="architect"
+        runner="codex"
+        message="Inspecting the progress component"
+        mascotRole="architect"
+      />
+      <AgentEventFeed />
       <text content="" />
       {actionModalOpen ? (
         <box
@@ -75,16 +83,12 @@ export function FeatureActions({
         </box>
       ) : (
         <box flexDirection="column">
-          <text content=" Press Enter for actions" fg={theme.text.muted} />
+          <text
+            content="Press Enter to choose an action"
+            fg={theme.text.muted}
+          />
           <text content="" />
-          <text content=" Roles:" fg={theme.text.strong} />
-          {portraits.map((portrait) => (
-            <text
-              key={portrait.roleName}
-              content={`   ${portrait.fallbackGlyph} ${portrait.label}`}
-              fg={theme.text.default}
-            />
-          ))}
+          <text content={`Tip: ${tip}`} fg={theme.text.muted} />
         </box>
       )}
     </box>

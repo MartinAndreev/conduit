@@ -18,6 +18,7 @@ For every task group: approved spec → OpenCode implementation → architect re
 1. Architecture documents and agent rules.
 2. TypeScript, React/OpenTUI, theme, CQRS, and runner-event foundation.
 3. Global/project configuration, credential storage, Local Spec Kit provider, metadata, onboarding, and Home.
+   3.5. Domain-boundary correction: move existing root application behavior into its owning domains before beginning refinement work.
 4. Refinement draft, preview, architect activity, and feature-detail screens.
 5. Worker monitoring, review handoff, role portraits, CLI migration completion, and release-quality regression coverage.
 6. SQLite state persistence, migration from local JSON run state, and data-recovery tooling.

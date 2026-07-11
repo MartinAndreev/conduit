@@ -3,10 +3,10 @@ import type {
   RoleConfig,
 } from "../../domains/configuration/types/config.js";
 import type { ConfigurationRepository } from "../../domains/configuration/repositories/configuration-repository.js";
-import type { CredentialStore } from "../../domains/credentials/types/credential-store.js";
-import type { FeatureProvider } from "../../domains/features/types/feature-provider.js";
+import type { CredentialStore } from "../../domains/credentials/interfaces/credential-store.js";
+import type { FeatureProvider } from "../../domains/features/interfaces/feature-provider.js";
 import type { Feature } from "../../domains/features/types/feature.js";
-import type { PortraitRegistry } from "../../domains/roles/types/portrait.js";
+import type { PortraitRegistry } from "../../domains/roles/interfaces/portrait-registry.js";
 import type { Run, RunResult } from "../../domains/runs/types/run.js";
 import type { SkillResolution } from "../../domains/roles/types/skill.js";
 

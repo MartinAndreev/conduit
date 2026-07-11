@@ -1,9 +1,10 @@
-import type { CommandBus } from "../../system/bus/command-bus.js";
-import type { QueryBus } from "../../system/bus/query-bus.js";
-import { Sidebar } from "../sections/Sidebar.js";
-import { FeatureActions } from "../sections/FeatureActions.js";
-import { useTheme } from "../components/ThemeProvider.js";
-import { useHomeController } from "../controllers/useHomeController.js";
+import type { CommandBus } from "@system/bus/command-bus.js";
+import type { QueryBus } from "@system/bus/query-bus.js";
+import { HomeFooter } from "@tui/components/HomeFooter.js";
+import { useTheme } from "@tui/components/ThemeProvider.js";
+import { useHomeController } from "@tui/controllers/useHomeController.js";
+import { FeatureActions } from "@tui/sections/FeatureActions.js";
+import { Sidebar } from "@tui/sections/Sidebar.js";
 
 interface HomeScreenProps {
   commandBus: CommandBus;
@@ -22,15 +23,6 @@ export function HomeScreen({ commandBus, queryBus, onExit }: HomeScreenProps) {
       flexDirection="column"
       backgroundColor={theme.surface.base}
     >
-      <box
-        width="100%"
-        height={1}
-        flexDirection="row"
-        justifyContent="space-between"
-      >
-        <text content=" Conduit" fg={theme.text.strong} />
-        <text content={`${state.tip}  `} fg={theme.text.muted} />
-      </box>
       <box width="100%" height="100%" flexDirection="row">
         <Sidebar
           features={state.filteredFeatures}
@@ -40,18 +32,17 @@ export function HomeScreen({ commandBus, queryBus, onExit }: HomeScreenProps) {
         />
         <FeatureActions
           feature={state.filteredFeatures[state.selectedIndex]}
-          portraits={state.portraits}
           theme={theme}
           actionModalOpen={state.actionModalOpen}
           selectedAction={state.selectedAction}
+          tip={state.tip}
         />
       </box>
-      <box width="100%" height={1} flexDirection="row">
-        <text
-          content=" [/] Search  [Enter] Actions  [q] Exit"
-          fg={theme.text.muted}
-        />
-      </box>
+      <HomeFooter
+        searching={state.searching}
+        actionModalOpen={state.actionModalOpen}
+        theme={theme}
+      />
     </box>
   );
 }

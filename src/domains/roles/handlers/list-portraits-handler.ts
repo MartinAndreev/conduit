@@ -1,9 +1,9 @@
 import type { QueryHandler } from "../../../system/bus/query-bus.js";
-import type { PortraitRegistry } from "../types/portrait.js";
+import type { PortraitRegistry } from "../interfaces/portrait-registry.js";
 import type {
   ListPortraitsQuery,
   ListPortraitsReadModel,
-} from "../queries/list-portraits.js";
+} from "../interfaces/queries/list-portraits.js";
 
 export function createListPortraitsHandler(
   registry: PortraitRegistry,

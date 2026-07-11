@@ -1,9 +1,4 @@
-export interface RolePortrait {
-  readonly roleName: string;
-  readonly label: string;
-  readonly assetPath: string;
-  readonly fallbackGlyph: string;
-}
+import type { RolePortrait } from "./role-portrait.js";
 
 export interface PortraitRegistry {
   getPortrait(roleName: string): RolePortrait;

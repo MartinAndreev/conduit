@@ -1,4 +1,4 @@
-import type { Query } from "../../../system/bus/query-bus.js";
+import type { Query } from "../../../../system/bus/query-bus.js";
 
 export interface GetCredentialQuery extends Query {
   readonly type: "getCredential";

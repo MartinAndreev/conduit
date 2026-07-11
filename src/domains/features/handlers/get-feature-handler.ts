@@ -1,9 +1,9 @@
 import type { QueryHandler } from "../../../system/bus/query-bus.js";
-import type { FeatureProvider } from "../types/feature-provider.js";
+import type { FeatureProvider } from "../interfaces/feature-provider.js";
 import type {
   GetFeatureQuery,
   GetFeatureReadModel,
-} from "../queries/get-feature.js";
+} from "../interfaces/queries/get-feature.js";
 
 export function createGetFeatureHandler(
   provider: FeatureProvider,

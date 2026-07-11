@@ -5,10 +5,3 @@ export interface CredentialStore {
   delete(profile: string, key: string): Promise<void>;
   list(profile: string): Promise<readonly string[]>;
 }
-
-export interface CredentialEntry {
-  readonly profile: string;
-  readonly key: string;
-}
-
-export const CREDENTIAL_STORE_VERSION = 1;

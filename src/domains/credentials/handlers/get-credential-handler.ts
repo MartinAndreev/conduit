@@ -1,9 +1,9 @@
 import type { QueryHandler } from "../../../system/bus/query-bus.js";
-import type { CredentialStore } from "../types/credential-store.js";
+import type { CredentialStore } from "../interfaces/credential-store.js";
 import type {
   GetCredentialQuery,
   GetCredentialReadModel,
-} from "../queries/get-credential.js";
+} from "../interfaces/queries/get-credential.js";
 
 export function createGetCredentialHandler(
   store: CredentialStore,

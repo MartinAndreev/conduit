@@ -1,107 +1,60 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { RolePortrait, PortraitRegistry } from "../types/portrait.js";
+import { generatedRoleMascotFrames } from "../assets/generated-mascot-frames.js";
+import type { PortraitRegistry } from "../interfaces/portrait-registry.js";
+import type { RolePortrait } from "../interfaces/role-portrait.js";
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
-const assetsDir = path.resolve(currentDir, "../../../assets/portraits");
+const assetsDir = path.resolve(currentDir, "../../../../assets/mascots");
 
 interface PortraitDef {
   roleName: string;
   label: string;
-  assetFile: string;
   fallbackGlyph: string;
-  art: readonly string[];
 }
 
-const PORTRAIT_ART: readonly PortraitDef[] = [
-  {
-    roleName: "architect",
-    label: "Architect",
-    assetFile: "architect.fb",
-    fallbackGlyph: "\u2630",
-    art: ["  /\\  ", " /  \\ ", "/____\\", " |  | ", " |__| "],
-  },
-  {
-    roleName: "researcher",
-    label: "Researcher",
-    assetFile: "researcher.fb",
-    fallbackGlyph: "\u2609",
-    art: [" .--. ", "/  o \\", "|    |", "\\    /", " '--' "],
-  },
-  {
-    roleName: "frontend",
-    label: "Frontend",
-    assetFile: "frontend.fb",
-    fallbackGlyph: "\u25a3",
-    art: [" ____ ", "| ## |", "| ## |", "|    |", "|____|"],
-  },
-  {
-    roleName: "backend",
-    label: "Backend",
-    assetFile: "backend.fb",
-    fallbackGlyph: "\u2699",
-    art: ["  ()  ", " /||\\ ", "/ || \\", "  ||  ", " _||_ "],
-  },
-  {
-    roleName: "qa",
-    label: "QA",
-    assetFile: "qa.fb",
-    fallbackGlyph: "\u2714",
-    art: ["      ", "    / ", "   /  ", "  /   ", " /    "],
-  },
-  {
-    roleName: "documentation",
-    label: "Docs",
-    assetFile: "docs.fb",
-    fallbackGlyph: "\u270e",
-    art: [" ____ ", "|    |", "| || |", "| || |", "|____|"],
-  },
-  {
-    roleName: "reviewer",
-    label: "Reviewer",
-    assetFile: "reviewer.fb",
-    fallbackGlyph: "\u2605",
-    art: ["  *   ", " ***  ", "*****", " ***  ", "  *   "],
-  },
+const PORTRAITS: readonly PortraitDef[] = [
+  { roleName: "architect", label: "Architect", fallbackGlyph: "☰" },
+  { roleName: "researcher", label: "Researcher", fallbackGlyph: "☉" },
+  { roleName: "frontend", label: "Frontend", fallbackGlyph: "▣" },
+  { roleName: "backend", label: "Backend", fallbackGlyph: "⚙" },
+  { roleName: "qa", label: "QA", fallbackGlyph: "✔" },
+  { roleName: "documentation", label: "Docs", fallbackGlyph: "✎" },
+  { roleName: "reviewer", label: "Reviewer", fallbackGlyph: "★" },
 ];
 
+function toPortrait(def: PortraitDef, overridePath?: string): RolePortrait {
+  return {
+    roleName: def.roleName,
+    label: def.label,
+    assetPath: overridePath ?? path.join(assetsDir, def.roleName),
+    fallbackGlyph: def.fallbackGlyph,
+    frames: generatedRoleMascotFrames[def.roleName] ?? [["?"]],
+  };
+}
+
 export function createPortraitRegistry(): PortraitRegistry {
-  const portraits = new Map<string, PortraitDef>();
-  for (const def of PORTRAIT_ART) {
-    portraits.set(def.roleName, def);
-  }
+  const portraits = new Map(PORTRAITS.map((def) => [def.roleName, def]));
   const overrides = new Map<string, string>();
 
   return {
     getPortrait(roleName: string): RolePortrait {
       const def = portraits.get(roleName);
-      if (!def) {
+      if (!def)
         return {
           roleName,
           label: roleName,
           assetPath: "",
           fallbackGlyph: "?",
+          frames: [["?"]],
         };
-      }
-      const overridePath = overrides.get(roleName);
-      return {
-        roleName: def.roleName,
-        label: def.label,
-        assetPath: overridePath ?? path.join(assetsDir, def.assetFile),
-        fallbackGlyph: def.fallbackGlyph,
-      };
+      return toPortrait(def, overrides.get(roleName));
     },
 
     getAllPortraits(): readonly RolePortrait[] {
-      return PORTRAIT_ART.map((def) => {
-        const overridePath = overrides.get(def.roleName);
-        return {
-          roleName: def.roleName,
-          label: def.label,
-          assetPath: overridePath ?? path.join(assetsDir, def.assetFile),
-          fallbackGlyph: def.fallbackGlyph,
-        };
-      });
+      return PORTRAITS.map((def) =>
+        toPortrait(def, overrides.get(def.roleName)),
+      );
     },
 
     overrideAssetPath(roleName: string, assetPath: string): void {

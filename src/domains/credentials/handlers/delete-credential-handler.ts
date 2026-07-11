@@ -1,9 +1,9 @@
 import type { CommandHandler } from "../../../system/bus/command-bus.js";
-import type { CredentialStore } from "../types/credential-store.js";
+import type { CredentialStore } from "../interfaces/credential-store.js";
 import type {
   DeleteCredentialCommand,
   DeleteCredentialResult,
-} from "../commands/delete-credential.js";
+} from "../interfaces/commands/delete-credential.js";
 
 export function createDeleteCredentialHandler(
   store: CredentialStore,

@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { useKeyboard } from "@opentui/react";
-import type { FeatureReadModel } from "../../domains/features/types/feature-provider.js";
-import type { RolePortrait } from "../../domains/roles/types/portrait.js";
-import type { CommandBus } from "../../system/bus/command-bus.js";
-import type { QueryBus } from "../../system/bus/query-bus.js";
-import tips from "../assets/tips.json" with { type: "json" };
+import type { FeatureReadModel } from "@domains/features/types/feature.js";
+import type { RolePortrait } from "@domains/roles/interfaces/role-portrait.js";
+import type { CommandBus } from "@system/bus/command-bus.js";
+import type { QueryBus } from "@system/bus/query-bus.js";
+import tips from "@tui/assets/tips.json" with { type: "json" };
 
 export const FEATURE_ACTIONS = ["View", "Refine", "Run", "Status"] as const;
 
