@@ -16,6 +16,8 @@ export interface HomeControllerState {
   selectedIndex: number;
   searchQuery: string;
   searching: boolean;
+  creating: boolean;
+  featureTitle: string;
   actionModalOpen: boolean;
   selectedAction: number;
   tip: string;
@@ -39,12 +41,16 @@ export function useHomeController(
   commandBus: CommandBus,
   queryBus: QueryBus,
   onExit: () => void,
+  onRefine: (featureId: string) => void,
+  onView: (featureId: string) => void,
 ): [HomeControllerState, HomeControllerActions] {
   const [features, setFeatures] = useState<readonly FeatureReadModel[]>([]);
   const [portraits, setPortraits] = useState<readonly RolePortrait[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [searching, setSearching] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [featureTitle, setFeatureTitle] = useState("");
   const [actionModalOpen, setActionModalOpen] = useState(false);
   const [selectedAction, setSelectedAction] = useState(0);
   const [tip] = useState(randomTip);
@@ -100,6 +106,31 @@ export function useHomeController(
         }
         return;
       }
+      if (creating) {
+        if (key === "escape") {
+          setCreating(false);
+          setFeatureTitle("");
+          return;
+        }
+        if (key === "backspace") {
+          setFeatureTitle((value) => value.slice(0, -1));
+          return;
+        }
+        if (key === "return" && featureTitle.trim()) {
+          void commandBus
+            .dispatch({ type: "createFeature", title: featureTitle })
+            .then((result) => {
+              if (result.success) {
+                setCreating(false);
+                setFeatureTitle("");
+                onRefine((result.data as { id: string }).id);
+              }
+            });
+          return;
+        }
+        if (key.length === 1) setFeatureTitle((value) => value + key);
+        return;
+      }
 
       if (actionModalOpen) {
         if (key === "escape" || key === "q") {
@@ -118,12 +149,20 @@ export function useHomeController(
         }
         if (key === "return") {
           const action = FEATURE_ACTIONS[selectedAction];
+          if (action === "View" && filteredFeatures[selectedIndex]) {
+            onView(filteredFeatures[selectedIndex]!.id);
+            setActionModalOpen(false);
+            return;
+          }
           if (action === "Refine" && filteredFeatures[selectedIndex]) {
-            void commandBus.dispatch({
-              type: "updateFeatureMetadata",
-              featureId: filteredFeatures[selectedIndex]!.id,
-              lifecycle: "in_progress",
-            });
+            const feature = filteredFeatures[selectedIndex]!;
+            void commandBus
+              .dispatch({
+                type: "updateFeatureMetadata",
+                featureId: feature.id,
+                lifecycle: "in_progress",
+              })
+              .finally(() => onRefine(feature.id));
           }
           setActionModalOpen(false);
           return;
@@ -134,6 +173,10 @@ export function useHomeController(
       if (key === "/") {
         setSearching(true);
         setSearchQuery("");
+        return;
+      }
+      if (key === "n") {
+        setCreating(true);
         return;
       }
       if (key === "q") {
@@ -160,12 +203,16 @@ export function useHomeController(
     },
     [
       searching,
+      creating,
+      featureTitle,
       actionModalOpen,
       selectedAction,
       selectedIndex,
       filteredFeatures,
       commandBus,
       onExit,
+      onRefine,
+      onView,
     ],
   );
 
@@ -178,6 +225,8 @@ export function useHomeController(
       selectedIndex,
       searchQuery,
       searching,
+      creating,
+      featureTitle,
       actionModalOpen,
       selectedAction,
       tip,

@@ -16,8 +16,27 @@ import { createSetCredentialHandler } from "../../domains/credentials/handlers/s
 import { createDeleteCredentialHandler } from "../../domains/credentials/handlers/delete-credential-handler.js";
 import { createListFeaturesHandler } from "../../domains/features/handlers/list-features-handler.js";
 import { createGetFeatureHandler } from "../../domains/features/handlers/get-feature-handler.js";
+import { createGetFeatureContentHandler } from "../../domains/features/handlers/get-feature-content-handler.js";
 import { createUpdateFeatureMetadataHandler } from "../../domains/features/handlers/update-feature-metadata-handler.js";
+import { createCreateFeatureHandler } from "../../domains/features/handlers/create-feature-handler.js";
 import { createListPortraitsHandler } from "../../domains/roles/handlers/list-portraits-handler.js";
+import { createSaveDraftHandler } from "../../domains/refinement/handlers/save-draft-handler.js";
+import { createDiscardDraftHandler } from "../../domains/refinement/handlers/discard-draft-handler.js";
+import { createResumeDraftHandler } from "../../domains/refinement/handlers/resume-draft-handler.js";
+import { createGetDraftHandler } from "../../domains/refinement/handlers/get-draft-handler.js";
+import { createListDraftsHandler } from "../../domains/refinement/handlers/list-drafts-handler.js";
+import { createApproveRefinementHandler } from "../../domains/refinement/handlers/approve-refinement-handler.js";
+import { createGetArchitectEventsHandler } from "../../domains/refinement/handlers/get-architect-events-handler.js";
+import { createStartArchitectRefinementHandler } from "../../domains/refinement/handlers/start-architect-refinement-handler.js";
+import { createCancelArchitectRefinementHandler } from "../../domains/refinement/handlers/cancel-architect-refinement-handler.js";
+import { FileDraftRepository } from "../../domains/refinement/repositories/file-draft-repository.js";
+import { FileArchitectEventRepository } from "../../domains/refinement/repositories/file-architect-event-repository.js";
+import {
+  findFeature,
+  writeStory,
+  writeTestCases,
+} from "../../domains/features/repositories/feature-packet-repository.js";
+import { loadConfig } from "../../domains/configuration/repositories/project-config.js";
 
 export interface Application {
   readonly commandBus: CommandBus;
@@ -54,6 +73,14 @@ export interface BootstrapDependencies {
   credentialStore: CredentialStore;
   featureProvider: FeatureProvider;
   portraitRegistry: PortraitRegistry;
+  projectRoot?: string;
+  refinementPrompt?: (feature: Feature, story: string) => string;
+  runArchitect?: (params: {
+    projectRoot: string;
+    prompt: string;
+    logFile: string;
+  }) => Promise<{ logFile: string }>;
+  cancelArchitect?: (featureId: string) => boolean;
 }
 
 interface InitProjectPayload {
@@ -69,6 +96,14 @@ interface ProjectBootstrapState {
 export function createApplication(deps: BootstrapDependencies): Application {
   const commandBus = new CommandBus();
   const queryBus = new QueryBus();
+
+  const projectRoot = deps.projectRoot;
+  const draftRepository = projectRoot
+    ? new FileDraftRepository(projectRoot)
+    : null;
+  const architectEventRepository = projectRoot
+    ? new FileArchitectEventRepository(projectRoot)
+    : null;
 
   commandBus.register("initializeProject", (async (
     cmd: Command & InitProjectPayload,
@@ -94,6 +129,15 @@ export function createApplication(deps: BootstrapDependencies): Application {
     "updateFeatureMetadata",
     createUpdateFeatureMetadataHandler(deps.featureProvider) as CommandHandler,
   );
+  if (projectRoot)
+    commandBus.register(
+      "createFeature",
+      createCreateFeatureHandler({
+        projectRoot,
+        loadConfig: deps.loadConfig,
+        createFeature: deps.createFeature,
+      }) as CommandHandler,
+    );
 
   queryBus.register("projectBootstrapState", (async (
     q: Query & { projectRoot: string },
@@ -147,11 +191,81 @@ export function createApplication(deps: BootstrapDependencies): Application {
     "getFeature",
     createGetFeatureHandler(deps.featureProvider) as QueryHandler,
   );
+  queryBus.register(
+    "getFeatureContent",
+    createGetFeatureContentHandler(deps.featureProvider) as QueryHandler,
+  );
 
   queryBus.register(
     "listPortraits",
     createListPortraitsHandler(deps.portraitRegistry) as QueryHandler,
   );
+
+  if (draftRepository) {
+    commandBus.register(
+      "saveDraft",
+      createSaveDraftHandler(draftRepository) as CommandHandler,
+    );
+
+    commandBus.register(
+      "discardDraft",
+      createDiscardDraftHandler(draftRepository) as CommandHandler,
+    );
+
+    commandBus.register(
+      "resumeDraft",
+      createResumeDraftHandler(draftRepository) as CommandHandler,
+    );
+
+    queryBus.register(
+      "getDraft",
+      createGetDraftHandler(draftRepository) as QueryHandler,
+    );
+
+    queryBus.register(
+      "listDrafts",
+      createListDraftsHandler(draftRepository) as QueryHandler,
+    );
+  }
+
+  if (projectRoot) {
+    commandBus.register(
+      "approveRefinement",
+      createApproveRefinementHandler({
+        loadConfig,
+        findFeature,
+        writeStory,
+        writeTestCases,
+        projectRoot,
+      }) as CommandHandler,
+    );
+    if (deps.refinementPrompt && deps.runArchitect) {
+      commandBus.register(
+        "startArchitectRefinement",
+        createStartArchitectRefinementHandler({
+          projectRoot,
+          loadConfig: deps.loadConfig,
+          findFeature: deps.findFeature,
+          refinementPrompt: deps.refinementPrompt,
+          runArchitect: deps.runArchitect,
+        }) as CommandHandler,
+      );
+    }
+    if (deps.cancelArchitect)
+      commandBus.register(
+        "cancelArchitectRefinement",
+        createCancelArchitectRefinementHandler(
+          deps.cancelArchitect,
+        ) as CommandHandler,
+      );
+  }
+
+  if (architectEventRepository) {
+    queryBus.register(
+      "getArchitectEvents",
+      createGetArchitectEventsHandler(architectEventRepository) as QueryHandler,
+    );
+  }
 
   return { commandBus, queryBus };
 }

@@ -1,0 +1,27 @@
+{
+  "problem": [
+    "Start with the current workflow and its failure: who does what today, where it breaks, and what it costs. Avoid naming the solution until the pain is clear.",
+    "Make the gap observable. For example: ‘operators cannot tell which MCP tools are available’ is stronger than ‘MCP documentation needs improvement’.",
+    "Include one representative example and one boundary. State what must change, plus what this feature deliberately does not attempt to solve."
+  ],
+  "audience": [
+    "Name the primary user, their goal, and their context. ‘A new workspace administrator configuring MCP’ is more useful than ‘developers’.",
+    "Call out roles, permissions, and experience levels that alter behavior. If a secondary audience only reads the result, say so explicitly.",
+    "Describe the user’s decision after using the feature. This helps distinguish information they need from implementation detail they do not need."
+  ],
+  "outcome": [
+    "Write acceptance criteria as observable outcomes: given a condition, when the user acts, then they can verify a specific result without reading code.",
+    "Separate must-have behavior from optional polish. Include empty, invalid, unauthorized, and interrupted states whenever the user can encounter them.",
+    "State how success will be measured: a visible UI state, a returned API payload, a persisted document, or an automated test assertion."
+  ],
+  "constraints": [
+    "Record non-goals that could otherwise be assumed. For example: document existing tools only; do not add, remove, or change production MCP behavior.",
+    "Mention compatibility, security, migration, performance, and delivery constraints. Include existing contracts that must remain stable.",
+    "Do not guess unresolved product decisions. Phrase each as an open question, explain why it matters, and name the options if you know them."
+  ],
+  "testCases": [
+    "Cover one happy path, one invalid or empty input, and one regression risk. Write each case in terms of setup, user action, and observable result.",
+    "Prefer user-observable assertions over implementation detail. Test that the correct document, response, or screen appears—not which helper function was called.",
+    "Add authorization, organization-boundary, duplicate-data, and cancellation cases whenever the feature touches access, persistence, or background work."
+  ]
+}

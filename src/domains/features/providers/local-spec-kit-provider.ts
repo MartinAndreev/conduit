@@ -85,8 +85,9 @@ export class LocalSpecKitProvider implements FeatureProvider {
       }
 
       const title = deriveTitle(entry);
-      this.features.set(entry, {
-        id: entry,
+      const id = entry.match(/^(\d+)-/)?.[1] ?? entry;
+      this.features.set(id, {
+        id,
         directory: entryPath,
         title,
         metadata,

@@ -1,6 +1,4 @@
 import type { FeatureReadModel } from "@domains/features/types/feature.js";
-import { AgentActivity } from "@tui/components/AgentActivity.js";
-import { AgentEventFeed } from "@tui/components/AgentEventFeed.js";
 import type { Theme } from "@tui/theme.js";
 
 interface FeatureActionsProps {
@@ -9,6 +7,8 @@ interface FeatureActionsProps {
   actionModalOpen: boolean;
   selectedAction: number;
   tip: string;
+  creating: boolean;
+  featureTitle: string;
 }
 
 const FEATURE_ACTIONS = ["View", "Refine", "Run", "Status"] as const;
@@ -19,6 +19,8 @@ export function FeatureActions({
   actionModalOpen,
   selectedAction,
   tip,
+  creating,
+  featureTitle,
 }: FeatureActionsProps) {
   if (!feature) {
     return (
@@ -26,7 +28,11 @@ export function FeatureActions({
         <text content="Welcome to Conduit" fg={theme.text.strong} />
         <text content="" />
         <text
-          content="Select a feature from the sidebar to get started."
+          content={
+            creating
+              ? `New feature title: ${featureTitle}_`
+              : "Press n to create a feature, or select one from the sidebar."
+          }
           fg={theme.text.default}
         />
         <text content="" />
@@ -37,6 +43,24 @@ export function FeatureActions({
 
   return (
     <box width="70%" height="100%" flexDirection="column" padding={1}>
+      <box
+        flexDirection="column"
+        borderStyle="single"
+        borderColor={creating ? theme.action.primary : theme.surface.raised}
+        paddingLeft={1}
+        paddingRight={1}
+        marginBottom={1}
+      >
+        <text content="New feature" fg={theme.action.primary} />
+        <text
+          content={
+            creating
+              ? `Title: ${featureTitle}_  · Enter create · Esc cancel`
+              : "Press n to define a new feature and begin refinement."
+          }
+          fg={creating ? theme.text.default : theme.text.muted}
+        />
+      </box>
       <text content={feature.title} fg={theme.text.strong} />
       <text content="" />
       <text
@@ -49,16 +73,6 @@ export function FeatureActions({
               : theme.status.error
         }
       />
-      <text content="" />
-      <text content="Activity" fg={theme.text.strong} />
-      <text content="Live runner events appear here." fg={theme.text.muted} />
-      <AgentActivity
-        role="architect"
-        runner="codex"
-        message="Inspecting the progress component"
-        mascotRole="architect"
-      />
-      <AgentEventFeed />
       <text content="" />
       {actionModalOpen ? (
         <box

@@ -10,11 +10,25 @@ interface HomeScreenProps {
   commandBus: CommandBus;
   queryBus: QueryBus;
   onExit: () => void;
+  onRefine: (featureId: string) => void;
+  onView: (featureId: string) => void;
 }
 
-export function HomeScreen({ commandBus, queryBus, onExit }: HomeScreenProps) {
+export function HomeScreen({
+  commandBus,
+  queryBus,
+  onExit,
+  onRefine,
+  onView,
+}: HomeScreenProps) {
   const theme = useTheme();
-  const [state] = useHomeController(commandBus, queryBus, onExit);
+  const [state] = useHomeController(
+    commandBus,
+    queryBus,
+    onExit,
+    onRefine,
+    onView,
+  );
 
   return (
     <box
@@ -36,6 +50,8 @@ export function HomeScreen({ commandBus, queryBus, onExit }: HomeScreenProps) {
           actionModalOpen={state.actionModalOpen}
           selectedAction={state.selectedAction}
           tip={state.tip}
+          creating={state.creating}
+          featureTitle={state.featureTitle}
         />
       </box>
       <HomeFooter

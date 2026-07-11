@@ -12,6 +12,17 @@ import type { ApplicationDependencies } from "../../../system/bootstrap/types.js
 import { textarea } from "../../../tui/textarea.js";
 import type { CommandRuntimeDependencies } from "../../../system/cli/command-support.js";
 
+const activeArchitectProcesses = new Map<string, ChildProcess>();
+
+export function cancelArchitectForFeature(featureId: string): boolean {
+  const entry = [...activeArchitectProcesses.entries()].find(([logFile]) =>
+    logFile.includes(`refine-${featureId}-`),
+  );
+  if (!entry) return false;
+  entry[1].kill("SIGTERM");
+  return true;
+}
+
 type RefinementCommandDependencies = Pick<
   ApplicationDependencies,
   | "loadConfig"
@@ -96,9 +107,11 @@ export async function runArchitect({
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
+    activeArchitectProcesses.set(logFile, child);
     let transcript = "";
     const capture = (chunk: Buffer | string) => {
       transcript += String(chunk);
+      void writeFile(logFile, transcript);
       onProgress(architectProgressMessage(transcript));
       onTranscript(transcript);
     };
@@ -106,9 +119,10 @@ export async function runArchitect({
     child.stderr?.on("data", capture);
     child.on("error", reject);
     child.on("close", async (code: number | null) => {
-      await appendFile(
+      activeArchitectProcesses.delete(logFile);
+      await writeFile(
         logFile,
-        `\n\n--- Architect pass ${new Date().toISOString()} ---\n\n${transcript}`,
+        `--- Architect pass ${new Date().toISOString()} ---\n\n${transcript}`,
       );
       if (code === 0) resolve({ logFile });
       else

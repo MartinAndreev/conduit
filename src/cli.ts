@@ -36,10 +36,13 @@ import {
   collectRefinement,
   collectArchitectAnswers,
   runArchitect,
+  cancelArchitectForFeature,
 } from "./domains/refinement/handlers/refine-command.js";
 import { startDashboard } from "./tui/dashboard.js";
 import { startArchitectRunView } from "./tui/architect-run.js";
 import { startWorkerRunView } from "./tui/worker-run.js";
+import { startRefinement } from "./tui/refinement.js";
+import { refineCommandReact } from "./domains/refinement/handlers/refine-command-react.js";
 import { conduitVersion } from "./version.js";
 import { conduitBanner, shouldShowBanner } from "./banner.js";
 import { roleTemplates } from "./domains/roles/assets/role-templates.js";
@@ -96,6 +99,7 @@ const dependencies = {
   startDashboard,
   startArchitectRunView,
   startWorkerRunView,
+  startRefinement,
   planRun,
   executeRun,
   latestRuns,
@@ -164,8 +168,61 @@ export function createProgram(
       "require a story argument instead of asking questions",
     )
     .action(
-      (featureId: string, story: string, options: Record<string, unknown>) => {
-        void refineCommand(featureId, story, options, handlers);
+      async (
+        featureId: string,
+        story: string,
+        options: Record<string, unknown>,
+      ) => {
+        const isInteractive = options.interactive !== false && !options.compact;
+        if (isInteractive) {
+          const projectRoot = (options.project as string) || process.cwd();
+          const settingsResult = await buildDependencies();
+          const resolvedSettings =
+            await settingsResult.configurationRepository.resolveSettings(
+              projectRoot,
+            );
+          const specsDir = path.resolve(
+            projectRoot,
+            resolvedSettings.effective.specsDir,
+          );
+          const featureProvider = settingsResult.createProvider(specsDir);
+
+          const app = createApplication({
+            loadConfig,
+            initializeProject,
+            createFeature,
+            findFeature,
+            planRun,
+            latestRuns,
+            configurationRepository: settingsResult.configurationRepository,
+            credentialStore: settingsResult.credentialStore,
+            featureProvider,
+            portraitRegistry: settingsResult.portraitRegistry,
+            projectRoot,
+            refinementPrompt,
+            runArchitect,
+            cancelArchitect: cancelArchitectForFeature,
+          });
+
+          await refineCommandReact(
+            {
+              featureId,
+              story,
+              testCases: options.testCases as string,
+              architect: options.architect as boolean,
+              compact: options.compact as boolean,
+              interactive: options.interactive as boolean,
+            },
+            {
+              commandBus: app.commandBus,
+              queryBus: app.queryBus,
+              startRefinementScreen: handlers.startRefinement,
+              output: console.log,
+            },
+          );
+        } else {
+          void refineCommand(featureId, story, options, handlers);
+        }
       },
     );
   withProject(
@@ -286,6 +343,10 @@ export async function handleBareConduit(
     credentialStore: settingsResult.credentialStore,
     featureProvider,
     portraitRegistry: settingsResult.portraitRegistry,
+    refinementPrompt,
+    runArchitect,
+    cancelArchitect: cancelArchitectForFeature,
+    projectRoot,
   });
 
   const homeFn = deps?.startHome ?? (await import("./tui/home.js")).startHome;
