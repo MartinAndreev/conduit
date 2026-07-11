@@ -3,3 +3,4 @@ dist/
 .conduit/runs/
 .conduit/cache/
 .conduit/worktrees/
+.idea/
