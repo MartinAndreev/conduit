@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useKeyboard } from "@opentui/react";
 import type { FeatureReadModel } from "../../domains/features/types/feature-provider.js";
 import type { RolePortrait } from "../../domains/roles/types/portrait.js";
 import type { CommandBus } from "../../system/bus/command-bus.js";
@@ -167,6 +168,8 @@ export function useHomeController(
       onExit,
     ],
   );
+
+  useKeyboard(handleKeyDown);
 
   return [
     {

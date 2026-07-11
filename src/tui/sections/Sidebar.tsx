@@ -22,13 +22,6 @@ function lifecycleColor(
   }
 }
 
-function lifecycleDot(
-  lifecycle: FeatureReadModel["metadata"]["lifecycle"],
-  theme: Theme,
-): string {
-  return lifecycleColor(lifecycle, theme);
-}
-
 export function Sidebar({
   features,
   selectedIndex,
@@ -64,7 +57,7 @@ export function Sidebar({
         ) : (
           filtered.map((feature, index) => {
             const isSelected = index === selectedIndex;
-            const dot = lifecycleDot(feature.metadata.lifecycle, theme);
+            const dotColor = lifecycleColor(feature.metadata.lifecycle, theme);
             return (
               <box
                 key={feature.id}
@@ -72,7 +65,7 @@ export function Sidebar({
                 backgroundColor={isSelected ? theme.surface.raised : undefined}
               >
                 <text content="  " />
-                <text content=" " fg={dot} />
+                <text content="●" fg={dotColor} />
                 <text
                   content={` ${feature.title}`}
                   fg={isSelected ? theme.text.strong : theme.text.default}

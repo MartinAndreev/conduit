@@ -13,7 +13,7 @@ interface HomeScreenProps {
 
 export function HomeScreen({ commandBus, queryBus, onExit }: HomeScreenProps) {
   const theme = useTheme();
-  const [state, actions] = useHomeController(commandBus, queryBus, onExit);
+  const [state] = useHomeController(commandBus, queryBus, onExit);
 
   return (
     <box
@@ -21,7 +21,6 @@ export function HomeScreen({ commandBus, queryBus, onExit }: HomeScreenProps) {
       height="100%"
       flexDirection="column"
       backgroundColor={theme.surface.base}
-      onKeyDown={actions.handleKeyDown}
     >
       <box
         width="100%"
