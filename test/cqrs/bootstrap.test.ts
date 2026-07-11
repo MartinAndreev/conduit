@@ -2,6 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createApplication } from "../../src/system/bootstrap/application.js";
 import type { BootstrapDependencies } from "../../src/system/bootstrap/application.js";
+import { InMemoryCredentialStore } from "../../src/domains/credentials/repositories/in-memory-store.js";
+import { LocalSpecKitProvider } from "../../src/domains/features/providers/local-spec-kit-provider.js";
+import { createPortraitRegistry } from "../../src/domains/roles/repositories/portrait-registry.js";
+import { createConfigurationRepository } from "../../src/domains/configuration/repositories/configuration-repository.js";
 
 function stubDeps(
   overrides: Partial<BootstrapDependencies> = {},
@@ -36,6 +40,10 @@ function stubDeps(
       runDir: "/tmp/runs/r1",
     }),
     latestRuns: async () => [],
+    configurationRepository: createConfigurationRepository(),
+    credentialStore: new InMemoryCredentialStore(),
+    featureProvider: new LocalSpecKitProvider("/tmp/specs"),
+    portraitRegistry: createPortraitRegistry(),
     ...overrides,
   };
 }
@@ -154,4 +162,66 @@ test("unregistered query returns HANDLER_NOT_FOUND", async () => {
   if (!result.success) {
     assert.equal(result.error.code, "HANDLER_NOT_FOUND");
   }
+});
+
+test("listFeatures query returns features from provider", async () => {
+  const app = createApplication(stubDeps());
+  const result = await app.queryBus.execute({
+    type: "listFeatures",
+  });
+  assert.equal(result.success, true);
+  if (result.success) {
+    const data = result.data as { features: unknown[] };
+    assert.ok(Array.isArray(data.features));
+  }
+});
+
+test("listPortraits query returns portraits from registry", async () => {
+  const app = createApplication(stubDeps());
+  const result = await app.queryBus.execute({
+    type: "listPortraits",
+  });
+  assert.equal(result.success, true);
+  if (result.success) {
+    const data = result.data as { portraits: unknown[] };
+    assert.ok(Array.isArray(data.portraits));
+    assert.ok(data.portraits.length > 0);
+  }
+});
+
+test("setCredential command dispatches to credential store", async () => {
+  const app = createApplication(stubDeps());
+  const result = await app.commandBus.dispatch({
+    type: "setCredential",
+    profile: "test",
+    key: "apiKey",
+    value: "secret123",
+  });
+  assert.equal(result.success, true);
+});
+
+test("getCredential query returns value from credential store", async () => {
+  const store = new InMemoryCredentialStore();
+  await store.set("test", "apiKey", "secret123");
+  const app = createApplication(stubDeps({ credentialStore: store }));
+  const result = await app.queryBus.execute({
+    type: "getCredential",
+    profile: "test",
+    key: "apiKey",
+  });
+  assert.equal(result.success, true);
+  if (result.success) {
+    const data = result.data as { value: string | undefined };
+    assert.equal(data.value, "secret123");
+  }
+});
+
+test("updateFeatureMetadata command dispatches to provider", async () => {
+  const app = createApplication(stubDeps());
+  const result = await app.commandBus.dispatch({
+    type: "updateFeatureMetadata",
+    featureId: "001-test",
+    lifecycle: "in_progress",
+  });
+  assert.equal(result.success, true);
 });

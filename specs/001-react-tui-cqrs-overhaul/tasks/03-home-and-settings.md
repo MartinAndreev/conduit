@@ -13,16 +13,20 @@ Implement platform global settings with local overrides, secure credential stora
 
 ## Tasks
 
-- [ ] Define global configuration location resolver and precedence: CLI option, project config, global config, default.
-- [ ] Implement credential store with OS-vault primary and encrypted global fallback; project config stores profile identifiers only.
-- [ ] Implement Local Spec Kit provider and feature metadata read/write contract. Existing packets receive metadata only when first managed and default to `not_started`.
-- [ ] Make bare `conduit` detect initialized project state; a negative initialization response exits without writes, and acceptance initializes Local Spec Kit without credential collection.
-- [ ] Implement Home with searchable sidebar, lifecycle dots, selected-feature action modal (View, Refine, Run, Status), welcome/refinement entry, random JSON tip, and role list.
-- [ ] Add built-in role portrait registry and typed asset-path override configuration; render built-ins with FrameBuffer assets.
+- [x] Define global configuration location resolver and precedence: CLI option, project config, global config, default.
+- [x] Implement credential store with OS-vault primary and encrypted global fallback; project config stores profile identifiers only.
+- [x] Implement Local Spec Kit provider and feature metadata read/write contract. Existing packets receive metadata only when first managed and default to `not_started`.
+- [x] Make bare `conduit` detect initialized project state; a negative initialization response exits without writes, and acceptance initializes Local Spec Kit without credential collection.
+- [x] Implement Home with searchable sidebar, lifecycle dots, selected-feature action modal (View, Refine, Run, Status), welcome/refinement entry, random JSON tip, and role list.
+- [x] Add built-in role portrait registry and typed asset-path override configuration; render built-ins with FrameBuffer assets.
 
 ## Acceptance criteria
 
-- [ ] Local Spec Kit features render in the sidebar with explicit metadata state.
-- [ ] Search focus and arrow selection are keyboard accessible; narrow terminal state is actionable.
-- [ ] No credential value appears in config, provider read models, logs, or snapshots.
-- [ ] Global settings are overridden by project non-secret configuration only.
+- [x] Local Spec Kit features render in the sidebar with explicit metadata state.
+- [x] Search focus and arrow selection are keyboard accessible; narrow terminal state is actionable.
+- [x] No credential value appears in config, provider read models, logs, or snapshots.
+- [x] Global settings are overridden by project non-secret configuration only.
+
+## Architect review record
+
+Accepted after one explicit OpenCode correction and an architect-owned test-harness fix. Verified with `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test` (68 passing), `pnpm build`, `pnpm build:standalone -- linux-x64`, and `timeout 60 pnpm start --help`.

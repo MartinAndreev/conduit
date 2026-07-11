@@ -26,11 +26,48 @@ import {
 import { startDashboard } from "./tui/dashboard.js";
 import { startArchitectRunView } from "./tui/architect-run.js";
 import { startWorkerRunView } from "./tui/worker-run.js";
+import { startHome } from "./tui/home.js";
 import { conduitVersion } from "./version.js";
 import { conduitBanner, shouldShowBanner } from "./banner.js";
 import { roleTemplates } from "./role-templates.js";
+import { createConfigurationRepository } from "./domains/configuration/repositories/configuration-repository.js";
+import {
+  CompositeCredentialStore,
+  EncryptedFallbackStore,
+} from "./domains/credentials/repositories/encrypted-fallback-store.js";
+import { OSVaultStore } from "./domains/credentials/repositories/os-vault-store.js";
+import { LocalSpecKitProvider } from "./domains/features/providers/local-spec-kit-provider.js";
+import { createPortraitRegistry } from "./domains/roles/repositories/portrait-registry.js";
+import { createApplication } from "./system/bootstrap/application.js";
+import { isGitRepository } from "./commands/shared.js";
+import { defaultPrompt, confirmYesNo } from "./helpers/prompt.js";
+import type { PromptFn } from "./helpers/prompt.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+async function buildDependencies() {
+  const configurationRepository = createConfigurationRepository();
+  const globalConfigDir = configurationRepository.getGlobalConfigDir();
+
+  const osVault = new OSVaultStore();
+  const encryptedFallback = new EncryptedFallbackStore(globalConfigDir);
+  const credentialStore = new CompositeCredentialStore(
+    osVault,
+    encryptedFallback,
+  );
+
+  await credentialStore.initialize();
+
+  const portraitRegistry = createPortraitRegistry();
+
+  return {
+    configurationRepository,
+    credentialStore,
+    portraitRegistry,
+    createProvider: (specsDir: string) => new LocalSpecKitProvider(specsDir),
+  };
+}
+
 const dependencies = {
   initializeProject,
   loadConfig,
@@ -166,7 +203,90 @@ export function createProgram(
   return program;
 }
 
+export async function handleBareConduit(
+  projectRoot: string,
+  deps?: {
+    prompt?: PromptFn;
+    output?: (message: string) => void;
+    startHome?: (params: {
+      commandBus: ReturnType<typeof createApplication>["commandBus"];
+      queryBus: ReturnType<typeof createApplication>["queryBus"];
+    }) => Promise<void>;
+    setExitCode?: (code: number) => void;
+  },
+): Promise<void> {
+  const prompt = deps?.prompt ?? defaultPrompt;
+  const output = deps?.output ?? console.log;
+  const homeFn = deps?.startHome ?? startHome;
+  const setExitCode =
+    deps?.setExitCode ?? ((code: number) => (process.exitCode = code));
+
+  if (!isGitRepository(projectRoot)) {
+    output(
+      "Not a Git repository. Navigate to a Git repository or run: conduit init [path]",
+    );
+    setExitCode(1);
+    return;
+  }
+
+  const configExists = await loadConfig(projectRoot).then(
+    () => true,
+    () => false,
+  );
+
+  if (!configExists) {
+    const shouldInit = await confirmYesNo(
+      prompt,
+      "Conduit is not initialized in this project. Initialize now?",
+    );
+    if (!shouldInit) {
+      setExitCode(1);
+      return;
+    }
+
+    await initializeProject(
+      projectRoot,
+      path.join(root, "skills"),
+      roleTemplates,
+    );
+    output(`Conduit initialized in ${projectRoot}`);
+  }
+
+  const settingsResult = await buildDependencies();
+  const resolvedSettings =
+    await settingsResult.configurationRepository.resolveSettings(projectRoot);
+  const specsDir = path.resolve(
+    projectRoot,
+    resolvedSettings.effective.specsDir,
+  );
+  const featureProvider = settingsResult.createProvider(specsDir);
+
+  const app = createApplication({
+    loadConfig,
+    initializeProject,
+    createFeature,
+    findFeature,
+    planRun,
+    latestRuns,
+    configurationRepository: settingsResult.configurationRepository,
+    credentialStore: settingsResult.credentialStore,
+    featureProvider,
+    portraitRegistry: settingsResult.portraitRegistry,
+  });
+
+  await homeFn({
+    commandBus: app.commandBus,
+    queryBus: app.queryBus,
+  });
+}
+
 export async function main(args: string[]): Promise<void> {
   if (shouldShowBanner(args)) process.stdout.write(`${conduitBanner}\n`);
+
+  if (args.length === 0) {
+    await handleBareConduit(process.cwd());
+    return;
+  }
+
   await createProgram().parseAsync(args, { from: "user" });
 }

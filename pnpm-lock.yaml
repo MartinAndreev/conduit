@@ -20,6 +20,9 @@ importers:
       ora:
         specifier: ^9.3.0
         version: 9.4.1
+      react:
+        specifier: ^19.2.7
+        version: 19.2.7
     devDependencies:
       '@commitlint/cli':
         specifier: ^21.0.0

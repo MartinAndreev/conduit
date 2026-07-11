@@ -1,10 +1,23 @@
 import type { Config } from "../../domains/configuration/types/config.js";
+import type { ConfigurationRepository } from "../../domains/configuration/repositories/configuration-repository.js";
+import type { CredentialStore } from "../../domains/credentials/types/credential-store.js";
+import type { FeatureProvider } from "../../domains/features/types/feature-provider.js";
 import type { Feature } from "../../domains/features/types/feature.js";
+import type { PortraitRegistry } from "../../domains/roles/types/portrait.js";
 import type { Run } from "../../domains/runs/types/run.js";
 import { CommandBus } from "../bus/command-bus.js";
 import type { Command, CommandHandler } from "../bus/command-bus.js";
 import { QueryBus } from "../bus/query-bus.js";
 import type { Query, QueryHandler } from "../bus/query-bus.js";
+import { createResolveSettingsHandler } from "../../domains/configuration/handlers/resolve-settings-handler.js";
+import { createGetCredentialHandler } from "../../domains/credentials/handlers/get-credential-handler.js";
+import { createListCredentialKeysHandler } from "../../domains/credentials/handlers/list-credential-keys-handler.js";
+import { createSetCredentialHandler } from "../../domains/credentials/handlers/set-credential-handler.js";
+import { createDeleteCredentialHandler } from "../../domains/credentials/handlers/delete-credential-handler.js";
+import { createListFeaturesHandler } from "../../domains/features/handlers/list-features-handler.js";
+import { createGetFeatureHandler } from "../../domains/features/handlers/get-feature-handler.js";
+import { createUpdateFeatureMetadataHandler } from "../../domains/features/handlers/update-feature-metadata-handler.js";
+import { createListPortraitsHandler } from "../../domains/roles/handlers/list-portraits-handler.js";
 
 export interface Application {
   readonly commandBus: CommandBus;
@@ -37,6 +50,10 @@ export interface BootstrapDependencies {
     fetchSkills?: boolean;
   }) => Promise<{ run: Run; runDir: string }>;
   latestRuns: (projectRoot: string, config: Config) => Promise<Run[]>;
+  configurationRepository: ConfigurationRepository;
+  credentialStore: CredentialStore;
+  featureProvider: FeatureProvider;
+  portraitRegistry: PortraitRegistry;
 }
 
 interface InitProjectPayload {
@@ -62,6 +79,21 @@ export function createApplication(deps: BootstrapDependencies): Application {
     );
     return { success: true, data: result };
   }) as CommandHandler);
+
+  commandBus.register(
+    "setCredential",
+    createSetCredentialHandler(deps.credentialStore) as CommandHandler,
+  );
+
+  commandBus.register(
+    "deleteCredential",
+    createDeleteCredentialHandler(deps.credentialStore) as CommandHandler,
+  );
+
+  commandBus.register(
+    "updateFeatureMetadata",
+    createUpdateFeatureMetadataHandler(deps.featureProvider) as CommandHandler,
+  );
 
   queryBus.register("projectBootstrapState", (async (
     q: Query & { projectRoot: string },
@@ -90,6 +122,36 @@ export function createApplication(deps: BootstrapDependencies): Application {
     const runs = await deps.latestRuns(q.projectRoot, config);
     return { success: true, data: runs };
   }) as QueryHandler);
+
+  queryBus.register(
+    "resolveSettings",
+    createResolveSettingsHandler(deps.configurationRepository) as QueryHandler,
+  );
+
+  queryBus.register(
+    "getCredential",
+    createGetCredentialHandler(deps.credentialStore) as QueryHandler,
+  );
+
+  queryBus.register(
+    "listCredentialKeys",
+    createListCredentialKeysHandler(deps.credentialStore) as QueryHandler,
+  );
+
+  queryBus.register(
+    "listFeatures",
+    createListFeaturesHandler(deps.featureProvider) as QueryHandler,
+  );
+
+  queryBus.register(
+    "getFeature",
+    createGetFeatureHandler(deps.featureProvider) as QueryHandler,
+  );
+
+  queryBus.register(
+    "listPortraits",
+    createListPortraitsHandler(deps.portraitRegistry) as QueryHandler,
+  );
 
   return { commandBus, queryBus };
 }

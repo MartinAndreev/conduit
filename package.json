@@ -35,7 +35,8 @@
     "@opentui/core": "^0.4.3",
     "@opentui/react": "^0.4.3",
     "commander": "^14.0.0",
-    "ora": "^9.3.0"
+    "ora": "^9.3.0",
+    "react": "^19.2.7"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.0.0",
