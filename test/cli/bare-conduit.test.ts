@@ -35,7 +35,8 @@ test("bare conduit in uninitialized repo offers initialization and accepts", asy
     );
     assert.ok(homeStarted, "Home should have started");
 
-    const { pathExists } = await import("../../src/config.js");
+    const { pathExists } =
+      await import("../../src/domains/configuration/repositories/project-config.js");
     const configExists = await pathExists(path.join(tempDir, "conduit.yml"));
     assert.ok(configExists, "conduit.yml should exist after initialization");
   } finally {
@@ -67,7 +68,8 @@ test("bare conduit in uninitialized repo rejects and exits without writes", asyn
     assert.equal(exitCode, 1);
     assert.ok(!homeStarted, "Home should not have started");
 
-    const { pathExists } = await import("../../src/config.js");
+    const { pathExists } =
+      await import("../../src/domains/configuration/repositories/project-config.js");
     const configExists = await pathExists(path.join(tempDir, "conduit.yml"));
     assert.ok(!configExists, "conduit.yml should not exist after rejection");
   } finally {
@@ -109,8 +111,10 @@ test("bare conduit in non-git directory prints error", async () => {
 test("bare conduit in initialized repo enters Home directly", async () => {
   const tempDir = await setupGitRepo();
   try {
-    const { initializeProject } = await import("../../src/config.js");
-    const { roleTemplates } = await import("../../src/role-templates.js");
+    const { initializeProject } =
+      await import("../../src/domains/configuration/repositories/project-config.js");
+    const { roleTemplates } =
+      await import("../../src/domains/roles/assets/role-templates.js");
     const root = path.resolve(
       path.dirname(new URL(import.meta.url).pathname),
       "../..",

@@ -13,7 +13,7 @@ import {
   CredentialStoreError,
   EncryptionError,
 } from "../errors/credential-errors.js";
-import { pathExists } from "../../../config.js";
+import { pathExists } from "../../configuration/repositories/project-config.js";
 
 const scryptAsync = promisify(scrypt);
 

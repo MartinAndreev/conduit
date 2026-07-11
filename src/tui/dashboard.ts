@@ -1,6 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { spawnSync } from "node:child_process";
-import path from "node:path";
 import type { Config } from "../domains/configuration/types/config.js";
 import type { Run } from "../domains/runs/types/run.js";
 
@@ -154,40 +151,25 @@ export function summarizeTranscript(log: string): {
   };
 }
 
-async function readRoleLog(
-  projectRoot: string,
-  config: Config,
-  run: Run,
-  role: Run["roles"][number],
-): Promise<string> {
-  return readFile(
-    path.join(projectRoot, config.stateDir, "runs", run.id, `${role.name}.log`),
-    "utf8",
-  ).catch(() => "No captured output yet.");
-}
-
-function readRolePatch(role: Run["roles"][number]): string | undefined {
-  if (!role.worktree) return undefined;
-  const result = spawnSync(
-    "git",
-    ["-C", role.worktree, "diff", "--no-ext-diff", "--unified=3", "HEAD"],
-    { encoding: "utf8" },
-  );
-  return result.status === 0 && result.stdout.trim()
-    ? result.stdout.trim()
-    : undefined;
-}
-
 export async function startDashboard({
   projectRoot,
   config,
   runs,
   selectedRunId,
+  readRoleLog,
+  readRolePatch,
 }: {
   projectRoot: string;
   config: Config;
   runs: Run[];
   selectedRunId?: string;
+  readRoleLog: (
+    projectRoot: string,
+    config: Config,
+    run: Run,
+    role: Run["roles"][number],
+  ) => Promise<string>;
+  readRolePatch: (role: Run["roles"][number]) => string | undefined;
 }): Promise<void> {
   if (!process.stdin.isTTY || !process.stdout.isTTY)
     throw new Error(

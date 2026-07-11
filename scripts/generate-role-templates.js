@@ -5,7 +5,14 @@ import prettier from "prettier";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const rolesDirectory = path.join(root, "skills", "roles");
-const outputFile = path.join(root, "src", "role-templates.ts");
+const outputFile = path.join(
+  root,
+  "src",
+  "domains",
+  "roles",
+  "assets",
+  "role-templates.ts",
+);
 
 export async function generateRoleTemplates() {
   const names = (await readdir(rolesDirectory))

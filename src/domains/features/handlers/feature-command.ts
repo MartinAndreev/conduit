@@ -1,9 +1,20 @@
-import { defaultDependencies, resolveProject } from "./shared.js";
+import {
+  defaultDependencies,
+  resolveProject,
+} from "../../../system/cli/command-support.js";
+import type { CommandRuntimeDependencies } from "../../../system/cli/command-support.js";
+import type { ApplicationDependencies } from "../../../system/bootstrap/types.js";
+
+type FeatureCommandDependencies = Pick<
+  ApplicationDependencies,
+  "loadConfig" | "createFeature"
+> &
+  Partial<CommandRuntimeDependencies>;
 
 export async function featureCommand(
   title: string,
   options: Record<string, unknown>,
-  dependencies: Record<string, unknown>,
+  dependencies: Partial<FeatureCommandDependencies>,
 ): Promise<{ id: string; directory: string }> {
   const { output, progress, loadConfig, createFeature } =
     defaultDependencies(dependencies);

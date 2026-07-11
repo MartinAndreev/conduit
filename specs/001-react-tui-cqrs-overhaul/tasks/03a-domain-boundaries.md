@@ -14,19 +14,19 @@ Interfaces, enums, and shared value types must not be declared in implementation
 
 ## Tasks
 
-- [ ] Move root configuration behavior from `src/config.ts` into `src/domains/configuration` repositories/handlers/types.
-- [ ] Move root feature-packet behavior from `src/features.ts` into `src/domains/features` repositories/handlers/types.
-- [ ] Move root run planning/execution behavior from `src/runs.ts` into `src/domains/runs` commands/handlers/repositories/types.
-- [ ] Move root skill and role behavior from `src/skills.ts` and role-template handling into `src/domains/roles`.
-- [ ] Move legacy `src/commands/*` handlers into their owning domain command and handler folders; preserve Commander as a thin CLI adapter only.
-- [ ] Move every command/query interface and result/read-model interface out of `commands`, `queries`, handlers, and repositories into the owning domain interface/type folder.
-- [ ] Remove root application modules once imports are migrated. No compatibility re-export files may remain at the root.
-- [ ] Update bootstrap composition so all handlers receive only their domain dependencies/repositories.
-- [ ] Add import-boundary tests that fail if application behavior is reintroduced at `src/` root or if a TUI module reads files/spawns processes directly.
+- [x] Move root configuration behavior from `src/config.ts` into `src/domains/configuration` repositories/handlers/types.
+- [x] Move root feature-packet behavior from `src/features.ts` into `src/domains/features` repositories/handlers/types.
+- [x] Move root run planning/execution behavior from `src/runs.ts` into `src/domains/runs` commands/handlers/repositories/types.
+- [x] Move root skill and role behavior from `src/skills.ts` and role-template handling into `src/domains/roles`.
+- [x] Move legacy `src/commands/*` handlers into their owning domain command and handler folders; preserve Commander as a thin CLI adapter only.
+- [x] Move every command/query interface and result/read-model interface out of `commands`, `queries`, handlers, and repositories into the owning domain interface/type folder.
+- [x] Remove root application modules once imports are migrated. No compatibility re-export files may remain at the root.
+- [x] Update bootstrap composition so all handlers receive only their domain dependencies/repositories.
+- [x] Add import-boundary tests that fail if application behavior is reintroduced at `src/` root or if a TUI module reads files/spawns processes directly.
 
 ## Acceptance criteria
 
-- [ ] No root `src/config.ts`, `src/features.ts`, `src/runs.ts`, `src/skills.ts`, or `src/commands/` implementation remains.
-- [ ] `src/system` has no product-domain rules and `src/tui` has no filesystem, process, credential, provider, or repository access.
-- [ ] Each handler receives explicit domain dependencies; no global service locator is introduced.
-- [ ] CLI command names, options, compact behavior, lint, formatting, strict typecheck, tests, package build, standalone build, and `pnpm start --help` all pass.
+- [x] No root `src/config.ts`, `src/features.ts`, `src/runs.ts`, `src/skills.ts`, or `src/commands/` implementation remains.
+- [x] `src/system` has no product-domain rules and `src/tui` has no filesystem, process, credential, provider, or repository access.
+- [x] Each handler receives explicit domain dependencies; no global service locator is introduced.
+- [x] CLI command names, options, compact behavior, lint, formatting, strict typecheck, tests, package build, standalone build, and `pnpm start --help` all pass.

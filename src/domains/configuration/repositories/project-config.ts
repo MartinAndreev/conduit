@@ -1,10 +1,7 @@
 import { readFile, writeFile, mkdir, access, cp } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
-import type {
-  Config,
-  RoleConfig,
-} from "./domains/configuration/types/config.js";
+import type { Config, RoleConfig } from "../types/config.js";
 
 export const CONFIG_FILE = "conduit.yml" as const;
 

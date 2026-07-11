@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { featureCommand } from "../src/commands/feature.js";
-import { runCommand } from "../src/commands/run.js";
+import { featureCommand } from "../src/domains/features/handlers/feature-command.js";
+import { runCommand } from "../src/domains/runs/handlers/run-command.js";
 
 test("feature handler can be tested without Commander or filesystem access", async () => {
   const output: string[] = [];
@@ -10,13 +10,16 @@ test("feature handler can be tested without Commander or filesystem access", asy
     { project: "/tmp/demo" },
     {
       output: (line: string) => output.push(line),
-      progress: async (
+      progress: async <T>(
         _text: string,
-        work: (params?: {
-          setText?: (text: string) => void;
-        }) => Promise<{ id: string; directory: string; title: string }>,
+        work: (params?: { setText?: (text: string) => void }) => Promise<T>,
       ) => work(),
-      loadConfig: async () => ({ specsDir: "specs" }),
+      loadConfig: async () => ({
+        version: 1,
+        specsDir: "specs",
+        stateDir: ".conduit",
+        roles: {},
+      }),
       createFeature: async ({ title }: { title: string }) => ({
         id: "007",
         directory: "/tmp/demo/specs/007-add-notes",
@@ -43,13 +46,16 @@ test("run handler executes by default unless dry-run is requested", async () => 
     },
     {
       output: () => {},
-      progress: async (
+      progress: async <T>(
         _text: string,
-        work: (params?: {
-          setText?: (text: string) => void;
-        }) => Promise<unknown>,
+        work: (params?: { setText?: (text: string) => void }) => Promise<T>,
       ) => work(),
-      loadConfig: async () => ({}),
+      loadConfig: async () => ({
+        version: 1,
+        specsDir: "specs",
+        stateDir: ".conduit",
+        roles: {},
+      }),
       planRun: async () => ({
         run: {
           id: "r1",

@@ -1,7 +1,10 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
-import { initializeProject, loadConfig } from "./config.js";
+import {
+  initializeProject,
+  loadConfig,
+} from "./domains/configuration/repositories/project-config.js";
 import {
   createFeature,
   findFeature,
@@ -9,27 +12,37 @@ import {
   writeTestCases,
   readStory,
   refinementPrompt,
-} from "./features.js";
-import { planRun, executeRun, latestRuns } from "./runs.js";
-import { resolveSkill } from "./skills.js";
-import { initCommand } from "./commands/init.js";
-import { featureCommand } from "./commands/feature.js";
-import { rolesCommand, resolveRoleCommand } from "./commands/roles.js";
-import { runCommand } from "./commands/run.js";
-import { statusCommand } from "./commands/status.js";
+} from "./domains/features/repositories/feature-packet-repository.js";
+import {
+  planRun,
+  executeRun,
+  latestRuns,
+} from "./domains/runs/repositories/run-orchestrator.js";
+import {
+  readRunRoleLog,
+  readRunRolePatch,
+} from "./domains/runs/repositories/run-artifacts-repository.js";
+import { resolveSkill } from "./domains/roles/repositories/skill-resolver.js";
+import { initCommand } from "./domains/configuration/handlers/init-command.js";
+import { featureCommand } from "./domains/features/handlers/feature-command.js";
+import {
+  rolesCommand,
+  resolveRoleCommand,
+} from "./domains/roles/handlers/roles-command.js";
+import { runCommand } from "./domains/runs/handlers/run-command.js";
+import { statusCommand } from "./domains/runs/handlers/status-command.js";
 import {
   refineCommand,
   collectRefinement,
   collectArchitectAnswers,
   runArchitect,
-} from "./commands/refine.js";
+} from "./domains/refinement/handlers/refine-command.js";
 import { startDashboard } from "./tui/dashboard.js";
 import { startArchitectRunView } from "./tui/architect-run.js";
 import { startWorkerRunView } from "./tui/worker-run.js";
-import { startHome } from "./tui/home.js";
 import { conduitVersion } from "./version.js";
 import { conduitBanner, shouldShowBanner } from "./banner.js";
-import { roleTemplates } from "./role-templates.js";
+import { roleTemplates } from "./domains/roles/assets/role-templates.js";
 import { createConfigurationRepository } from "./domains/configuration/repositories/configuration-repository.js";
 import {
   CompositeCredentialStore,
@@ -39,7 +52,7 @@ import { OSVaultStore } from "./domains/credentials/repositories/os-vault-store.
 import { LocalSpecKitProvider } from "./domains/features/providers/local-spec-kit-provider.js";
 import { createPortraitRegistry } from "./domains/roles/repositories/portrait-registry.js";
 import { createApplication } from "./system/bootstrap/application.js";
-import { isGitRepository } from "./commands/shared.js";
+import { isGitRepository } from "./system/cli/command-support.js";
 import { defaultPrompt, confirmYesNo } from "./helpers/prompt.js";
 import type { PromptFn } from "./helpers/prompt.js";
 
@@ -86,6 +99,8 @@ const dependencies = {
   planRun,
   executeRun,
   latestRuns,
+  readRunRoleLog,
+  readRunRolePatch,
   resolveSkill,
   builtinRoot: path.join(root, "skills", "roles"),
   templatesRoot: path.join(root, "skills"),
@@ -217,7 +232,6 @@ export async function handleBareConduit(
 ): Promise<void> {
   const prompt = deps?.prompt ?? defaultPrompt;
   const output = deps?.output ?? console.log;
-  const homeFn = deps?.startHome ?? startHome;
   const setExitCode =
     deps?.setExitCode ?? ((code: number) => (process.exitCode = code));
 
@@ -274,6 +288,7 @@ export async function handleBareConduit(
     portraitRegistry: settingsResult.portraitRegistry,
   });
 
+  const homeFn = deps?.startHome ?? (await import("./tui/home.js")).startHome;
   await homeFn({
     commandBus: app.commandBus,
     queryBus: app.queryBus,

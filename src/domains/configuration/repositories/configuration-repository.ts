@@ -1,7 +1,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { pathExists } from "../../../config.js";
+import { pathExists } from "./project-config.js";
 import type { Config } from "../types/config.js";
 import type {
   GlobalSettings,
@@ -176,7 +176,7 @@ export function createConfigurationRepository(): ConfigurationRepository {
     },
 
     async loadProjectConfig(projectRoot: string): Promise<Config> {
-      const { loadConfig } = await import("../../../config.js");
+      const { loadConfig } = await import("./project-config.js");
       return loadConfig(projectRoot);
     },
 

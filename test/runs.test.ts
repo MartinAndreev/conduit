@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { commandForRole } from "../src/runs.js";
+import { commandForRole } from "../src/domains/runs/repositories/run-orchestrator.js";
 
 test("builds subscription CLI commands for each supported runner", () => {
   assert.deepEqual(commandForRole({ runner: "opencode" }, "/tmp/task.md"), [

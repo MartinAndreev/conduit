@@ -1,7 +1,7 @@
 import { mkdir, writeFile, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import type { Config } from "./domains/configuration/types/config.js";
-import type { Feature } from "./domains/features/types/feature.js";
+import type { Config } from "../../configuration/types/config.js";
+import type { Feature } from "../types/feature.js";
 
 const slugify = (text: string): string =>
   text

@@ -1,10 +1,21 @@
 import path from "node:path";
-import { defaultDependencies, isGitRepository } from "./shared.js";
+import {
+  defaultDependencies,
+  isGitRepository,
+} from "../../../system/cli/command-support.js";
+import type { CommandRuntimeDependencies } from "../../../system/cli/command-support.js";
+import type { ApplicationDependencies } from "../../../system/bootstrap/types.js";
+
+type InitCommandDependencies = Pick<
+  ApplicationDependencies,
+  "initializeProject" | "templatesRoot" | "roleTemplates"
+> &
+  Partial<CommandRuntimeDependencies>;
 
 export async function initCommand(
   target: string,
   options: Record<string, unknown>,
-  dependencies: Record<string, unknown>,
+  dependencies: Partial<InitCommandDependencies>,
 ): Promise<void> {
   const { output, progress, initializeProject, templatesRoot, roleTemplates } =
     defaultDependencies(dependencies);

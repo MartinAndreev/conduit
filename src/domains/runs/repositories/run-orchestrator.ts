@@ -2,9 +2,9 @@ import { mkdir, readFile, writeFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcess, SpawnSyncReturns } from "node:child_process";
-import { resolveSkill } from "./skills.js";
-import type { Config } from "./domains/configuration/types/config.js";
-import type { Run, RunRole, RunResult } from "./domains/runs/types/run.js";
+import { resolveSkill } from "../../roles/repositories/skill-resolver.js";
+import type { Config } from "../../configuration/types/config.js";
+import type { Run, RunRole, RunResult } from "../types/run.js";
 
 interface RunnerAdapter {
   command: string;

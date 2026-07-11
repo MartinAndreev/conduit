@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { sha256 } from "../src/skills.js";
-import { resolveSkill } from "../src/skills.js";
+import {
+  resolveSkill,
+  sha256,
+} from "../src/domains/roles/repositories/skill-resolver.js";
 
 test("sha256 is stable for pinned remote skills", () => {
   assert.equal(

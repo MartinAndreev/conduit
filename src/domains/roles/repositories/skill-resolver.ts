@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
-import { pathExists } from "./config.js";
-import { roleTemplates } from "./role-templates.js";
-import type { RoleConfig } from "./domains/configuration/types/config.js";
-import type { SkillResolution } from "./domains/roles/types/skill.js";
+import { pathExists } from "../../configuration/repositories/project-config.js";
+import { roleTemplates } from "../assets/role-templates.js";
+import type { RoleConfig } from "../../configuration/types/config.js";
+import type { SkillResolution } from "../types/skill.js";
 
 const sha256 = (content: string): string =>
   createHash("sha256").update(content).digest("hex");

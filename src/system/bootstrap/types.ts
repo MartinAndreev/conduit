@@ -45,6 +45,13 @@ export interface ApplicationDependencies {
     config: Config;
     runs: Run[];
     selectedRunId: string;
+    readRoleLog: (
+      projectRoot: string,
+      config: Config,
+      run: Run,
+      role: Run["roles"][number],
+    ) => Promise<string>;
+    readRolePatch: (role: Run["roles"][number]) => string | undefined;
   }) => Promise<void>;
   startArchitectRunView: (params: {
     featureId: string;
@@ -83,6 +90,13 @@ export interface ApplicationDependencies {
     signal?: AbortSignal;
   }) => Promise<RunResult[]>;
   latestRuns: (projectRoot: string, config: Config) => Promise<Run[]>;
+  readRunRoleLog: (
+    projectRoot: string,
+    config: Config,
+    run: Run,
+    role: Run["roles"][number],
+  ) => Promise<string>;
+  readRunRolePatch: (role: Run["roles"][number]) => string | undefined;
   resolveSkill: (params: {
     projectRoot: string;
     roleName: string;

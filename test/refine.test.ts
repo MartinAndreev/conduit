@@ -7,7 +7,7 @@ import type { Config } from "../src/domains/configuration/types/config.js";
 import {
   architectProgressMessage,
   refineCommand,
-} from "../src/commands/refine.js";
+} from "../src/domains/refinement/handlers/refine-command.js";
 
 const stubConfig: Config = {
   version: 1,

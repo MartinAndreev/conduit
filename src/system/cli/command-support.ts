@@ -1,7 +1,13 @@
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import ora from "ora";
-import type { ApplicationDependencies } from "../system/bootstrap/types.js";
+export interface CommandRuntimeDependencies {
+  output: (message: string) => void;
+  progress: <T>(
+    text: string,
+    work: (params?: { setText?: (text: string) => void }) => Promise<T>,
+  ) => Promise<T>;
+}
 
 export function resolveProject(project?: string): string {
   return path.resolve(project ?? process.cwd());
@@ -42,12 +48,12 @@ export async function progress<T>(
   }
 }
 
-export function defaultDependencies(
-  dependencies: Record<string, unknown>,
-): ApplicationDependencies {
+export function defaultDependencies<T extends object>(
+  dependencies: Partial<T>,
+): T & CommandRuntimeDependencies {
   return {
     output: console.log,
     progress,
     ...dependencies,
-  } as ApplicationDependencies;
+  } as T & CommandRuntimeDependencies;
 }

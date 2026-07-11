@@ -2,11 +2,33 @@ import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { defaultDependencies, resolveProject } from "./shared.js";
-import type { RefinementResult } from "../domains/refinement/types/refinement.js";
-import type { Run } from "../domains/runs/types/run.js";
-import type { ApplicationDependencies } from "../system/bootstrap/types.js";
-import { textarea } from "../tui/textarea.js";
+import {
+  defaultDependencies,
+  resolveProject,
+} from "../../../system/cli/command-support.js";
+import type { RefinementResult } from "../types/refinement.js";
+import type { Run } from "../../runs/types/run.js";
+import type { ApplicationDependencies } from "../../../system/bootstrap/types.js";
+import { textarea } from "../../../tui/textarea.js";
+import type { CommandRuntimeDependencies } from "../../../system/cli/command-support.js";
+
+type RefinementCommandDependencies = Pick<
+  ApplicationDependencies,
+  | "loadConfig"
+  | "findFeature"
+  | "writeStory"
+  | "writeTestCases"
+  | "readStory"
+  | "refinementPrompt"
+  | "collectRefinement"
+  | "collectArchitectAnswers"
+  | "runArchitect"
+  | "startArchitectRunView"
+  | "startDashboard"
+  | "readRunRoleLog"
+  | "readRunRolePatch"
+> &
+  Partial<CommandRuntimeDependencies>;
 
 export async function collectRefinement(): Promise<{
   story: string;
@@ -109,7 +131,7 @@ export async function refineCommand(
     interactive?: boolean;
     compact?: boolean;
   },
-  dependencies: Partial<ApplicationDependencies>,
+  dependencies: Partial<RefinementCommandDependencies>,
 ): Promise<RefinementResult> {
   const {
     output,
@@ -125,6 +147,8 @@ export async function refineCommand(
     runArchitect: runArch,
     startArchitectRunView,
     startDashboard,
+    readRunRoleLog,
+    readRunRolePatch,
   } = defaultDependencies(dependencies);
   const projectRoot = resolveProject(options.project);
   const config = await loadConfig(projectRoot);
@@ -298,6 +322,8 @@ export async function refineCommand(
       config,
       runs: [architectRun as unknown as Run],
       selectedRunId: architectRun.id,
+      readRoleLog: readRunRoleLog,
+      readRolePatch: readRunRolePatch,
     });
   return {
     feature,

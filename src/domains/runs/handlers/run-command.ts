@@ -1,11 +1,28 @@
-import { defaultDependencies, resolveProject } from "./shared.js";
-import type { RunResult } from "../domains/runs/types/run.js";
-import type { ApplicationDependencies } from "../system/bootstrap/types.js";
+import {
+  defaultDependencies,
+  resolveProject,
+} from "../../../system/cli/command-support.js";
+import type { RunResult } from "../types/run.js";
+import type { ApplicationDependencies } from "../../../system/bootstrap/types.js";
+import type { CommandRuntimeDependencies } from "../../../system/cli/command-support.js";
+
+type RunCommandDependencies = Pick<
+  ApplicationDependencies,
+  | "loadConfig"
+  | "planRun"
+  | "executeRun"
+  | "builtinRoot"
+  | "startWorkerRunView"
+  | "startDashboard"
+  | "readRunRoleLog"
+  | "readRunRolePatch"
+> &
+  Partial<CommandRuntimeDependencies>;
 
 export async function runCommand(
   featureId: string,
   options: Record<string, unknown>,
-  dependencies: Record<string, unknown>,
+  dependencies: Partial<RunCommandDependencies>,
 ): Promise<RunResult[]> {
   const {
     output,
@@ -16,6 +33,8 @@ export async function runCommand(
     builtinRoot,
     startWorkerRunView,
     startDashboard,
+    readRunRoleLog,
+    readRunRolePatch,
   } = defaultDependencies(dependencies);
   const projectRoot = resolveProject(options.project as string | undefined);
   const config = await loadConfig(projectRoot);
@@ -104,6 +123,8 @@ export async function runCommand(
       config,
       runs: [run],
       selectedRunId: run.id,
+      readRoleLog: readRunRoleLog,
+      readRolePatch: readRunRolePatch,
     });
   return results;
 }

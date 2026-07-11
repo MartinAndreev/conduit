@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { defaultConfig, parseConfig, serializeConfig } from "../src/config.js";
+import {
+  defaultConfig,
+  parseConfig,
+  serializeConfig,
+} from "../src/domains/configuration/repositories/project-config.js";
 
 test("generated config round-trips built-in roles", () => {
   const parsed = parseConfig(serializeConfig(defaultConfig));

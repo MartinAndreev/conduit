@@ -6,7 +6,7 @@ import type {
   FeatureMetadata,
   FeatureLifecycle,
 } from "../types/feature.js";
-import { pathExists } from "../../../config.js";
+import { pathExists } from "../../configuration/repositories/project-config.js";
 
 const METADATA_FILE = "metadata.yml";
 

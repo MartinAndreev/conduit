@@ -1,9 +1,22 @@
-import { defaultDependencies, resolveProject } from "./shared.js";
-import type { RoleConfig } from "../domains/configuration/types/config.js";
+import {
+  defaultDependencies,
+  resolveProject,
+} from "../../../system/cli/command-support.js";
+import type { RoleConfig } from "../../configuration/types/config.js";
+import type { ApplicationDependencies } from "../../../system/bootstrap/types.js";
+import type { CommandRuntimeDependencies } from "../../../system/cli/command-support.js";
+
+type RolesCommandDependencies = Pick<ApplicationDependencies, "loadConfig"> &
+  Partial<CommandRuntimeDependencies>;
+type ResolveRoleCommandDependencies = Pick<
+  ApplicationDependencies,
+  "loadConfig" | "resolveSkill" | "builtinRoot"
+> &
+  Partial<CommandRuntimeDependencies>;
 
 export async function rolesCommand(
   options: Record<string, unknown>,
-  dependencies: Record<string, unknown>,
+  dependencies: Partial<RolesCommandDependencies>,
 ): Promise<void> {
   const { output, loadConfig } = defaultDependencies(dependencies);
   const config = await loadConfig(
@@ -20,7 +33,7 @@ export async function rolesCommand(
 export async function resolveRoleCommand(
   name: string,
   options: Record<string, unknown>,
-  dependencies: Record<string, unknown>,
+  dependencies: Partial<ResolveRoleCommandDependencies>,
 ): Promise<void> {
   const { output, progress, loadConfig, resolveSkill, builtinRoot } =
     defaultDependencies(dependencies);
