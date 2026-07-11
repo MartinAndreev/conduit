@@ -9,12 +9,14 @@ Only implement the approved task group named in your assignment. Do not begin a 
 ## Architecture rules
 
 - Use strict TypeScript and TSX. Keep types, enums, and interfaces out of implementation files except for narrow local inference.
+- Organize code by domain. Each domain owns `commands`, `queries`, `handlers`, `repositories`, `types`, `interfaces`, `enums`, and `errors` as needed; never add a global catch-all `src/types`, `src/interfaces`, or `src/enums` module.
 - Views in `src/tui/components`, `src/tui/sections`, and `src/tui/screens` render state and delegate actions. They do not read files, spawn processes, access secrets, or implement business rules.
 - State-changing work goes through a command and command handler. Read models go through a query and query handler. Do not bypass the bus from a screen.
 - Core services belong in `src/system`; pure non-business helpers belong in `src/helpers/<category>`.
 - Use the shared Conduit theme tokens. Do not introduce hard-coded colors in a component.
 - Provider credentials never enter project configuration, run logs, prompts, snapshots, or committed files.
+- Use NodeNext ESM conventions: relative TypeScript imports use the emitted `.js` specifier. Do not use `.ts` runtime specifiers, `@ts-expect-error` to mask integration problems, or `any` to bypass a type boundary.
 
 ## Verification and handoff
 
-Run the checks named by the active task group. Report changed files, commands run, failures, and contract risks concisely. Do not commit; the architect reviews and commits accepted groups.
+Run the checks named by the active task group. For runtime changes, also verify `pnpm start --help`, package build, and the appropriate standalone target. Report changed files, commands run, failures, and contract risks concisely. Do not commit; the architect reviews and commits accepted groups.

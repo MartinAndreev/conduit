@@ -1,5 +1,12 @@
 # Group 4 — Refinement and architect activity
 
+## Implementation guardrails
+
+- Run exactly one implementation process and wait for its exit before any continuation.
+- Put refinement contracts, commands, queries, handlers, and errors under `src/domains/refinement`; screens stay in `src/tui` and call the buses only.
+- Use NodeNext ESM `.js` import specifiers and avoid `any` or `@ts-expect-error` as a substitute for a contract.
+- Verify lint, formatting, typecheck, tests, package build, standalone build, and `pnpm start --help` before handoff.
+
 ## Scope
 
 Implement the shared refinement route used by Home and interactive `conduit refine`, including drafts, preview approval, and structured architect activity.

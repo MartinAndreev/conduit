@@ -2,3 +2,8 @@ dist/
 node_modules/
 .conduit/
 *.lock
+pnpm-lock.yaml
+test/fixtures/*.jsonl
+test/fixtures/kilo-output.json
+test/fixtures/opencode-output.json
+test/fixtures/pi-output.json

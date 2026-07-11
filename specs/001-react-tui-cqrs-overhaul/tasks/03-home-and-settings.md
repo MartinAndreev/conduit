@@ -1,5 +1,12 @@
 # Group 3 — Settings, Local Spec Kit, onboarding, and Home
 
+## Implementation guardrails
+
+- Run exactly one implementation process. Wait for it to exit and report its result before any continuation or replacement.
+- Keep all new contracts in their owning domain; do not recreate global type, interface, or enum indexes.
+- Preserve NodeNext ESM `.js` import specifiers and prove the development CLI with `pnpm start --help`.
+- Do not hide a boundary failure with `any` or `@ts-expect-error`; add or refine a domain contract instead.
+
 ## Scope
 
 Implement platform global settings with local overrides, secure credential storage abstraction, Local Spec Kit feature provider, explicit metadata, initialization/onboarding, and the Home screen.

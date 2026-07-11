@@ -1,16 +1,41 @@
 # Conduit architecture
 
-## Layers
+## Domain-first layout
 
-Conduit is a TypeScript CLI with a React/OpenTUI presentation layer.
+Conduit is a TypeScript CLI with a React/OpenTUI presentation layer. Application code is organized by domain rather than by one global category of types or handlers.
 
-| Layer                                      | Responsibility                                                                      | May depend on                        |
-| ------------------------------------------ | ----------------------------------------------------------------------------------- | ------------------------------------ |
-| `src/tui`                                  | Screens, sections, components, view hooks, keyboard routing                         | application read models and commands |
-| `src/commands`, `src/queries`              | Application use cases and handlers                                                  | system services, contracts, helpers  |
-| `src/system`                               | Bootstrap, buses, configuration, providers, credentials, runners, process lifecycle | contracts, helpers                   |
-| `src/types`, `src/enums`, `src/interfaces` | Shared application contracts                                                        | no implementation layer              |
-| `src/helpers`                              | Pure formatting, string, file, and parsing helpers                                  | platform libraries only              |
+```text
+src/
+  domains/
+    runs/
+      commands/  queries/  handlers/  repositories/
+      types/     interfaces/  enums/  errors/
+    refinement/
+    features/
+    configuration/
+    roles/
+  tui/
+    components/  sections/  screens/
+  system/
+    bootstrap/  buses/  database/  runners/
+  helpers/
+    file/  formatting/  string/
+```
+
+Each domain owns its commands, queries, handlers, types, interfaces, enums, errors, and repositories. Do not create catch-all `types`, `enums`, or `interfaces` modules at the application root. A small domain barrel is acceptable when it makes an intentional public boundary clearer.
+
+## Repository and database boundary
+
+Only repository implementations access SQLite. A repository receives a database executor/connection through its constructor and exposes a domain-specific interface; command and query handlers receive repository instances through application dependency injection. Screens, components, helpers, and domain types must never access SQLite directly.
+
+`src/system/bootstrap` is the composition root: it opens the database, constructs repositories, registers handlers on the command/query buses, and passes the resulting application services to the CLI and TUI.
+
+| Layer         | Responsibility                                                                        | May depend on                        |
+| ------------- | ------------------------------------------------------------------------------------- | ------------------------------------ |
+| `src/tui`     | Screens, sections, components, view hooks, keyboard routing                           | application read models and commands |
+| `src/domains` | Domain use cases, contracts, errors, and repository interfaces/implementations        | system contracts, helpers            |
+| `src/system`  | Bootstrap, buses, database driver, providers, credentials, runners, process lifecycle | domains, helpers                     |
+| `src/helpers` | Pure formatting, string, file, and parsing helpers                                    | platform libraries only              |
 
 ## CQRS
 

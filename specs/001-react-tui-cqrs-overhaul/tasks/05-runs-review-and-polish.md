@@ -1,5 +1,13 @@
 # Group 5 — Worker monitoring, review, and polish
 
+## Implementation guardrails
+
+- Run exactly one implementation process and wait for its exit before any continuation.
+- Runner event types belong in `src/domains/runs/types`; `src/system/runners` owns only adapter and process-normalization behavior.
+- Add persistence behind domain repository interfaces, never direct database access from a screen or helper.
+- Use NodeNext ESM `.js` import specifiers, avoid catch-all contract indexes, and do not conceal type failures with `any` or `@ts-expect-error`.
+- Verify lint, formatting, typecheck, tests, package build, standalone build, and `pnpm start --help` before handoff.
+
 ## Scope
 
 Finish the React run experience, preserve compact CLI operations, add architect review handoff, and complete role portraits and regression coverage.

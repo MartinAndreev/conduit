@@ -1,0 +1,6 @@
+{"type":"message","content":"Starting opencode run"}
+{"type":"message","content":"Implementing UI component"}
+{"type":"tool_use","name":"write","input":{"file":"src/components/Button.tsx"}}
+{"type":"tool_result","name":"write","content":"File written successfully"}
+{"type":"message","content":"Generated patch"}
+{"type":"message","content":"Implementation completed"}
