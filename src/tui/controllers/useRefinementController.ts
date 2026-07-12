@@ -141,6 +141,7 @@ export function useRefinementController(
   }, []);
   const [values, setValues] = useState<Record<string, string>>({});
   const [architectEnabled, setArchitectEnabled] = useState(false);
+  const [researchEnabled, setResearchEnabled] = useState(false);
   const [architectPreferences, setArchitectPreferences] =
     useState<ArchitectPreferences>(DEFAULT_ARCHITECT_PREFERENCES);
   const [packetContent, setPacketContent] =
@@ -149,6 +150,7 @@ export function useRefinementController(
   const [questions, setQuestions] = useState<readonly ClarificationQuestion[]>(
     [],
   );
+  const [researchReport, setResearchReport] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     let hasPacket = false;
@@ -278,6 +280,23 @@ export function useRefinementController(
     setView("preview");
   }, []);
 
+  const startResearch = useCallback(() => {
+    const story = buildStory(values);
+    setResearchReport(null);
+    setView("research");
+    void commandBus
+      .dispatch({ type: "startResearchRefinement", featureId, story })
+      .then((result) => {
+        if (!result.success) {
+          setError(result.error.message);
+          return;
+        }
+        const data = result.data as { report: string };
+        setResearchReport(data.report);
+        setView("researchReview");
+      });
+  }, [buildStory, commandBus, featureId, setError, setView, values]);
+
   const approvePreview = useCallback(async () => {
     try {
       const story = buildStory(values);
@@ -293,7 +312,9 @@ export function useRefinementController(
         return;
       }
 
-      if (architectEnabled) {
+      if (architectEnabled && researchEnabled) {
+        startResearch();
+      } else if (architectEnabled) {
         dispatchLifecycle({ type: "startArchitect" });
         void commandBus
           .dispatch({
@@ -331,11 +352,13 @@ export function useRefinementController(
     featureId,
     values,
     architectEnabled,
+    researchEnabled,
     architectPreferences,
     buildStory,
     onExit,
     refreshPacketContent,
     refreshRevision,
+    startResearch,
   ]);
 
   const rejectPreview = useCallback(() => {
@@ -348,6 +371,9 @@ export function useRefinementController(
 
   const toggleArchitect = useCallback(() => {
     setArchitectEnabled((prev) => !prev);
+  }, []);
+  const toggleResearch = useCallback(() => {
+    setResearchEnabled((prev) => !prev);
   }, []);
   const cycleArchitectPreference = useCallback(
     (kind: "effort" | "detailLevel") => {
@@ -413,6 +439,12 @@ export function useRefinementController(
       architectPreferences,
     ],
   );
+  const acceptResearch = useCallback(() => {
+    startArchitectPass();
+  }, [startArchitectPass]);
+  const cancelResearch = useCallback(async () => {
+    await commandBus.dispatch({ type: "cancelResearchRefinement", featureId });
+  }, [commandBus, featureId]);
   const submitAnswers = useCallback(
     async (answers: string) => {
       if (!revision) return;
@@ -473,12 +505,14 @@ export function useRefinementController(
       loading,
       error,
       architectEnabled,
+      researchEnabled,
       architectPreferences,
       architectLifecycle,
       architectRunning,
       packetContent,
       revision,
       questions,
+      researchReport,
     },
     {
       setView,
@@ -489,7 +523,11 @@ export function useRefinementController(
       rejectPreview,
       quitPreview,
       toggleArchitect,
+      toggleResearch,
       cycleArchitectPreference,
+      startResearch,
+      acceptResearch,
+      cancelResearch,
       editPacketBrief,
       cancelArchitect,
       submitAnswers,

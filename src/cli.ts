@@ -193,6 +193,7 @@ export function createProgram(
             createFeature,
             findFeature,
             planRun,
+            executeRun,
             latestRuns,
             configurationRepository: settingsResult.configurationRepository,
             credentialStore: settingsResult.credentialStore,
@@ -340,6 +341,7 @@ export async function handleBareConduit(
     createFeature,
     findFeature,
     planRun,
+    executeRun,
     latestRuns,
     configurationRepository: settingsResult.configurationRepository,
     credentialStore: settingsResult.credentialStore,
@@ -348,6 +350,7 @@ export async function handleBareConduit(
     refinementPrompt: localSpecKitRefinementPrompt,
     runArchitect,
     cancelArchitect: cancelArchitectForFeature,
+    builtinRoleRoot: path.join(root, "skills", "roles"),
     projectRoot,
   });
 

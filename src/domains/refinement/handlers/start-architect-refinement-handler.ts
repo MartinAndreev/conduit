@@ -53,6 +53,10 @@ export function createStartArchitectRefinementHandler(
         config,
         featureId: command.featureId,
       });
+      const research = await readFile(
+        path.join(feature.directory, "research.md"),
+        "utf8",
+      ).catch(() => "");
       const latest = await deps.revisionRepository.getLatest(feature);
       const revision =
         latest && command.revisionId === latest.id
@@ -85,7 +89,7 @@ export function createStartArchitectRefinementHandler(
             )
             .join(
               "\n",
-            )}${guidance ? `\n\n# Project architect guidance (advisory)\n\n${guidance}` : ""}`,
+            )}${research.trim() ? `\n\n# Reviewed research context\n\n${research.trim()}` : ""}${guidance ? `\n\n# Project architect guidance (advisory)\n\n${guidance}` : ""}`,
         ),
         logFile,
       });

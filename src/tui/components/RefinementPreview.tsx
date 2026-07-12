@@ -6,6 +6,7 @@ interface RefinementPreviewProps {
   theme: Theme;
   values: Record<string, string>;
   architectEnabled: boolean;
+  researchEnabled: boolean;
   architectPreferences: ArchitectPreferences;
 }
 
@@ -13,6 +14,7 @@ export function RefinementPreview({
   theme,
   values,
   architectEnabled,
+  researchEnabled,
   architectPreferences,
 }: RefinementPreviewProps) {
   const markdown = [
@@ -52,7 +54,7 @@ export function RefinementPreview({
 
       <box width="100%" height={2} flexDirection="row" justifyContent="center">
         <text
-          content="r: return · a: approve/start architect · q: quit · t: toggle architect · e: effort · l: detail"
+          content="r: return · a: approve · q: quit · t: architect · s: research · e: effort · l: detail"
           fg={theme.text.muted}
         />
       </box>
@@ -68,12 +70,19 @@ export function RefinementPreview({
 
       <box
         width="100%"
-        height={5}
+        height={6}
         flexDirection="column"
         paddingLeft={1}
         backgroundColor={theme.surface.raised}
         marginTop={1}
       >
+        <box flexDirection="row">
+          <text content="Research [s]: " fg={theme.text.muted} />
+          <text
+            content={researchEnabled ? "ON (preflight)" : "OFF"}
+            fg={researchEnabled ? theme.action.attention : theme.text.muted}
+          />
+        </box>
         <box flexDirection="row">
           <text content="Architect: " fg={theme.text.muted} />
           <text
@@ -107,7 +116,9 @@ export function RefinementPreview({
         <text
           content={
             architectEnabled
-              ? "a: approve → start architect · e: cycle effort · l: cycle detail"
+              ? researchEnabled
+                ? "a: approve → research preflight · e: cycle effort · l: cycle detail"
+                : "a: approve → start architect · e: cycle effort · l: cycle detail"
               : "a: approve → return to home"
           }
           fg={theme.text.muted}

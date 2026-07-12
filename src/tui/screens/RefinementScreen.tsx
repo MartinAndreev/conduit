@@ -16,6 +16,7 @@ import { RefinementSidebar } from "@tui/sections/RefinementSidebar.js";
 import { RefinementPacketSummary } from "@tui/components/RefinementPacketSummary.js";
 import { ArchitectClarifications } from "@tui/components/ArchitectClarifications.js";
 import { RefinementPacketReview } from "@tui/components/RefinementPacketReview.js";
+import { ResearchReport } from "@tui/components/ResearchReport.js";
 
 interface RefinementScreenProps {
   commandBus: CommandBus;
@@ -50,6 +51,7 @@ export function RefinementScreen({
       reject: actions.rejectPreview,
       quit: actions.quitPreview,
       toggleArchitect: actions.toggleArchitect,
+      toggleResearch: actions.toggleResearch,
       cycleArchitectPreference: actions.cycleArchitectPreference,
     },
     state.view === "preview",
@@ -157,6 +159,7 @@ export function RefinementScreen({
               theme={theme}
               values={state.values}
               architectEnabled={state.architectEnabled}
+              researchEnabled={state.researchEnabled}
               architectPreferences={state.architectPreferences}
             />
           </box>
@@ -170,6 +173,25 @@ export function RefinementScreen({
           {...architect}
           featureId={featureId}
           running={state.architectRunning}
+        />
+      );
+
+    case "research":
+    case "researchReview":
+      return (
+        <ResearchReport
+          theme={theme}
+          report={state.view === "researchReview" ? state.researchReport : null}
+          onAccept={
+            state.view === "researchReview" ? actions.acceptResearch : () => {}
+          }
+          onRerun={actions.startResearch}
+          onEdit={() => actions.setView("form")}
+          onExit={() => {
+            if (state.view === "research")
+              void actions.cancelResearch().finally(onExit);
+            else onExit();
+          }}
         />
       );
 

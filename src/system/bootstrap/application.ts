@@ -31,6 +31,9 @@ import { createListDraftsHandler } from "../../domains/refinement/handlers/list-
 import { createApproveRefinementHandler } from "../../domains/refinement/handlers/approve-refinement-handler.js";
 import { createGetArchitectEventsHandler } from "../../domains/refinement/handlers/get-architect-events-handler.js";
 import { createStartArchitectRefinementHandler } from "../../domains/refinement/handlers/start-architect-refinement-handler.js";
+import { createStartResearchRefinementHandler } from "../../domains/refinement/handlers/start-research-refinement-handler.js";
+import { cancelResearchForFeature } from "../../domains/refinement/handlers/start-research-refinement-handler.js";
+import { createCancelResearchRefinementHandler } from "../../domains/refinement/handlers/cancel-research-refinement-handler.js";
 import { createCancelArchitectRefinementHandler } from "../../domains/refinement/handlers/cancel-architect-refinement-handler.js";
 import { createSubmitArchitectAnswersHandler } from "../../domains/refinement/handlers/submit-architect-answers-handler.js";
 import { createReviewRefinementPacketHandler } from "../../domains/refinement/handlers/review-refinement-packet-handler.js";
@@ -88,6 +91,12 @@ export interface BootstrapDependencies {
     builtinRoot: string;
     fetchSkills?: boolean;
   }) => Promise<{ run: Run; runDir: string }>;
+  executeRun?: (params: {
+    projectRoot: string;
+    run: Run;
+    runDir: string;
+    dryRun?: boolean;
+  }) => Promise<import("../../domains/runs/types/run.js").RunResult[]>;
   latestRuns: (projectRoot: string, config: Config) => Promise<Run[]>;
   configurationRepository: ConfigurationRepository;
   credentialStore: CredentialStore;
@@ -273,6 +282,25 @@ export function createApplication(deps: BootstrapDependencies): Application {
         projectRoot,
       }) as CommandHandler,
     );
+    if (deps.executeRun && deps.builtinRoleRoot) {
+      commandBus.register(
+        "startResearchRefinement",
+        createStartResearchRefinementHandler({
+          projectRoot,
+          builtinRoleRoot: deps.builtinRoleRoot,
+          loadConfig: deps.loadConfig,
+          findFeature: deps.findFeature,
+          planRun: deps.planRun,
+          executeRun: deps.executeRun,
+        }) as CommandHandler,
+      );
+      commandBus.register(
+        "cancelResearchRefinement",
+        createCancelResearchRefinementHandler(
+          cancelResearchForFeature,
+        ) as CommandHandler,
+      );
+    }
     if (deps.refinementPrompt && deps.runArchitect) {
       commandBus.register(
         "startArchitectRefinement",

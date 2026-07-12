@@ -11,6 +11,8 @@ export type RefinementView =
   | "form"
   | "packet"
   | "preview"
+  | "research"
+  | "researchReview"
   | "architect"
   | "clarifications"
   | "review"
@@ -42,12 +44,14 @@ export interface RefinementControllerState {
   readonly loading: boolean;
   readonly error: string | null;
   readonly architectEnabled: boolean;
+  readonly researchEnabled: boolean;
   readonly architectPreferences: ArchitectPreferences;
   readonly architectLifecycle: ArchitectLifecycle;
   readonly architectRunning: boolean;
   readonly packetContent: RefinementPacketContent | null;
   readonly revision: RefinementRevision | null;
   readonly questions: readonly ClarificationQuestion[];
+  readonly researchReport: string | null;
 }
 
 export interface RefinementControllerActions {
@@ -59,7 +63,11 @@ export interface RefinementControllerActions {
   rejectPreview(): void;
   quitPreview(): void;
   toggleArchitect(): void;
+  toggleResearch(): void;
   cycleArchitectPreference(kind: "effort" | "detailLevel"): void;
+  startResearch(): void;
+  acceptResearch(): void;
+  cancelResearch(): Promise<void>;
   editPacketBrief(): void;
   cancelArchitect(): Promise<void>;
   submitAnswers(answers: string): Promise<void>;
