@@ -8,25 +8,42 @@ interface StoredEvents {
 }
 
 export class FileRunEventRepository implements RunEventRepository {
+  private readonly pendingWrites = new Map<string, Promise<void>>();
+
   constructor(private readonly stateDir: string) {}
 
   private eventsPath(runId: string): string {
     return path.join(this.stateDir, "runs", runId, "events.json");
   }
 
+  private enqueue(runId: string, write: () => Promise<void>): Promise<void> {
+    const previous = this.pendingWrites.get(runId) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(write);
+    this.pendingWrites.set(runId, next);
+    void next
+      .finally(() => {
+        if (this.pendingWrites.get(runId) === next)
+          this.pendingWrites.delete(runId);
+      })
+      .catch(() => {});
+    return next;
+  }
+
   async append(event: RunnerEvent): Promise<void> {
-    const filePath = this.eventsPath(event.runId);
-    await mkdir(path.dirname(filePath), { recursive: true });
-    let events: RunnerEvent[] = [];
-    try {
-      const raw = await readFile(filePath, "utf8");
-      const stored: StoredEvents = JSON.parse(raw);
-      events = [...stored.events];
-    } catch {
-      // File doesn't exist yet
-    }
-    events.push(event);
-    await writeFile(filePath, JSON.stringify({ events }, null, 2));
+    await this.enqueue(event.runId, async () => {
+      const filePath = this.eventsPath(event.runId);
+      await mkdir(path.dirname(filePath), { recursive: true });
+      let events: RunnerEvent[] = [];
+      try {
+        const raw = await readFile(filePath, "utf8");
+        const stored: StoredEvents = JSON.parse(raw);
+        events = [...stored.events];
+      } catch {
+        // File doesn't exist yet
+      }
+      events.push(event);
+      await writeFile(filePath, JSON.stringify({ events }, null, 2));
+    });
   }
 
   async loadByRun(runId: string): Promise<readonly RunnerEvent[]> {
@@ -55,7 +72,10 @@ export class FileRunEventRepository implements RunEventRepository {
   }
 
   async clear(runId: string): Promise<void> {
-    const filePath = this.eventsPath(runId);
-    await writeFile(filePath, JSON.stringify({ events: [] }, null, 2));
+    await this.enqueue(runId, async () => {
+      const filePath = this.eventsPath(runId);
+      await mkdir(path.dirname(filePath), { recursive: true });
+      await writeFile(filePath, JSON.stringify({ events: [] }, null, 2));
+    });
   }
 }

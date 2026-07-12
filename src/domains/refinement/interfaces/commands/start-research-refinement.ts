@@ -7,6 +7,6 @@ export interface StartResearchRefinementCommand extends Command {
 }
 
 export interface StartResearchRefinementResult {
-  readonly report: string;
+  readonly runId: string;
   readonly reportFile: string;
 }

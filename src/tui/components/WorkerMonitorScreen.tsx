@@ -28,6 +28,7 @@ interface WorkerMonitorScreenProps {
   readonly error: string | null;
   readonly cancelled: boolean;
   readonly focusMode: WorkerMonitorFocus;
+  readonly cancelOnExit?: boolean;
 }
 
 export function WorkerMonitorScreen(props: WorkerMonitorScreenProps) {
@@ -60,11 +61,15 @@ export function WorkerMonitorScreen(props: WorkerMonitorScreenProps) {
       padding={1}
     >
       <text
-        content={`Conduit · Worker Monitor · ${props.runId}`}
+        content={`Conduit · ${props.cancelOnExit ? "Research preflight" : "Worker Monitor"} · ${props.runId}`}
         fg={theme.text.strong}
       />
       <text
-        content="Tab focus · ↑/↓ navigate · Enter select/toggle · j/k scroll activity · Ctrl+C cancel · q exit"
+        content={
+          props.cancelOnExit
+            ? "Tab focus · ↑/↓ navigate · Enter select/toggle · j/k scroll activity · Ctrl+C cancel · Esc/q cancel and exit"
+            : "Tab focus · ↑/↓ navigate · Enter select/toggle · j/k scroll activity · Ctrl+C cancel · q exit"
+        }
         fg={theme.text.muted}
       />
       {props.cancelled && (
@@ -116,7 +121,9 @@ export function WorkerMonitorScreen(props: WorkerMonitorScreenProps) {
                 message={role.message}
                 state={role.state}
                 mascotRole={
-                  role.roleId === "architect" ? "architect" : undefined
+                  role.roleId === "architect" || role.roleId === "researcher"
+                    ? role.roleId
+                    : undefined
                 }
               />
               <text

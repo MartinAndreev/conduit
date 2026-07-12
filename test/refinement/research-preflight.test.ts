@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createStartResearchRefinementHandler } from "@domains/refinement/handlers/start-research-refinement-handler.js";
@@ -55,13 +55,33 @@ test("research preflight saves a visible report before architect refinement", as
           ],
         },
       }),
-      executeRun: async () => [
-        {
-          role: "researcher",
-          status: "completed",
-          output: "## Confirmed facts\n\n- `src/auth.ts` owns login.",
-        },
-      ],
+      executeRun: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        await writeFile(
+          path.join(runDir, "researcher-output.md"),
+          "## Confirmed facts\n\n- `src/auth.ts` owns login.",
+        );
+        return [
+          {
+            role: "researcher",
+            status: "completed",
+          },
+        ];
+      },
+      eventRepository: {
+        append: async () => {},
+        loadByRun: async () => [],
+        loadByRole: async () => [],
+        loadRoleIds: async () => [],
+        clear: async () => {},
+      },
+      processRegistry: {
+        register: () => {},
+        get: () => undefined,
+        getByRun: () => [],
+        cancel: () => false,
+        remove: () => {},
+      },
     });
 
     const result = await handler({
@@ -72,13 +92,17 @@ test("research preflight saves a visible report before architect refinement", as
 
     assert.equal(result.success, true);
     if (result.success) {
-      assert.match(result.data.report, /Confirmed facts/);
-      assert.equal(
-        await readFile(result.data.reportFile, "utf8"),
-        result.data.report,
-      );
+      assert.equal(result.data.runId, "research");
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      const report = await readFile(result.data.reportFile, "utf8");
+      assert.match(report, /Confirmed facts/);
+      assert.equal(await readFile(result.data.reportFile, "utf8"), report);
     }
     assert.match(await readFile(promptFile, "utf8"), /research assignment/i);
+    assert.match(
+      await readFile(promptFile, "utf8"),
+      /research report delivery/i,
+    );
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
   }

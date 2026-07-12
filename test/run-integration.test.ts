@@ -57,6 +57,27 @@ test("FileRunEventRepository persists events to disk and loads them back", async
   }
 });
 
+test("FileRunEventRepository preserves concurrently appended events", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "conduit-test-"));
+  try {
+    const repo = new FileRunEventRepository(dir);
+    await Promise.all(
+      Array.from({ length: 24 }, (_, index) =>
+        repo.append(
+          createEvent("activity", "r1", "researcher", {
+            kind: "activity",
+            message: `event ${index}`,
+          }),
+        ),
+      ),
+    );
+    const events = await repo.loadByRun("r1");
+    assert.equal(events.length, 24);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("FileRunEventRepository clear empties events for the target run", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "conduit-test-"));
   try {

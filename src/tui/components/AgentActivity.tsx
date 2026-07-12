@@ -56,7 +56,7 @@ export function AgentActivity({
     elapsedSeconds === undefined ? undefined : formatElapsed(elapsedSeconds);
 
   return (
-    <box flexDirection="row">
+    <box flexDirection="row" alignItems="flex-start">
       {mascotRole ? <WorkflowMascotPreview role={mascotRole} /> : null}
       {mascotRole ? <text content="  " /> : null}
       <box flexDirection="column">

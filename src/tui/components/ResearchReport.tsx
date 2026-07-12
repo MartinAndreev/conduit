@@ -59,11 +59,13 @@ export function ResearchReport({
       backgroundColor={theme.surface.base}
       padding={1}
     >
-      <text content="Research preflight" fg={theme.action.primary} />
-      <text
-        content="Review this repository context before the architect starts."
-        fg={theme.text.muted}
-      />
+      <box height={3} flexDirection="column">
+        <text content="Research preflight" fg={theme.action.primary} />
+        <text
+          content="Review this repository context before the architect starts."
+          fg={theme.text.muted}
+        />
+      </box>
       <box flexGrow={1} marginTop={1} backgroundColor={theme.surface.raised}>
         <MarkdownDocument content={report} />
       </box>

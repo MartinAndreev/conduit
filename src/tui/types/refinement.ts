@@ -52,6 +52,7 @@ export interface RefinementControllerState {
   readonly revision: RefinementRevision | null;
   readonly questions: readonly ClarificationQuestion[];
   readonly researchReport: string | null;
+  readonly researchRunId: string | null;
 }
 
 export interface RefinementControllerActions {

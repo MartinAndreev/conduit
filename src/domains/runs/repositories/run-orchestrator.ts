@@ -322,6 +322,7 @@ function runProcess(
       onProgress(`${role.name}: cancelling`);
       terminate(child);
     };
+    abortController.signal.addEventListener("abort", cancel, { once: true });
     if (signal?.aborted) cancel();
     signal?.addEventListener("abort", cancel, { once: true });
     onProgress(`${role.name}: agent started`);
@@ -369,19 +370,45 @@ function runProcess(
     changeWatcher.unref();
     child.stdout?.on("data", (chunk: Buffer | string) => {
       output += chunk;
-      onProgress(`${role.name}: working`);
-      // Emit activity event periodically (not on every chunk to avoid flooding)
+      const transcript = String(chunk).trim();
+      onProgress(
+        transcript
+          ? `${role.name}: ${transcript.replace(/\s+/g, " ").slice(0, 100)}`
+          : `${role.name}: working`,
+      );
       void emitEvent({
-        type: "activity",
+        type: "tool-output",
         runId,
         roleId: role.name,
         timestamp: new Date().toISOString(),
-        payload: { kind: "activity", message: `${role.name}: working` },
+        payload: {
+          kind: "tool-output",
+          tool: "runner stdout",
+          output: transcript.slice(0, 4_000),
+          truncated: transcript.length > 4_000,
+        },
       });
     });
     child.stderr?.on("data", (chunk: Buffer | string) => {
       output += chunk;
-      onProgress(`${role.name}: working`);
+      const transcript = String(chunk).trim();
+      onProgress(
+        transcript
+          ? `${role.name}: ${transcript.replace(/\s+/g, " ").slice(0, 100)}`
+          : `${role.name}: working`,
+      );
+      void emitEvent({
+        type: "tool-output",
+        runId,
+        roleId: role.name,
+        timestamp: new Date().toISOString(),
+        payload: {
+          kind: "tool-output",
+          tool: "runner stderr",
+          output: transcript.slice(0, 4_000),
+          truncated: transcript.length > 4_000,
+        },
+      });
     });
     child.on("error", (error: Error) => {
       void emitEvent({
@@ -408,6 +435,7 @@ function runProcess(
       await writeFile(logFile, output);
       clearInterval(changeWatcher);
       signal?.removeEventListener("abort", cancel);
+      abortController.signal.removeEventListener("abort", cancel);
       if (processRegistry) processRegistry.remove(runId, role.name);
       const finalChange = changedSummary(cwd);
       const finalFingerprint = finalChange.files

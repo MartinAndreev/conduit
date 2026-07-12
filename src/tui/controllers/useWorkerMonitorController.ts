@@ -117,6 +117,7 @@ export function useWorkerMonitorController(
   projectRoot: string,
   onExit: () => void,
   enabled: boolean,
+  cancelOnExit = false,
 ): WorkerMonitorViewModel {
   const [state, dispatch] = useReducer(monitorReducer, initialMonitorState);
   const cancellationInFlight = useRef(false);
@@ -165,9 +166,11 @@ export function useWorkerMonitorController(
     dispatch({
       type: "eventsLoaded",
       events: eventQuery.data.events,
-      roles: eventQuery.data.roleIds.map((roleId) =>
-        deriveRolePresentation(eventQuery.data!.events, roleId),
-      ),
+      roles: eventQuery.data.roleIds
+        .filter((roleId) => roleId !== "system")
+        .map((roleId) =>
+          deriveRolePresentation(eventQuery.data!.events, roleId),
+        ),
     });
   }, [eventQuery.data]);
   useEffect(() => {
@@ -238,8 +241,31 @@ export function useWorkerMonitorController(
   const onKey = useCallback(
     (event: { name: string; ctrl?: boolean }) => {
       if (!enabled) return;
-      if (event.name === "q") return onExit();
+      if (event.name === "q") {
+        if (cancelOnExit) {
+          if (!state.cancelled && !cancellationInFlight.current) {
+            cancellationInFlight.current = true;
+            void commandBus
+              .dispatch({ type: "cancelRun", runId })
+              .finally(() => {
+                cancellationInFlight.current = false;
+              });
+          }
+        }
+        return onExit();
+      }
       if (event.name === "escape") {
+        if (cancelOnExit) {
+          if (!state.cancelled && !cancellationInFlight.current) {
+            cancellationInFlight.current = true;
+            void commandBus
+              .dispatch({ type: "cancelRun", runId })
+              .finally(() => {
+                cancellationInFlight.current = false;
+              });
+          }
+          return onExit();
+        }
         if (state.focusMode === "roles") return onExit();
         dispatch({ type: "setFocus", focus: "roles" });
         return;
@@ -301,6 +327,7 @@ export function useWorkerMonitorController(
       selectedRoleEvents.length,
       commandBus,
       runId,
+      cancelOnExit,
       roles,
       files,
     ],

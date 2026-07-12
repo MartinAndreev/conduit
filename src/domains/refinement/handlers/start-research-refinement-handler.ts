@@ -8,6 +8,8 @@ import type {
   StartResearchRefinementResult,
 } from "@domains/refinement/interfaces/commands/start-research-refinement.js";
 import type { CommandHandler } from "@system/bus/command-bus.js";
+import type { RunEventRepository } from "@domains/runs/interfaces/run-event-repository.js";
+import type { RunProcessRegistry } from "@domains/runs/repositories/run-process-registry.js";
 
 const activeResearch = new Map<string, AbortController>();
 
@@ -40,7 +42,11 @@ export interface StartResearchRefinementDependencies {
     runDir: string;
     dryRun?: boolean;
     signal?: AbortSignal;
+    eventRepository?: RunEventRepository;
+    processRegistry?: RunProcessRegistry;
   }) => Promise<RunResult[]>;
+  readonly eventRepository: RunEventRepository;
+  readonly processRegistry: RunProcessRegistry;
 }
 
 export function createStartResearchRefinementHandler(
@@ -74,25 +80,52 @@ export function createStartResearchRefinementHandler(
         path.join(runDir, "run.json"),
         JSON.stringify(run, null, 2) + "\n",
       );
+      const reportFile = path.join(feature.directory, "research.md");
+      const runnerReportFile = path.join(runDir, "researcher-output.md");
+      researcher.prompt += `
+
+# Research report delivery (authoritative)
+
+Write the final Markdown report to \`${runnerReportFile}\`. This is the only file you may create or modify. Do not include runner setup, prompts, tool calls, command transcripts, model metadata, or progress messages in that file. Do not modify source code, packet artifacts, or any other repository files.`;
+      await writeFile(researcher.promptFile, researcher.prompt);
       const controller = new AbortController();
       activeResearch.set(feature.id, controller);
-      const [result] = await deps
+      void deps
         .executeRun({
           projectRoot: deps.projectRoot,
           run,
           runDir,
           dryRun: false,
           signal: controller.signal,
+          eventRepository: deps.eventRepository,
+          processRegistry: deps.processRegistry,
         })
+        .then(async ([result]) => {
+          if (!result || result.status !== "completed") return;
+          const report = await readFile(runnerReportFile, "utf8").catch(
+            () => "",
+          );
+          if (!report.trim()) {
+            await deps.eventRepository.append({
+              type: "error",
+              runId: run.id,
+              roleId: researcher.name,
+              timestamp: new Date().toISOString(),
+              payload: {
+                kind: "error",
+                code: "RESEARCH_REPORT_MISSING",
+                message:
+                  "Researcher completed without writing its report artifact.",
+                recoverable: true,
+              },
+            });
+            return;
+          }
+          await writeFile(reportFile, `# Research context\n\n${report}\n`);
+        })
+        .catch(() => {})
         .finally(() => activeResearch.delete(feature.id));
-      if (!result || result.status !== "completed")
-        throw new Error(result?.error ?? "Researcher did not complete.");
-      const report = result.output?.trim() ?? "";
-      if (!report) throw new Error("Researcher completed without a report.");
-      const reportFile = path.join(feature.directory, "research.md");
-      await writeFile(reportFile, `# Research context\n\n${report}\n`);
-      const saved = await readFile(reportFile, "utf8");
-      return { success: true, data: { report: saved, reportFile } };
+      return { success: true, data: { runId: run.id, reportFile } };
     } catch (error) {
       return {
         success: false,

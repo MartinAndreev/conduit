@@ -17,6 +17,8 @@ import { RefinementPacketSummary } from "@tui/components/RefinementPacketSummary
 import { ArchitectClarifications } from "@tui/components/ArchitectClarifications.js";
 import { RefinementPacketReview } from "@tui/components/RefinementPacketReview.js";
 import { ResearchReport } from "@tui/components/ResearchReport.js";
+import { WorkerMonitorScreen } from "@tui/components/WorkerMonitorScreen.js";
+import { useWorkerMonitorController } from "@tui/controllers/useWorkerMonitorController.js";
 
 interface RefinementScreenProps {
   commandBus: CommandBus;
@@ -63,6 +65,15 @@ export function RefinementScreen({
       void actions.cancelArchitect().finally(onExit);
     },
     state.view === "architect",
+  );
+  const researchMonitor = useWorkerMonitorController(
+    queryBus,
+    commandBus,
+    state.researchRunId ?? "",
+    "",
+    onExit,
+    state.view === "research" && Boolean(state.researchRunId),
+    true,
   );
 
   useKeyboard((_event: { name: string }) => {
@@ -177,21 +188,23 @@ export function RefinementScreen({
       );
 
     case "research":
+      return (
+        <WorkerMonitorScreen
+          runId={state.researchRunId ?? "preparing"}
+          cancelOnExit
+          {...researchMonitor}
+        />
+      );
+
     case "researchReview":
       return (
         <ResearchReport
           theme={theme}
-          report={state.view === "researchReview" ? state.researchReport : null}
-          onAccept={
-            state.view === "researchReview" ? actions.acceptResearch : () => {}
-          }
+          report={state.researchReport}
+          onAccept={actions.acceptResearch}
           onRerun={actions.startResearch}
           onEdit={() => actions.setView("form")}
-          onExit={() => {
-            if (state.view === "research")
-              void actions.cancelResearch().finally(onExit);
-            else onExit();
-          }}
+          onExit={onExit}
         />
       );
 

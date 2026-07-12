@@ -38,6 +38,7 @@ import { createCancelArchitectRefinementHandler } from "../../domains/refinement
 import { createSubmitArchitectAnswersHandler } from "../../domains/refinement/handlers/submit-architect-answers-handler.js";
 import { createReviewRefinementPacketHandler } from "../../domains/refinement/handlers/review-refinement-packet-handler.js";
 import { createGetRefinementRevisionHandler } from "../../domains/refinement/handlers/get-refinement-revision-handler.js";
+import { createGetResearchReportHandler } from "../../domains/refinement/handlers/get-research-report-handler.js";
 import { FileDraftRepository } from "../../domains/refinement/repositories/file-draft-repository.js";
 import { FileArchitectEventRepository } from "../../domains/refinement/repositories/file-architect-event-repository.js";
 import { FileRefinementRevisionRepository } from "../../domains/refinement/repositories/file-revision-repository.js";
@@ -96,6 +97,9 @@ export interface BootstrapDependencies {
     run: Run;
     runDir: string;
     dryRun?: boolean;
+    signal?: AbortSignal;
+    eventRepository?: import("../../domains/runs/interfaces/run-event-repository.js").RunEventRepository;
+    processRegistry?: import("../../domains/runs/repositories/run-process-registry.js").RunProcessRegistry;
   }) => Promise<import("../../domains/runs/types/run.js").RunResult[]>;
   latestRuns: (projectRoot: string, config: Config) => Promise<Run[]>;
   configurationRepository: ConfigurationRepository;
@@ -147,6 +151,16 @@ export function createApplication(deps: BootstrapDependencies): Application {
   const revisionRepository = projectRoot
     ? new FileRefinementRevisionRepository()
     : null;
+  // Runs infrastructure is shared by ordinary worker runs and research
+  // preflights, so it must exist before refinement handlers are registered.
+  const stateDir = projectRoot ? `${projectRoot}/.conduit` : undefined;
+  const runEventRepository = stateDir
+    ? new FileRunEventRepository(stateDir)
+    : new InMemoryRunEventRepository();
+  const reviewRepository = stateDir
+    ? new FileReviewResultRepository(stateDir)
+    : new InMemoryReviewResultRepository();
+  const processRegistry = createRunProcessRegistry();
 
   commandBus.register("initializeProject", (async (
     cmd: Command & InitProjectPayload,
@@ -292,7 +306,17 @@ export function createApplication(deps: BootstrapDependencies): Application {
           findFeature: deps.findFeature,
           planRun: deps.planRun,
           executeRun: deps.executeRun,
+          eventRepository: runEventRepository,
+          processRegistry,
         }) as CommandHandler,
+      );
+      queryBus.register(
+        "getResearchReport",
+        createGetResearchReportHandler({
+          projectRoot,
+          loadConfig: deps.loadConfig,
+          findFeature: deps.findFeature,
+        }) as QueryHandler,
       );
       commandBus.register(
         "cancelResearchRefinement",
@@ -370,16 +394,6 @@ export function createApplication(deps: BootstrapDependencies): Application {
       createGetArchitectEventsHandler(architectEventRepository) as QueryHandler,
     );
   }
-
-  // File-backed persistence when projectRoot is available, in-memory fallback
-  const stateDir = projectRoot ? `${projectRoot}/.conduit` : undefined;
-  const runEventRepository = stateDir
-    ? new FileRunEventRepository(stateDir)
-    : new InMemoryRunEventRepository();
-  const reviewRepository = stateDir
-    ? new FileReviewResultRepository(stateDir)
-    : new InMemoryReviewResultRepository();
-  const processRegistry = createRunProcessRegistry();
 
   queryBus.register(
     "getRunEvents",

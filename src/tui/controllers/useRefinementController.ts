@@ -151,6 +151,7 @@ export function useRefinementController(
     [],
   );
   const [researchReport, setResearchReport] = useState<string | null>(null);
+  const [researchRunId, setResearchRunId] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     let hasPacket = false;
@@ -291,11 +292,86 @@ export function useRefinementController(
           setError(result.error.message);
           return;
         }
-        const data = result.data as { report: string };
-        setResearchReport(data.report);
-        setView("researchReview");
+        const data = result.data as { runId: string };
+        setResearchRunId(data.runId);
       });
   }, [buildStory, commandBus, featureId, setError, setView, values]);
+
+  useEffect(() => {
+    if (view !== "research" || !researchRunId) return;
+    let disposed = false;
+    const poll = async () => {
+      const eventsResult = await queryBus.execute({
+        type: "getRunEvents",
+        runId: researchRunId,
+      });
+      if (!eventsResult.success || disposed) return;
+      const data = eventsResult.data as {
+        events: readonly {
+          roleId: string;
+          type: string;
+          payload: {
+            kind: string;
+            state?: string;
+            message?: string;
+            exitCode?: number;
+            code?: string;
+          };
+        }[];
+      };
+      const reportError = [...data.events]
+        .reverse()
+        .find(
+          (event) =>
+            event.roleId === "researcher" &&
+            event.type === "error" &&
+            event.payload.kind === "error" &&
+            event.payload.code === "RESEARCH_REPORT_MISSING",
+        );
+      if (reportError) {
+        setError(
+          reportError.payload.message ??
+            "Researcher completed without a report artifact.",
+        );
+        return;
+      }
+      const terminal = [...data.events]
+        .reverse()
+        .find(
+          (event) =>
+            event.roleId === "researcher" &&
+            ((event.type === "lifecycle" &&
+              event.payload.kind === "lifecycle" &&
+              ["completed", "failed", "cancelled"].includes(
+                event.payload.state ?? "",
+              )) ||
+              (event.type === "result" && event.payload.kind === "result")),
+        );
+      if (!terminal) return;
+      const completed =
+        terminal.payload.state === "completed" ||
+        (terminal.payload.kind === "result" && terminal.payload.exitCode === 0);
+      if (!completed) {
+        setError(terminal.payload.message ?? "Researcher did not complete.");
+        return;
+      }
+      const reportResult = await queryBus.execute({
+        type: "getResearchReport",
+        featureId,
+      });
+      if (!reportResult.success || disposed) return;
+      const report = (reportResult.data as { report: string | null }).report;
+      if (!report) return;
+      setResearchReport(report);
+      setView("researchReview");
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), 750);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [featureId, queryBus, researchRunId, setError, setView, view]);
 
   const approvePreview = useCallback(async () => {
     try {
@@ -443,8 +519,12 @@ export function useRefinementController(
     startArchitectPass();
   }, [startArchitectPass]);
   const cancelResearch = useCallback(async () => {
+    if (researchRunId) {
+      await commandBus.dispatch({ type: "cancelRun", runId: researchRunId });
+      return;
+    }
     await commandBus.dispatch({ type: "cancelResearchRefinement", featureId });
-  }, [commandBus, featureId]);
+  }, [commandBus, featureId, researchRunId]);
   const submitAnswers = useCallback(
     async (answers: string) => {
       if (!revision) return;
@@ -513,6 +593,7 @@ export function useRefinementController(
       revision,
       questions,
       researchReport,
+      researchRunId,
     },
     {
       setView,
