@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useReducer } from "react";
 import { useKeyboard } from "@opentui/react";
 import type { CommandBus } from "@system/bus/command-bus.js";
 import type { QueryBus } from "@system/bus/query-bus.js";
@@ -12,6 +12,13 @@ import type {
   ClarificationQuestion,
   RefinementRevision,
 } from "@domains/refinement/types/revision.js";
+import type {
+  RefinementControllerActions,
+  RefinementLifecycleAction,
+  RefinementLifecycleState,
+  RefinementControllerState,
+  RefinementView,
+} from "@tui/types/refinement.js";
 
 export const REFINEMENT_FIELDS: readonly DraftField[] = [
   {
@@ -51,42 +58,43 @@ export const REFINEMENT_FIELDS: readonly DraftField[] = [
   },
 ] as const;
 
-export type RefinementView =
-  "form" | "packet" | "preview" | "architect" | "clarifications" | "review";
-
-export interface RefinementControllerState {
-  feature: FeatureReadModel | null;
-  draft: RefinementDraft | null;
-  view: RefinementView;
-  values: Record<string, string>;
-  loading: boolean;
-  error: string | null;
-  architectEnabled: boolean;
-  architectRunning: boolean;
-  packetContent: {
-    spec: string;
-    plan: string;
-    tasks: string;
-    testCases: string;
-  } | null;
-  revision: RefinementRevision | null;
-  questions: readonly ClarificationQuestion[];
-}
-
-export interface RefinementControllerActions {
-  setView: (view: RefinementView) => void;
-  setValues: (values: Record<string, string>) => void;
-  saveDraft: () => Promise<void>;
-  submitForm: (values: Record<string, string>) => void;
-  approvePreview: () => Promise<void>;
-  rejectPreview: () => void;
-  quitPreview: () => void;
-  toggleArchitect: () => void;
-  editPacketBrief: () => void;
-  cancelArchitect: () => Promise<void>;
-  submitAnswers: (answers: string) => Promise<void>;
-  approvePacket: () => Promise<void>;
-  requestPacketChanges: (feedback: string) => Promise<void>;
+function lifecycleReducer(
+  state: RefinementLifecycleState,
+  action: RefinementLifecycleAction,
+): RefinementLifecycleState {
+  switch (action.type) {
+    case "view":
+      return { ...state, view: action.view };
+    case "loaded":
+      return { ...state, view: action.view, loading: false, error: null };
+    case "error":
+      return {
+        ...state,
+        view: "error",
+        loading: false,
+        error: action.error,
+        architectLifecycle: "failed",
+      };
+    case "startArchitect":
+      return {
+        ...state,
+        previousView:
+          state.view === "architect"
+            ? state.previousView
+            : (state.view as RefinementLifecycleState["previousView"]),
+        view: "architect",
+        architectLifecycle: "running",
+        error: null,
+      };
+    case "architectComplete":
+      return { ...state, view: action.view, architectLifecycle: "idle" };
+    case "architectCancelled":
+      return {
+        ...state,
+        view: state.previousView,
+        architectLifecycle: "cancelled",
+      };
+  }
 }
 
 export function useRefinementController(
@@ -97,24 +105,35 @@ export function useRefinementController(
 ): [RefinementControllerState, RefinementControllerActions] {
   const [feature, setFeature] = useState<FeatureReadModel | null>(null);
   const [draft, setDraft] = useState<RefinementDraft | null>(null);
-  const [view, setView] = useState<RefinementView>("form");
+  const [lifecycle, dispatchLifecycle] = useReducer(lifecycleReducer, {
+    view: "loading",
+    loading: true,
+    error: null,
+    architectLifecycle: "idle",
+    previousView: "form",
+  });
+  const { view, loading, error, architectLifecycle } = lifecycle;
+  const architectRunning = architectLifecycle === "running";
+  const setView = useCallback(
+    (next: Exclude<RefinementView, "loading" | "error">) =>
+      dispatchLifecycle({ type: "view", view: next }),
+    [],
+  );
+  const setError = useCallback((next: string | null) => {
+    if (next) dispatchLifecycle({ type: "error", error: next });
+  }, []);
   const [values, setValues] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [architectEnabled, setArchitectEnabled] = useState(false);
   const [packetContent, setPacketContent] =
     useState<RefinementControllerState["packetContent"]>(null);
-  const [architectRunning, setArchitectRunning] = useState(false);
   const [revision, setRevision] = useState<RefinementRevision | null>(null);
   const [questions, setQuestions] = useState<readonly ClarificationQuestion[]>(
     [],
   );
 
   const loadData = useCallback(async () => {
+    let hasPacket = false;
     try {
-      setLoading(true);
-      setError(null);
-
       const featureResult = await queryBus.execute({
         type: "getFeature",
         featureId,
@@ -138,8 +157,9 @@ export function useRefinementController(
           tasks: string;
         };
         setPacketContent(content);
-        if (content.spec.trim() || content.plan.trim() || content.tasks.trim())
-          setView("packet");
+        hasPacket = Boolean(
+          content.spec.trim() || content.plan.trim() || content.tasks.trim(),
+        );
         setValues((current) =>
           Object.keys(current).length
             ? current
@@ -170,7 +190,10 @@ export function useRefinementController(
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      dispatchLifecycle({
+        type: "loaded",
+        view: hasPacket ? "packet" : "form",
+      });
     }
   }, [queryBus, featureId]);
 
@@ -255,8 +278,7 @@ export function useRefinementController(
       }
 
       if (architectEnabled) {
-        setArchitectRunning(true);
-        setView("architect");
+        dispatchLifecycle({ type: "startArchitect" });
         void commandBus
           .dispatch({
             type: "startArchitectRefinement",
@@ -264,7 +286,6 @@ export function useRefinementController(
             story,
           })
           .then((architectResult) => {
-            setArchitectRunning(false);
             if (!architectResult.success) {
               setError(architectResult.error.message);
               return;
@@ -274,11 +295,13 @@ export function useRefinementController(
             };
             void refreshRevision();
             void refreshPacketContent();
-            setView(
-              data.status === "awaiting_clarification"
-                ? "clarifications"
-                : "review",
-            );
+            dispatchLifecycle({
+              type: "architectComplete",
+              view:
+                data.status === "awaiting_clarification"
+                  ? "clarifications"
+                  : "review",
+            });
           });
       } else {
         onExit();
@@ -311,14 +334,12 @@ export function useRefinementController(
   const editPacketBrief = useCallback(() => setView("form"), []);
   const cancelArchitect = useCallback(async () => {
     await commandBus.dispatch({ type: "cancelArchitectRefinement", featureId });
-    setArchitectRunning(false);
-    setView("preview");
+    dispatchLifecycle({ type: "architectCancelled" });
   }, [commandBus, featureId]);
   const startArchitectPass = useCallback(
     (revisionId?: string) => {
       const story = buildStory(values);
-      setArchitectRunning(true);
-      setView("architect");
+      dispatchLifecycle({ type: "startArchitect" });
       void commandBus
         .dispatch({
           type: "startArchitectRefinement",
@@ -327,7 +348,6 @@ export function useRefinementController(
           revisionId,
         })
         .then((result) => {
-          setArchitectRunning(false);
           if (!result.success) {
             setError(result.error.message);
             return;
@@ -337,11 +357,13 @@ export function useRefinementController(
           };
           void refreshRevision();
           void refreshPacketContent();
-          setView(
-            data.status === "awaiting_clarification"
-              ? "clarifications"
-              : "review",
-          );
+          dispatchLifecycle({
+            type: "architectComplete",
+            view:
+              data.status === "awaiting_clarification"
+                ? "clarifications"
+                : "review",
+          });
         });
     },
     [
@@ -413,6 +435,7 @@ export function useRefinementController(
       loading,
       error,
       architectEnabled,
+      architectLifecycle,
       architectRunning,
       packetContent,
       revision,

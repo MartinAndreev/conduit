@@ -1,36 +1,68 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useReducer } from "react";
 import { useKeyboard } from "@opentui/react";
 import type { FeatureReadModel } from "@domains/features/types/feature.js";
 import type { RolePortrait } from "@domains/roles/interfaces/role-portrait.js";
 import type { CommandBus } from "@system/bus/command-bus.js";
 import type { QueryBus } from "@system/bus/query-bus.js";
 import tips from "@tui/assets/tips.json" with { type: "json" };
+import type {
+  HomeControllerActions,
+  HomeControllerState,
+  HomeInteraction,
+} from "@tui/types/home.js";
 
 export const FEATURE_ACTIONS = ["View", "Refine", "Run", "Status"] as const;
 
-export type FeatureAction = (typeof FEATURE_ACTIONS)[number];
+type HomeInteractionAction =
+  | { type: "search" }
+  | { type: "create" }
+  | { type: "actions" }
+  | { type: "idle" }
+  | { type: "append"; value: string }
+  | { type: "backspace" }
+  | { type: "nextAction" }
+  | { type: "previousAction" };
 
-export interface HomeControllerState {
-  features: readonly FeatureReadModel[];
-  portraits: readonly RolePortrait[];
-  selectedIndex: number;
-  searchQuery: string;
-  searching: boolean;
-  creating: boolean;
-  featureTitle: string;
-  actionModalOpen: boolean;
-  selectedAction: number;
-  tip: string;
-  filteredFeatures: readonly FeatureReadModel[];
-}
-
-export interface HomeControllerActions {
-  handleKeyDown: (event: {
-    name: string;
-    ctrl: boolean;
-    shift: boolean;
-    meta: boolean;
-  }) => void;
+function interactionReducer(
+  state: HomeInteraction,
+  action: HomeInteractionAction,
+): HomeInteraction {
+  switch (action.type) {
+    case "search":
+      return { kind: "search", query: "" };
+    case "create":
+      return { kind: "create", title: "" };
+    case "actions":
+      return { kind: "featureActions", actionIndex: 0 };
+    case "idle":
+      return { kind: "idle" };
+    case "append":
+      return state.kind === "search"
+        ? { ...state, query: state.query + action.value }
+        : state.kind === "create"
+          ? { ...state, title: state.title + action.value }
+          : state;
+    case "backspace":
+      return state.kind === "search"
+        ? { ...state, query: state.query.slice(0, -1) }
+        : state.kind === "create"
+          ? { ...state, title: state.title.slice(0, -1) }
+          : state;
+    case "nextAction":
+      return state.kind === "featureActions"
+        ? {
+            ...state,
+            actionIndex: Math.min(
+              FEATURE_ACTIONS.length - 1,
+              state.actionIndex + 1,
+            ),
+          }
+        : state;
+    case "previousAction":
+      return state.kind === "featureActions"
+        ? { ...state, actionIndex: Math.max(0, state.actionIndex - 1) }
+        : state;
+  }
 }
 
 function randomTip(): string {
@@ -43,16 +75,16 @@ export function useHomeController(
   onExit: () => void,
   onRefine: (featureId: string) => void,
   onView: (featureId: string) => void,
+  onRun: (runId: string) => void,
 ): [HomeControllerState, HomeControllerActions] {
   const [features, setFeatures] = useState<readonly FeatureReadModel[]>([]);
-  const [portraits, setPortraits] = useState<readonly RolePortrait[]>([]);
+  const [portraits, setPortraits] = useState<HomeControllerState["portraits"]>(
+    [],
+  );
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searching, setSearching] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [featureTitle, setFeatureTitle] = useState("");
-  const [actionModalOpen, setActionModalOpen] = useState(false);
-  const [selectedAction, setSelectedAction] = useState(0);
+  const [interaction, dispatchInteraction] = useReducer(interactionReducer, {
+    kind: "idle",
+  });
   const [tip] = useState(randomTip);
 
   const loadData = useCallback(async () => {
@@ -77,6 +109,7 @@ export function useHomeController(
     void loadData();
   }, [loadData]);
 
+  const searchQuery = interaction.kind === "search" ? interaction.query : "";
   const filteredFeatures = searchQuery
     ? features.filter((f) =>
         f.title.toLowerCase().includes(searchQuery.toLowerCase()),
@@ -87,71 +120,67 @@ export function useHomeController(
     (event: { name: string; ctrl: boolean; shift: boolean; meta: boolean }) => {
       const key = event.name ?? "";
 
-      if (searching) {
+      if (interaction.kind === "search") {
         if (key === "escape") {
-          setSearching(false);
-          setSearchQuery("");
+          dispatchInteraction({ type: "idle" });
           return;
         }
         if (key === "return") {
-          setSearching(false);
+          dispatchInteraction({ type: "idle" });
           return;
         }
         if (key === "backspace") {
-          setSearchQuery((prev) => prev.slice(0, -1));
+          dispatchInteraction({ type: "backspace" });
           return;
         }
         if (key.length === 1) {
-          setSearchQuery((prev) => prev + key);
+          dispatchInteraction({ type: "append", value: key });
         }
         return;
       }
-      if (creating) {
+      if (interaction.kind === "create") {
         if (key === "escape") {
-          setCreating(false);
-          setFeatureTitle("");
+          dispatchInteraction({ type: "idle" });
           return;
         }
         if (key === "backspace") {
-          setFeatureTitle((value) => value.slice(0, -1));
+          dispatchInteraction({ type: "backspace" });
           return;
         }
-        if (key === "return" && featureTitle.trim()) {
+        if (key === "return" && interaction.title.trim()) {
           void commandBus
-            .dispatch({ type: "createFeature", title: featureTitle })
+            .dispatch({ type: "createFeature", title: interaction.title })
             .then((result) => {
               if (result.success) {
-                setCreating(false);
-                setFeatureTitle("");
+                dispatchInteraction({ type: "idle" });
                 onRefine((result.data as { id: string }).id);
               }
             });
           return;
         }
-        if (key.length === 1) setFeatureTitle((value) => value + key);
+        if (key.length === 1)
+          dispatchInteraction({ type: "append", value: key });
         return;
       }
 
-      if (actionModalOpen) {
+      if (interaction.kind === "featureActions") {
         if (key === "escape" || key === "q") {
-          setActionModalOpen(false);
+          dispatchInteraction({ type: "idle" });
           return;
         }
         if (key === "up") {
-          setSelectedAction((prev) => Math.max(0, prev - 1));
+          dispatchInteraction({ type: "previousAction" });
           return;
         }
         if (key === "down") {
-          setSelectedAction((prev) =>
-            Math.min(FEATURE_ACTIONS.length - 1, prev + 1),
-          );
+          dispatchInteraction({ type: "nextAction" });
           return;
         }
         if (key === "return") {
-          const action = FEATURE_ACTIONS[selectedAction];
+          const action = FEATURE_ACTIONS[interaction.actionIndex];
           if (action === "View" && filteredFeatures[selectedIndex]) {
             onView(filteredFeatures[selectedIndex]!.id);
-            setActionModalOpen(false);
+            dispatchInteraction({ type: "idle" });
             return;
           }
           if (action === "Refine" && filteredFeatures[selectedIndex]) {
@@ -164,19 +193,35 @@ export function useHomeController(
               })
               .finally(() => onRefine(feature.id));
           }
-          setActionModalOpen(false);
+          if ((action === "Run" || action === "Status") && onRun) {
+            void queryBus
+              .execute({ type: "latestRuns" })
+              .then((result) => {
+                if (result.success) {
+                  const runs = result.data as Array<{
+                    id: string;
+                    featureId: string;
+                  }>;
+                  const match = runs.find(
+                    (r) => r.featureId === filteredFeatures[selectedIndex]?.id,
+                  );
+                  if (match) onRun(match.id);
+                }
+              })
+              .catch(() => {});
+          }
+          dispatchInteraction({ type: "idle" });
           return;
         }
         return;
       }
 
       if (key === "/") {
-        setSearching(true);
-        setSearchQuery("");
+        dispatchInteraction({ type: "search" });
         return;
       }
       if (key === "n") {
-        setCreating(true);
+        dispatchInteraction({ type: "create" });
         return;
       }
       if (key === "q") {
@@ -195,24 +240,21 @@ export function useHomeController(
       }
       if (key === "return") {
         if (filteredFeatures.length > 0) {
-          setActionModalOpen(true);
-          setSelectedAction(0);
+          dispatchInteraction({ type: "actions" });
         }
         return;
       }
     },
     [
-      searching,
-      creating,
-      featureTitle,
-      actionModalOpen,
-      selectedAction,
+      interaction,
       selectedIndex,
       filteredFeatures,
       commandBus,
+      queryBus,
       onExit,
       onRefine,
       onView,
+      onRun,
     ],
   );
 
@@ -224,11 +266,12 @@ export function useHomeController(
       portraits,
       selectedIndex,
       searchQuery,
-      searching,
-      creating,
-      featureTitle,
-      actionModalOpen,
-      selectedAction,
+      searching: interaction.kind === "search",
+      creating: interaction.kind === "create",
+      featureTitle: interaction.kind === "create" ? interaction.title : "",
+      actionModalOpen: interaction.kind === "featureActions",
+      selectedAction:
+        interaction.kind === "featureActions" ? interaction.actionIndex : 0,
       tip,
       filteredFeatures,
     },

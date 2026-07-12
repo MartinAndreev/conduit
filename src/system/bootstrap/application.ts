@@ -41,6 +41,19 @@ import {
   writeTestCases,
 } from "../../domains/features/repositories/feature-packet-repository.js";
 import { loadConfig } from "../../domains/configuration/repositories/project-config.js";
+import { FileRunEventRepository } from "../../domains/runs/repositories/file-run-event-repository.js";
+import { FileReviewResultRepository } from "../../domains/runs/repositories/file-review-result-repository.js";
+import { InMemoryRunEventRepository } from "../../domains/runs/repositories/in-memory-run-event-repository.js";
+import { InMemoryReviewResultRepository } from "../../domains/runs/repositories/in-memory-review-result-repository.js";
+import { createGetRunEventsHandler } from "../../domains/runs/handlers/get-run-events-handler.js";
+import { createGetRunDiffHandler } from "../../domains/runs/handlers/get-run-diff-handler.js";
+import { createReviewRunHandler } from "../../domains/runs/handlers/review-run-handler.js";
+import { createGetReviewResultHandler } from "../../domains/runs/handlers/get-review-result-handler.js";
+import { createCancelRunHandler } from "../../domains/runs/handlers/cancel-run-handler.js";
+import { createGetRunHandler } from "../../domains/runs/handlers/get-run-handler.js";
+import { createCodexReviewHandler } from "../../domains/runs/handlers/codex-review-handler.js";
+import { WorktreeDiffReader } from "../../domains/runs/repositories/worktree-diff-reader.js";
+import { createRunProcessRegistry } from "../../domains/runs/repositories/run-process-registry.js";
 
 export interface Application {
   readonly commandBus: CommandBus;
@@ -303,6 +316,60 @@ export function createApplication(deps: BootstrapDependencies): Application {
       createGetArchitectEventsHandler(architectEventRepository) as QueryHandler,
     );
   }
+
+  // File-backed persistence when projectRoot is available, in-memory fallback
+  const stateDir = projectRoot ? `${projectRoot}/.conduit` : undefined;
+  const runEventRepository = stateDir
+    ? new FileRunEventRepository(stateDir)
+    : new InMemoryRunEventRepository();
+  const reviewRepository = stateDir
+    ? new FileReviewResultRepository(stateDir)
+    : new InMemoryReviewResultRepository();
+  const processRegistry = createRunProcessRegistry();
+
+  queryBus.register(
+    "getRunEvents",
+    createGetRunEventsHandler(runEventRepository) as QueryHandler,
+  );
+
+  queryBus.register(
+    "getRunDiff",
+    createGetRunDiffHandler(
+      new WorktreeDiffReader(),
+      deps.loadConfig,
+    ) as QueryHandler,
+  );
+
+  commandBus.register(
+    "reviewRun",
+    createReviewRunHandler(reviewRepository) as CommandHandler,
+  );
+
+  commandBus.register(
+    "codexReview",
+    createCodexReviewHandler(
+      { loadConfig: deps.loadConfig, findFeature: deps.findFeature },
+      reviewRepository,
+    ) as CommandHandler,
+  );
+
+  commandBus.register(
+    "cancelRun",
+    createCancelRunHandler(
+      runEventRepository,
+      processRegistry,
+    ) as CommandHandler,
+  );
+
+  queryBus.register(
+    "getReviewResult",
+    createGetReviewResultHandler(reviewRepository) as QueryHandler,
+  );
+
+  queryBus.register(
+    "getRun",
+    createGetRunHandler(deps.loadConfig) as QueryHandler,
+  );
 
   return { commandBus, queryBus };
 }

@@ -2,15 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useKeyboard } from "@opentui/react";
 import type { DraftField } from "@domains/refinement/types/draft.js";
 import refinementTips from "@tui/assets/refinement-tips.json" with { type: "json" };
-
-export interface RefinementFormViewModel {
-  readonly activeFieldIndex: number;
-  readonly values: Record<string, string>;
-  readonly cursorPosition: number;
-  readonly setActiveValue: (value: string) => void;
-  readonly submit: () => void;
-  readonly tip: string;
-}
+import type { RefinementFormViewModel } from "@tui/types/refinement.js";
 
 export function useRefinementFormController(
   fields: readonly DraftField[],

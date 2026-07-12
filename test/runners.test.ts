@@ -4,9 +4,11 @@ import { CodexAdapter } from "../src/system/runners/codex.js";
 import { OpenCodeAdapter } from "../src/system/runners/opencode.js";
 import { PiAdapter } from "../src/system/runners/pi.js";
 import { KiloAdapter } from "../src/system/runners/kilo.js";
+import { createUnavailableEvent } from "../src/system/runners/unavailable.js";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { LifecyclePayload } from "../src/domains/runs/types/runner-events.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -86,4 +88,40 @@ test("KiloAdapter parses JSON fixture", async () => {
 
   assert.ok(events.length > 0);
   assert.equal(events[0].runId, "test-run");
+});
+
+test("createUnavailableEvent sets lifecycle state to unavailable", () => {
+  const event = createUnavailableEvent(
+    "codex",
+    "not in PATH",
+    "run-1",
+    "backend",
+  );
+  assert.equal(event.type, "lifecycle");
+  assert.equal(event.runId, "run-1");
+  assert.equal(event.roleId, "backend");
+  const payload = event.payload as LifecyclePayload;
+  assert.equal(payload.state, "unavailable");
+  assert.match(payload.message!, /codex/);
+});
+
+test("all adapters produce activity for malformed JSON input", () => {
+  for (const adapter of [
+    new CodexAdapter(),
+    new OpenCodeAdapter(),
+    new PiAdapter(),
+    new KiloAdapter(),
+  ]) {
+    const events = adapter.parseOutput(
+      "not json\n{broken\n",
+      "run-1",
+      "role-1",
+    );
+    assert.ok(
+      events.length > 0,
+      `${adapter.name} should handle malformed input`,
+    );
+    assert.equal(events[0].type, "activity");
+    assert.equal(events[0].payload.kind, "activity");
+  }
 });

@@ -5,6 +5,9 @@ import type { ChildProcess, SpawnSyncReturns } from "node:child_process";
 import { resolveSkill } from "../../roles/repositories/skill-resolver.js";
 import type { Config } from "../../configuration/types/config.js";
 import type { Run, RunRole, RunResult } from "../types/run.js";
+import type { RunnerEvent } from "../types/runner-events.js";
+import type { RunEventRepository } from "../interfaces/run-event-repository.js";
+import type { RunProcessRegistry } from "./run-process-registry.js";
 
 interface RunnerAdapter {
   command: string;
@@ -253,12 +256,19 @@ function changedSummary(cwd: string): {
 
 function runProcess(
   role: RunRole,
+  runId: string,
   cwd: string,
   logFile: string,
   onProgress: (message: string) => void,
   onChange: (event: { summary: string; preview: string }) => void,
+  eventRepository?: RunEventRepository,
+  processRegistry?: RunProcessRegistry,
   signal?: AbortSignal,
 ): Promise<RunResult> {
+  const emitEvent = async (event: RunnerEvent) => {
+    if (eventRepository) await eventRepository.append(event);
+  };
+
   return new Promise((resolve) => {
     const child = spawn(role.command, role.args, {
       cwd,
@@ -268,6 +278,31 @@ function runProcess(
     let output = "";
     let cancelled = false;
     let previousFiles = "";
+    const abortController = new AbortController();
+
+    // Register process for cancellation
+    if (processRegistry) {
+      processRegistry.register({
+        runId,
+        roleId: role.name,
+        process: child,
+        abortController,
+      });
+    }
+
+    // Emit starting lifecycle event
+    void emitEvent({
+      type: "lifecycle",
+      runId,
+      roleId: role.name,
+      timestamp: new Date().toISOString(),
+      payload: {
+        kind: "lifecycle",
+        state: "starting",
+        message: `${role.name}: agent starting`,
+      },
+    });
+
     const cancel = () => {
       cancelled = true;
       onProgress(`${role.name}: cancelling`);
@@ -276,6 +311,20 @@ function runProcess(
     if (signal?.aborted) cancel();
     signal?.addEventListener("abort", cancel, { once: true });
     onProgress(`${role.name}: agent started`);
+
+    // Emit running lifecycle event
+    void emitEvent({
+      type: "lifecycle",
+      runId,
+      roleId: role.name,
+      timestamp: new Date().toISOString(),
+      payload: {
+        kind: "lifecycle",
+        state: "running",
+        message: `${role.name}: agent started`,
+      },
+    });
+
     const changeWatcher = setInterval(() => {
       const change = changedSummary(cwd);
       const fingerprint = change.files
@@ -286,29 +335,66 @@ function runProcess(
         const summary = `${role.name}: edited ${change.files.length} file${change.files.length === 1 ? "" : "s"} (+${change.added} -${change.removed})`;
         onProgress(summary);
         onChange({ summary, preview: change.preview });
+        // Emit file-change events for each changed file
+        for (const file of change.files) {
+          void emitEvent({
+            type: "file-change",
+            runId,
+            roleId: role.name,
+            timestamp: new Date().toISOString(),
+            payload: {
+              kind: "file-change",
+              path: file.file,
+              additions: file.added,
+              deletions: file.removed,
+            },
+          });
+        }
       }
     }, 800);
     changeWatcher.unref();
     child.stdout?.on("data", (chunk: Buffer | string) => {
       output += chunk;
       onProgress(`${role.name}: working`);
+      // Emit activity event periodically (not on every chunk to avoid flooding)
+      void emitEvent({
+        type: "activity",
+        runId,
+        roleId: role.name,
+        timestamp: new Date().toISOString(),
+        payload: { kind: "activity", message: `${role.name}: working` },
+      });
     });
     child.stderr?.on("data", (chunk: Buffer | string) => {
       output += chunk;
       onProgress(`${role.name}: working`);
     });
-    child.on("error", (error: Error) =>
+    child.on("error", (error: Error) => {
+      void emitEvent({
+        type: "error",
+        runId,
+        roleId: role.name,
+        timestamp: new Date().toISOString(),
+        payload: {
+          kind: "error",
+          code: "PROCESS_ERROR",
+          message: error.message,
+          recoverable: false,
+        },
+      });
+      if (processRegistry) processRegistry.remove(runId, role.name);
       resolve({
         role: role.name,
         status: "failed",
         error: error.message,
         output,
-      }),
-    );
+      });
+    });
     child.on("close", async (code: number | null) => {
       await writeFile(logFile, output);
       clearInterval(changeWatcher);
       signal?.removeEventListener("abort", cancel);
+      if (processRegistry) processRegistry.remove(runId, role.name);
       const finalChange = changedSummary(cwd);
       const finalFingerprint = finalChange.files
         .map((file) => `${file.file}:${file.added}:${file.removed}`)
@@ -316,6 +402,20 @@ function runProcess(
       if (finalFingerprint && finalFingerprint !== previousFiles) {
         const summary = `${role.name}: edited ${finalChange.files.length} file${finalChange.files.length === 1 ? "" : "s"} (+${finalChange.added} -${finalChange.removed})`;
         onChange({ summary, preview: finalChange.preview });
+        for (const file of finalChange.files) {
+          void emitEvent({
+            type: "file-change",
+            runId,
+            roleId: role.name,
+            timestamp: new Date().toISOString(),
+            payload: {
+              kind: "file-change",
+              path: file.file,
+              additions: file.added,
+              deletions: file.removed,
+            },
+          });
+        }
       }
       const status: RunResult["status"] = cancelled
         ? "cancelled"
@@ -326,6 +426,40 @@ function runProcess(
       onProgress(
         `${role.name}: ${status}${files.length ? ` \u00b7 ${files.length} file${files.length === 1 ? "" : "s"} changed` : ""}`,
       );
+
+      // Emit completion lifecycle event
+      const lifecycleState =
+        status === "completed"
+          ? "completed"
+          : status === "cancelled"
+            ? "cancelled"
+            : "failed";
+      void emitEvent({
+        type: "lifecycle",
+        runId,
+        roleId: role.name,
+        timestamp: new Date().toISOString(),
+        payload: {
+          kind: "lifecycle",
+          state: lifecycleState,
+          message: `${role.name}: ${status}`,
+        },
+      });
+
+      // Emit result event
+      void emitEvent({
+        type: "result",
+        runId,
+        roleId: role.name,
+        timestamp: new Date().toISOString(),
+        payload: {
+          kind: "result",
+          exitCode: code ?? -1,
+          files,
+          summary: `${role.name}: ${status}`,
+        },
+      });
+
       resolve({
         role: role.name,
         status,
@@ -345,6 +479,8 @@ export async function executeRun({
   onProgress = () => {},
   onChange = () => {},
   signal,
+  eventRepository,
+  processRegistry,
 }: {
   projectRoot: string;
   run: Run;
@@ -353,7 +489,24 @@ export async function executeRun({
   onProgress?: (message: string) => void;
   onChange?: (event: { summary: string; preview: string }) => void;
   signal?: AbortSignal;
+  eventRepository?: RunEventRepository;
+  processRegistry?: RunProcessRegistry;
 }): Promise<RunResult[]> {
+  // Emit system-level starting event
+  if (eventRepository) {
+    await eventRepository.append({
+      type: "lifecycle",
+      runId: run.id,
+      roleId: "system",
+      timestamp: new Date().toISOString(),
+      payload: {
+        kind: "lifecycle",
+        state: "starting",
+        message: "Run starting",
+      },
+    });
+  }
+
   if (dryRun)
     return run.roles.map((role) => ({
       role: role.name,
@@ -371,10 +524,13 @@ export async function executeRun({
     if (!role.readOnly) await writeWorktreePrompt(cwd, run, role);
     return runProcess(
       role,
+      run.id,
       cwd,
       path.join(runDir, `${role.name}.log`),
       onProgress,
       onChange,
+      eventRepository,
+      processRegistry,
       signal,
     );
   });
@@ -393,6 +549,27 @@ export async function executeRun({
     path.join(runDir, "results.json"),
     JSON.stringify(results, null, 2),
   );
+
+  // Emit system-level completion event
+  if (eventRepository) {
+    await eventRepository.append({
+      type: "lifecycle",
+      runId: run.id,
+      roleId: "system",
+      timestamp: new Date().toISOString(),
+      payload: {
+        kind: "lifecycle",
+        state:
+          run.status === "completed"
+            ? "completed"
+            : run.status === "cancelled"
+              ? "cancelled"
+              : "failed",
+        message: `Run ${run.status}`,
+      },
+    });
+  }
+
   return results;
 }
 

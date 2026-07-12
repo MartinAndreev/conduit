@@ -1,7 +1,7 @@
-import type { BoxRenderable } from "@opentui/core";
 import type { ArchitectEvent } from "@domains/refinement/types/architect-event.js";
 import type { Theme } from "../theme.js";
 import { AgentActivity } from "@tui/components/AgentActivity.js";
+import { SplitDiff } from "@tui/components/SplitDiff.js";
 
 interface ArchitectActivityProps {
   readonly theme: Theme;
@@ -10,7 +10,7 @@ interface ArchitectActivityProps {
   readonly expandedIndex: number | null;
   readonly loading: boolean;
   readonly error: string | null;
-  readonly diffContainerRef: { current: BoxRenderable | null };
+  readonly selectedDiff: string | undefined;
   readonly featureId: string;
   readonly selectedFileIndex: number;
   readonly running?: boolean;
@@ -23,7 +23,7 @@ export function ArchitectActivity({
   expandedIndex,
   loading,
   error,
-  diffContainerRef,
+  selectedDiff,
   featureId,
   selectedFileIndex,
   running = false,
@@ -107,14 +107,7 @@ export function ArchitectActivity({
               fg={theme.text.default}
             />
           ))}
-          {expanded?.diff && (
-            <box
-              width="100%"
-              height={12}
-              marginTop={1}
-              ref={diffContainerRef}
-            />
-          )}
+          {expanded?.diff && <SplitDiff diff={selectedDiff} height={12} />}
         </box>
       </box>
     </box>

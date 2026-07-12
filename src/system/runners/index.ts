@@ -14,6 +14,7 @@ export {
   type ResultPayload,
 } from "../../domains/runs/types/runner-events.js";
 export { createEvent } from "./events.js";
+export { createUnavailableEvent } from "./unavailable.js";
 export { CodexAdapter } from "./codex.js";
 export { OpenCodeAdapter } from "./opencode.js";
 export { PiAdapter } from "./pi.js";

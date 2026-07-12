@@ -12,6 +12,7 @@ interface HomeScreenProps {
   onExit: () => void;
   onRefine: (featureId: string) => void;
   onView: (featureId: string) => void;
+  onRun: (runId: string) => void;
 }
 
 export function HomeScreen({
@@ -20,6 +21,7 @@ export function HomeScreen({
   onExit,
   onRefine,
   onView,
+  onRun,
 }: HomeScreenProps) {
   const theme = useTheme();
   const [state] = useHomeController(
@@ -28,6 +30,7 @@ export function HomeScreen({
     onExit,
     onRefine,
     onView,
+    onRun,
   );
 
   return (

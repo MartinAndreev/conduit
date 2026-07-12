@@ -7,16 +7,29 @@ import { ThemeProvider } from "./components/ThemeProvider.js";
 import { HomeScreen } from "./screens/HomeScreen.js";
 import { RefinementScreen } from "./screens/RefinementScreen.js";
 import { FeatureDetailsScreen } from "./screens/FeatureDetailsScreen.js";
+import { RunScreen } from "./screens/RunScreen.js";
 
 function HomeApplication({
   commandBus,
   queryBus,
   onExit,
-}: StartHomeParams & { onExit: () => void }) {
+  projectRoot,
+}: StartHomeParams & { onExit: () => void; projectRoot?: string }) {
   const [refiningFeatureId, setRefiningFeatureId] = useState<string | null>(
     null,
   );
   const [viewingFeatureId, setViewingFeatureId] = useState<string | null>(null);
+  const [runningRunId, setRunningRunId] = useState<string | null>(null);
+  if (runningRunId && projectRoot)
+    return (
+      <RunScreen
+        commandBus={commandBus}
+        queryBus={queryBus}
+        projectRoot={projectRoot}
+        runId={runningRunId}
+        onExit={() => setRunningRunId(null)}
+      />
+    );
   if (refiningFeatureId)
     return (
       <RefinementScreen
@@ -41,6 +54,7 @@ function HomeApplication({
       onExit={onExit}
       onRefine={setRefiningFeatureId}
       onView={setViewingFeatureId}
+      onRun={setRunningRunId}
     />
   );
 }
@@ -48,10 +62,11 @@ function HomeApplication({
 export interface StartHomeParams {
   commandBus: CommandBus;
   queryBus: QueryBus;
+  projectRoot?: string;
 }
 
 export async function startHome(params: StartHomeParams): Promise<void> {
-  const { commandBus, queryBus } = params;
+  const { commandBus, queryBus, projectRoot } = params;
 
   const renderer = await createCliRenderer({
     exitOnCtrlC: false,
@@ -71,6 +86,7 @@ export async function startHome(params: StartHomeParams): Promise<void> {
         commandBus={commandBus}
         queryBus={queryBus}
         onExit={handleExit}
+        projectRoot={projectRoot}
       />
     </ThemeProvider>,
   );
