@@ -8,6 +8,10 @@ import type {
   DraftField,
 } from "@domains/refinement/types/draft.js";
 import { parseRefinementBrief } from "@helpers/formatting/refinement-brief.js";
+import type {
+  ClarificationQuestion,
+  RefinementRevision,
+} from "@domains/refinement/types/revision.js";
 
 export const REFINEMENT_FIELDS: readonly DraftField[] = [
   {
@@ -47,7 +51,8 @@ export const REFINEMENT_FIELDS: readonly DraftField[] = [
   },
 ] as const;
 
-export type RefinementView = "form" | "packet" | "preview" | "architect";
+export type RefinementView =
+  "form" | "packet" | "preview" | "architect" | "clarifications" | "review";
 
 export interface RefinementControllerState {
   feature: FeatureReadModel | null;
@@ -64,6 +69,8 @@ export interface RefinementControllerState {
     tasks: string;
     testCases: string;
   } | null;
+  revision: RefinementRevision | null;
+  questions: readonly ClarificationQuestion[];
 }
 
 export interface RefinementControllerActions {
@@ -77,6 +84,9 @@ export interface RefinementControllerActions {
   toggleArchitect: () => void;
   editPacketBrief: () => void;
   cancelArchitect: () => Promise<void>;
+  submitAnswers: (answers: string) => Promise<void>;
+  approvePacket: () => Promise<void>;
+  requestPacketChanges: (feedback: string) => Promise<void>;
 }
 
 export function useRefinementController(
@@ -95,6 +105,10 @@ export function useRefinementController(
   const [packetContent, setPacketContent] =
     useState<RefinementControllerState["packetContent"]>(null);
   const [architectRunning, setArchitectRunning] = useState(false);
+  const [revision, setRevision] = useState<RefinementRevision | null>(null);
+  const [questions, setQuestions] = useState<readonly ClarificationQuestion[]>(
+    [],
+  );
 
   const loadData = useCallback(async () => {
     try {
@@ -160,6 +174,35 @@ export function useRefinementController(
     }
   }, [queryBus, featureId]);
 
+  const refreshRevision = useCallback(async () => {
+    const result = await queryBus.execute({
+      type: "getRefinementRevision",
+      featureId,
+    });
+    if (!result.success) return;
+    const data = result.data as {
+      revision: RefinementRevision | null;
+      questions: readonly ClarificationQuestion[];
+    };
+    setRevision(data.revision);
+    setQuestions(data.questions);
+  }, [queryBus, featureId]);
+  const refreshPacketContent = useCallback(async () => {
+    const result = await queryBus.execute({
+      type: "getFeatureContent",
+      featureId,
+    });
+    if (!result.success) return;
+    setPacketContent(
+      result.data as {
+        spec: string;
+        plan: string;
+        tasks: string;
+        testCases: string;
+      },
+    );
+  }, [queryBus, featureId]);
+
   useEffect(() => {
     void loadData();
   }, [loadData]);
@@ -222,8 +265,20 @@ export function useRefinementController(
           })
           .then((architectResult) => {
             setArchitectRunning(false);
-            if (!architectResult.success)
+            if (!architectResult.success) {
               setError(architectResult.error.message);
+              return;
+            }
+            const data = architectResult.data as {
+              status: "awaiting_clarification" | "ready_for_review";
+            };
+            void refreshRevision();
+            void refreshPacketContent();
+            setView(
+              data.status === "awaiting_clarification"
+                ? "clarifications"
+                : "review",
+            );
           });
       } else {
         onExit();
@@ -231,7 +286,16 @@ export function useRefinementController(
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [commandBus, featureId, values, architectEnabled, buildStory, onExit]);
+  }, [
+    commandBus,
+    featureId,
+    values,
+    architectEnabled,
+    buildStory,
+    onExit,
+    refreshPacketContent,
+    refreshRevision,
+  ]);
 
   const rejectPreview = useCallback(() => {
     setView("form");
@@ -250,6 +314,90 @@ export function useRefinementController(
     setArchitectRunning(false);
     setView("preview");
   }, [commandBus, featureId]);
+  const startArchitectPass = useCallback(
+    (revisionId?: string) => {
+      const story = buildStory(values);
+      setArchitectRunning(true);
+      setView("architect");
+      void commandBus
+        .dispatch({
+          type: "startArchitectRefinement",
+          featureId,
+          story,
+          revisionId,
+        })
+        .then((result) => {
+          setArchitectRunning(false);
+          if (!result.success) {
+            setError(result.error.message);
+            return;
+          }
+          const data = result.data as {
+            status: "awaiting_clarification" | "ready_for_review";
+          };
+          void refreshRevision();
+          void refreshPacketContent();
+          setView(
+            data.status === "awaiting_clarification"
+              ? "clarifications"
+              : "review",
+          );
+        });
+    },
+    [
+      buildStory,
+      commandBus,
+      featureId,
+      refreshPacketContent,
+      refreshRevision,
+      values,
+    ],
+  );
+  const submitAnswers = useCallback(
+    async (answers: string) => {
+      if (!revision) return;
+      const result = await commandBus.dispatch({
+        type: "submitArchitectAnswers",
+        featureId,
+        revisionId: revision.id,
+        answers,
+      });
+      if (!result.success) {
+        setError(result.error.message);
+        return;
+      }
+      startArchitectPass(revision.id);
+    },
+    [commandBus, featureId, revision, startArchitectPass],
+  );
+  const approvePacket = useCallback(async () => {
+    if (!revision) return;
+    const result = await commandBus.dispatch({
+      type: "reviewRefinementPacket",
+      featureId,
+      revisionId: revision.id,
+      decision: "approved",
+    });
+    if (!result.success) return setError(result.error.message);
+    await refreshRevision();
+    onExit();
+  }, [commandBus, featureId, onExit, refreshRevision, revision]);
+  const requestPacketChanges = useCallback(
+    async (feedback: string) => {
+      if (!revision) return;
+      const result = await commandBus.dispatch({
+        type: "reviewRefinementPacket",
+        featureId,
+        revisionId: revision.id,
+        decision: "changes_requested",
+        feedback,
+      });
+      if (!result.success) return setError(result.error.message);
+      const data = result.data as { nextRevisionId?: string };
+      startArchitectPass(data.nextRevisionId);
+    },
+    [commandBus, featureId, revision, startArchitectPass],
+  );
   useKeyboard((event: { name: string }) => {
     if (view === "packet" && event.name === "e") editPacketBrief();
     if (view === "packet" && (event.name === "q" || event.name === "escape"))
@@ -267,6 +415,8 @@ export function useRefinementController(
       architectEnabled,
       architectRunning,
       packetContent,
+      revision,
+      questions,
     },
     {
       setView,
@@ -279,6 +429,9 @@ export function useRefinementController(
       toggleArchitect,
       editPacketBrief,
       cancelArchitect,
+      submitAnswers,
+      approvePacket,
+      requestPacketChanges,
     },
   ];
 }

@@ -29,8 +29,12 @@ import { createApproveRefinementHandler } from "../../domains/refinement/handler
 import { createGetArchitectEventsHandler } from "../../domains/refinement/handlers/get-architect-events-handler.js";
 import { createStartArchitectRefinementHandler } from "../../domains/refinement/handlers/start-architect-refinement-handler.js";
 import { createCancelArchitectRefinementHandler } from "../../domains/refinement/handlers/cancel-architect-refinement-handler.js";
+import { createSubmitArchitectAnswersHandler } from "../../domains/refinement/handlers/submit-architect-answers-handler.js";
+import { createReviewRefinementPacketHandler } from "../../domains/refinement/handlers/review-refinement-packet-handler.js";
+import { createGetRefinementRevisionHandler } from "../../domains/refinement/handlers/get-refinement-revision-handler.js";
 import { FileDraftRepository } from "../../domains/refinement/repositories/file-draft-repository.js";
 import { FileArchitectEventRepository } from "../../domains/refinement/repositories/file-architect-event-repository.js";
+import { FileRefinementRevisionRepository } from "../../domains/refinement/repositories/file-revision-repository.js";
 import {
   findFeature,
   writeStory,
@@ -103,6 +107,9 @@ export function createApplication(deps: BootstrapDependencies): Application {
     : null;
   const architectEventRepository = projectRoot
     ? new FileArchitectEventRepository(projectRoot)
+    : null;
+  const revisionRepository = projectRoot
+    ? new FileRefinementRevisionRepository()
     : null;
 
   commandBus.register("initializeProject", (async (
@@ -248,6 +255,7 @@ export function createApplication(deps: BootstrapDependencies): Application {
           findFeature: deps.findFeature,
           refinementPrompt: deps.refinementPrompt,
           runArchitect: deps.runArchitect,
+          revisionRepository: revisionRepository!,
         }) as CommandHandler,
       );
     }
@@ -258,6 +266,35 @@ export function createApplication(deps: BootstrapDependencies): Application {
           deps.cancelArchitect,
         ) as CommandHandler,
       );
+    if (revisionRepository) {
+      commandBus.register(
+        "submitArchitectAnswers",
+        createSubmitArchitectAnswersHandler({
+          projectRoot,
+          loadConfig: deps.loadConfig,
+          findFeature: deps.findFeature,
+          repository: revisionRepository,
+        }) as CommandHandler,
+      );
+      commandBus.register(
+        "reviewRefinementPacket",
+        createReviewRefinementPacketHandler({
+          projectRoot,
+          loadConfig: deps.loadConfig,
+          findFeature: deps.findFeature,
+          repository: revisionRepository,
+        }) as CommandHandler,
+      );
+      queryBus.register(
+        "getRefinementRevision",
+        createGetRefinementRevisionHandler({
+          projectRoot,
+          loadConfig: deps.loadConfig,
+          findFeature: deps.findFeature,
+          repository: revisionRepository,
+        }) as QueryHandler,
+      );
+    }
   }
 
   if (architectEventRepository) {

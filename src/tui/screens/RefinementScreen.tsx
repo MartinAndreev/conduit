@@ -13,6 +13,8 @@ import { useRefinementPreviewController } from "@tui/controllers/useRefinementPr
 import { useArchitectActivityController } from "@tui/controllers/useArchitectActivityController.js";
 import { RefinementSidebar } from "@tui/sections/RefinementSidebar.js";
 import { RefinementPacketSummary } from "@tui/components/RefinementPacketSummary.js";
+import { ArchitectClarifications } from "@tui/components/ArchitectClarifications.js";
+import { RefinementPacketReview } from "@tui/components/RefinementPacketReview.js";
 
 interface RefinementScreenProps {
   commandBus: CommandBus;
@@ -161,6 +163,36 @@ export function RefinementScreen({
           {...architect}
           featureId={featureId}
           running={state.architectRunning}
+        />
+      );
+
+    case "clarifications":
+      return (
+        <ArchitectClarifications
+          theme={theme}
+          questions={state.questions}
+          onSubmit={(answers) => void actions.submitAnswers(answers)}
+          onExit={() => actions.setView("architect")}
+        />
+      );
+
+    case "review":
+      return (
+        <RefinementPacketReview
+          theme={theme}
+          content={
+            state.packetContent ?? {
+              spec: "",
+              plan: "",
+              tasks: "",
+              testCases: "",
+            }
+          }
+          onApprove={() => void actions.approvePacket()}
+          onRequestChanges={(feedback) =>
+            void actions.requestPacketChanges(feedback)
+          }
+          onExit={onExit}
         />
       );
 
