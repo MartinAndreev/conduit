@@ -58,17 +58,29 @@ export function useArchitectActivityController(
   const onKey = useCallback(
     (event: { name: string }) => {
       if (!enabled) return;
+      if (event.name === "escape" && expandedIndex !== null) {
+        setExpandedIndex(null);
+        return;
+      }
       if (event.name === "q" || event.name === "escape") return onExit();
       if (event.name === "up") return files.previous();
       if (event.name === "down") return files.next();
-      if (event.name === "return" || event.name === "space")
-        setExpandedIndex(
-          events.findIndex((item) =>
-            item.files?.includes(uniqueFiles[selectedFileIndex] ?? ""),
-          ),
+      if (event.name === "return" || event.name === "space") {
+        const next = events.findIndex((item) =>
+          item.files?.includes(uniqueFiles[selectedFileIndex] ?? ""),
         );
+        setExpandedIndex((current) => (current === next ? null : next));
+      }
     },
-    [enabled, events, files, onExit, selectedFileIndex, uniqueFiles],
+    [
+      enabled,
+      events,
+      expandedIndex,
+      files,
+      onExit,
+      selectedFileIndex,
+      uniqueFiles,
+    ],
   );
   useKeyboard(onKey);
 

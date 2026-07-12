@@ -3,6 +3,21 @@ export interface RefinementBriefFields {
   readonly audience: string;
   readonly outcome: string;
   readonly constraints: string;
+  readonly guidelines: string;
+}
+
+export function formatRefinementBrief(fields: RefinementBriefFields): string {
+  const sections: readonly [string, string][] = [
+    ["Problem / user story", fields.problem],
+    ["User or audience", fields.audience],
+    ["Desired outcome and acceptance criteria", fields.outcome],
+    ["Constraints and non-goals", fields.constraints],
+    ["Implementation and design guidance", fields.guidelines],
+  ];
+  return sections
+    .filter(([, value]) => value.trim())
+    .map(([heading, value]) => `## ${heading}\n\n${value.trim()}`)
+    .join("\n\n");
 }
 
 const labels: readonly [keyof RefinementBriefFields, string][] = [
@@ -19,7 +34,23 @@ export function parseRefinementBrief(story: string): RefinementBriefFields {
     audience: "",
     outcome: "",
     constraints: "",
+    guidelines: "",
   };
+  const markdownSections: readonly [keyof RefinementBriefFields, string][] = [
+    ["problem", "Problem / user story"],
+    ["audience", "User or audience"],
+    ["outcome", "Desired outcome and acceptance criteria"],
+    ["constraints", "Constraints and non-goals"],
+    ["guidelines", "Implementation and design guidance"],
+  ];
+  for (const [key, heading] of markdownSections) {
+    const expression = new RegExp(
+      `^## ${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\n([\\s\\S]*?)(?=^## |$)`,
+      "im",
+    );
+    const value = body.match(expression)?.[1]?.trim();
+    if (value) result[key] = value;
+  }
   for (let index = 0; index < labels.length; index += 1) {
     const [key, label] = labels[index]!;
     const nextLabel = labels[index + 1]?.[1];
@@ -27,7 +58,8 @@ export function parseRefinementBrief(story: string): RefinementBriefFields {
       `${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*([\\s\\S]*?)(?=${nextLabel ? nextLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : "$"})`,
       "i",
     );
-    result[key] = body.match(expression)?.[1]?.trim() ?? "";
+    const value = body.match(expression)?.[1]?.trim();
+    if (value) result[key] = value;
   }
   if (!result.problem) result.problem = body;
   return result;

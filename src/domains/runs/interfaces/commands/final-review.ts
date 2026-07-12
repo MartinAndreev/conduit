@@ -1,13 +1,13 @@
 import type { Command } from "../../../../system/bus/command-bus.js";
 
-export interface CodexReviewCommand extends Command {
-  readonly type: "codexReview";
+export interface FinalReviewCommand extends Command {
+  readonly type: "finalReview";
   readonly projectRoot: string;
   readonly featureId: string;
   readonly runId: string;
 }
 
-export interface CodexReviewResult {
+export interface FinalReviewResult {
   readonly reviewId: string;
   readonly decision: "approved" | "rejected";
   readonly findingsCount: number;

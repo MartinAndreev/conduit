@@ -34,4 +34,14 @@ test("builds subscription CLI commands for each supported runner", () => {
       ],
     ],
   );
+  assert.deepEqual(
+    commandForRole({ runner: "codex", effort: "xhigh" }, "/tmp/task.md"),
+    [
+      "codex",
+      [
+        "exec",
+        "Read /tmp/task.md and perform only your assigned task. Requested reasoning effort: xhigh.",
+      ],
+    ],
+  );
 });

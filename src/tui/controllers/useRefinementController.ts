@@ -7,7 +7,16 @@ import type {
   RefinementDraft,
   DraftField,
 } from "@domains/refinement/types/draft.js";
-import { parseRefinementBrief } from "@helpers/formatting/refinement-brief.js";
+import {
+  formatRefinementBrief,
+  parseRefinementBrief,
+} from "@helpers/formatting/refinement-brief.js";
+import {
+  ARCHITECT_DETAIL_LEVELS,
+  ARCHITECT_EFFORTS,
+  DEFAULT_ARCHITECT_PREFERENCES,
+  type ArchitectPreferences,
+} from "@domains/refinement/types/architect-preferences.js";
 import type {
   ClarificationQuestion,
   RefinementRevision,
@@ -54,6 +63,14 @@ export const REFINEMENT_FIELDS: readonly DraftField[] = [
     label: "QA test cases and regression scenarios",
     guidance: "Describe test cases and regression scenarios.",
     required: true,
+    multiline: true,
+  },
+  {
+    name: "guidelines",
+    label: "Implementation and design guidance (optional)",
+    guidance:
+      "Add architecture, coding, design-system, accessibility, or delivery guidance the architect must preserve.",
+    required: false,
     multiline: true,
   },
 ] as const;
@@ -124,6 +141,8 @@ export function useRefinementController(
   }, []);
   const [values, setValues] = useState<Record<string, string>>({});
   const [architectEnabled, setArchitectEnabled] = useState(false);
+  const [architectPreferences, setArchitectPreferences] =
+    useState<ArchitectPreferences>(DEFAULT_ARCHITECT_PREFERENCES);
   const [packetContent, setPacketContent] =
     useState<RefinementControllerState["packetContent"]>(null);
   const [revision, setRevision] = useState<RefinementRevision | null>(null);
@@ -161,7 +180,7 @@ export function useRefinementController(
           content.spec.trim() || content.plan.trim() || content.tasks.trim(),
         );
         setValues((current) =>
-          Object.keys(current).length
+          current.problem
             ? current
             : {
                 ...parseRefinementBrief(content.story || content.spec),
@@ -182,7 +201,7 @@ export function useRefinementController(
         if (data.draft) {
           setDraft(data.draft);
           setValues({
-            problem: data.draft.story,
+            ...parseRefinementBrief(data.draft.story),
             testCases: data.draft.testCases,
           });
         }
@@ -231,16 +250,13 @@ export function useRefinementController(
   }, [loadData]);
 
   const buildStory = useCallback((formValues: Record<string, string>) => {
-    return [
-      `Problem: ${formValues.problem ?? ""}`,
-      `User: ${formValues.audience ?? ""}`,
-      `Desired outcome: ${formValues.outcome ?? ""}`,
-      formValues.constraints
-        ? `Constraints and non-goals: ${formValues.constraints}`
-        : "",
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+    return formatRefinementBrief({
+      problem: formValues.problem ?? "",
+      audience: formValues.audience ?? "",
+      outcome: formValues.outcome ?? "",
+      constraints: formValues.constraints ?? "",
+      guidelines: formValues.guidelines ?? "",
+    });
   }, []);
 
   const saveDraft = useCallback(async () => {
@@ -284,6 +300,7 @@ export function useRefinementController(
             type: "startArchitectRefinement",
             featureId,
             story,
+            preferences: architectPreferences,
           })
           .then((architectResult) => {
             if (!architectResult.success) {
@@ -314,6 +331,7 @@ export function useRefinementController(
     featureId,
     values,
     architectEnabled,
+    architectPreferences,
     buildStory,
     onExit,
     refreshPacketContent,
@@ -331,6 +349,24 @@ export function useRefinementController(
   const toggleArchitect = useCallback(() => {
     setArchitectEnabled((prev) => !prev);
   }, []);
+  const cycleArchitectPreference = useCallback(
+    (kind: "effort" | "detailLevel") => {
+      setArchitectPreferences((current) => {
+        const values =
+          kind === "effort" ? ARCHITECT_EFFORTS : ARCHITECT_DETAIL_LEVELS;
+        const currentValue = current[kind];
+        const next =
+          values[(values.indexOf(currentValue as never) + 1) % values.length]!;
+        return kind === "effort"
+          ? { ...current, effort: next as ArchitectPreferences["effort"] }
+          : {
+              ...current,
+              detailLevel: next as ArchitectPreferences["detailLevel"],
+            };
+      });
+    },
+    [],
+  );
   const editPacketBrief = useCallback(() => setView("form"), []);
   const cancelArchitect = useCallback(async () => {
     await commandBus.dispatch({ type: "cancelArchitectRefinement", featureId });
@@ -346,6 +382,7 @@ export function useRefinementController(
           featureId,
           story,
           revisionId,
+          preferences: architectPreferences,
         })
         .then((result) => {
           if (!result.success) {
@@ -373,6 +410,7 @@ export function useRefinementController(
       refreshPacketContent,
       refreshRevision,
       values,
+      architectPreferences,
     ],
   );
   const submitAnswers = useCallback(
@@ -435,6 +473,7 @@ export function useRefinementController(
       loading,
       error,
       architectEnabled,
+      architectPreferences,
       architectLifecycle,
       architectRunning,
       packetContent,
@@ -450,6 +489,7 @@ export function useRefinementController(
       rejectPreview,
       quitPreview,
       toggleArchitect,
+      cycleArchitectPreference,
       editPacketBrief,
       cancelArchitect,
       submitAnswers,

@@ -52,6 +52,15 @@ test("architect clarification and packet review keep an auditable revision histo
     if (!first.success) return;
     assert.equal(first.data.status, "awaiting_clarification");
     assert.equal(first.data.revisionId, "001");
+    const questions = await repository.readQuestions(
+      (await repository.getLatest(feature))!,
+    );
+    assert.equal(questions[0]?.id, "Q-001");
+    assert.equal(
+      questions[0]?.question,
+      "Which retention period should apply?",
+    );
+    assert.deepEqual(questions[0]?.options, ["30 days", "90 days"]);
     assert.match(
       await readFile(
         path.join(feature.directory, "revisions", "001", "questions.md"),

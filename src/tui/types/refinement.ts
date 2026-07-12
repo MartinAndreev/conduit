@@ -4,6 +4,7 @@ import type {
   ClarificationQuestion,
   RefinementRevision,
 } from "@domains/refinement/types/revision.js";
+import type { ArchitectPreferences } from "@domains/refinement/types/architect-preferences.js";
 
 export type RefinementView =
   | "loading"
@@ -41,6 +42,7 @@ export interface RefinementControllerState {
   readonly loading: boolean;
   readonly error: string | null;
   readonly architectEnabled: boolean;
+  readonly architectPreferences: ArchitectPreferences;
   readonly architectLifecycle: ArchitectLifecycle;
   readonly architectRunning: boolean;
   readonly packetContent: RefinementPacketContent | null;
@@ -57,6 +59,7 @@ export interface RefinementControllerActions {
   rejectPreview(): void;
   quitPreview(): void;
   toggleArchitect(): void;
+  cycleArchitectPreference(kind: "effort" | "detailLevel"): void;
   editPacketBrief(): void;
   cancelArchitect(): Promise<void>;
   submitAnswers(answers: string): Promise<void>;

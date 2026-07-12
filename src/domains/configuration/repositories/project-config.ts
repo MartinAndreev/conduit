@@ -80,6 +80,7 @@ export function serializeConfig(config: Config = defaultConfig): string {
     lines.push(`    runner: ${role.runner}`);
     lines.push(`    mode: ${role.mode}`);
     if (role.model) lines.push(`    model: ${role.model}`);
+    if (role.effort) lines.push(`    effort: ${role.effort}`);
     if (role.readOnly) lines.push("    readOnly: true");
     if (role.owns?.length) lines.push(`    owns: [${role.owns.join(", ")}]`);
     lines.push("    skill:");

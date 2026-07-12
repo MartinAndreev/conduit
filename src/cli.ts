@@ -11,8 +11,8 @@ import {
   writeStory,
   writeTestCases,
   readStory,
-  refinementPrompt,
 } from "./domains/features/repositories/feature-packet-repository.js";
+import { localSpecKitRefinementPrompt } from "./domains/features/providers/local-spec-kit-refinement-prompt.js";
 import {
   planRun,
   executeRun,
@@ -92,7 +92,7 @@ const dependencies = {
   writeStory,
   writeTestCases,
   readStory,
-  refinementPrompt,
+  refinementPrompt: localSpecKitRefinementPrompt,
   collectRefinement,
   collectArchitectAnswers,
   runArchitect,
@@ -199,9 +199,11 @@ export function createProgram(
             featureProvider,
             portraitRegistry: settingsResult.portraitRegistry,
             projectRoot,
-            refinementPrompt,
+            refinementPrompt: localSpecKitRefinementPrompt,
             runArchitect,
             cancelArchitect: cancelArchitectForFeature,
+            builtinRoleRoot: handlers.builtinRoot as string,
+            resolveRoleGuidance: handlers.resolveSkill as typeof resolveSkill,
           });
 
           await refineCommandReact(
@@ -343,7 +345,7 @@ export async function handleBareConduit(
     credentialStore: settingsResult.credentialStore,
     featureProvider,
     portraitRegistry: settingsResult.portraitRegistry,
-    refinementPrompt,
+    refinementPrompt: localSpecKitRefinementPrompt,
     runArchitect,
     cancelArchitect: cancelArchitectForFeature,
     projectRoot,

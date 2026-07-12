@@ -8,12 +8,14 @@ export function RefinementTextarea({
   placeholder,
   onChange,
   onSubmit,
+  height = "100%",
 }: {
   readonly fieldId: string;
   readonly value: string;
   readonly placeholder: string;
   readonly onChange: (value: string) => void;
   readonly onSubmit: () => void;
+  readonly height?: number | "auto" | `${number}%`;
 }) {
   const renderer = useRenderer();
   const containerRef = useRef<BoxRenderable | null>(null);
@@ -31,7 +33,7 @@ export function RefinementTextarea({
       const textarea = new TextareaRenderable(renderer, {
         id: `refinement-${fieldId}`,
         width: "100%",
-        height: "100%",
+        height,
         initialValue: value,
         placeholder,
         placeholderColor: "#8B8B8B",
@@ -62,7 +64,7 @@ export function RefinementTextarea({
         textareaRef.current = null;
       }
     };
-  }, [fieldId, renderer]);
+  }, [fieldId, height, renderer]);
   useEffect(() => {
     const textarea = textareaRef.current;
     if (textarea && textarea.plainText !== value) {

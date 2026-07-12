@@ -63,7 +63,7 @@ export function ArchitectActivity({
         />
       )}
       <text
-        content="↑/↓ select changed file · Enter view diff · q exit"
+        content="Keys: ↑/↓ select a changed file · Enter open/close its diff · Esc close an open diff · Esc again or q cancels refinement and exits"
         fg={theme.text.muted}
       />
       <text

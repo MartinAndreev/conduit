@@ -4,6 +4,9 @@ import type { CredentialStore } from "../../domains/credentials/interfaces/crede
 import type { FeatureProvider } from "../../domains/features/interfaces/feature-provider.js";
 import type { Feature } from "../../domains/features/types/feature.js";
 import type { PortraitRegistry } from "../../domains/roles/interfaces/portrait-registry.js";
+import type { RoleConfig } from "../../domains/configuration/types/config.js";
+import type { SkillResolution } from "../../domains/roles/types/skill.js";
+import { resolveSkill } from "../../domains/roles/repositories/skill-resolver.js";
 import type { Run } from "../../domains/runs/types/run.js";
 import { CommandBus } from "../bus/command-bus.js";
 import type { Command, CommandHandler } from "../bus/command-bus.js";
@@ -51,7 +54,7 @@ import { createReviewRunHandler } from "../../domains/runs/handlers/review-run-h
 import { createGetReviewResultHandler } from "../../domains/runs/handlers/get-review-result-handler.js";
 import { createCancelRunHandler } from "../../domains/runs/handlers/cancel-run-handler.js";
 import { createGetRunHandler } from "../../domains/runs/handlers/get-run-handler.js";
-import { createCodexReviewHandler } from "../../domains/runs/handlers/codex-review-handler.js";
+import { createFinalReviewHandler } from "../../domains/runs/handlers/final-review-handler.js";
 import { WorktreeDiffReader } from "../../domains/runs/repositories/worktree-diff-reader.js";
 import { createRunProcessRegistry } from "../../domains/runs/repositories/run-process-registry.js";
 
@@ -91,13 +94,24 @@ export interface BootstrapDependencies {
   featureProvider: FeatureProvider;
   portraitRegistry: PortraitRegistry;
   projectRoot?: string;
-  refinementPrompt?: (feature: Feature, story: string) => string;
+  refinementPrompt?: (
+    feature: Feature,
+    story: string,
+    additionalContext?: string,
+  ) => string;
   runArchitect?: (params: {
     projectRoot: string;
     prompt: string;
     logFile: string;
   }) => Promise<{ logFile: string }>;
   cancelArchitect?: (featureId: string) => boolean;
+  builtinRoleRoot?: string;
+  resolveRoleGuidance?: (params: {
+    projectRoot: string;
+    roleName: string;
+    role: RoleConfig;
+    builtinRoot: string;
+  }) => Promise<SkillResolution>;
 }
 
 interface InitProjectPayload {
@@ -267,6 +281,18 @@ export function createApplication(deps: BootstrapDependencies): Application {
           loadConfig: deps.loadConfig,
           findFeature: deps.findFeature,
           refinementPrompt: deps.refinementPrompt,
+          projectRoleGuidance: async (config) => {
+            const architect = config.roles.architect;
+            if (!architect || !deps.builtinRoleRoot) return "";
+            const resolve = deps.resolveRoleGuidance ?? resolveSkill;
+            const guidance = await resolve({
+              projectRoot,
+              roleName: "architect",
+              role: architect,
+              builtinRoot: deps.builtinRoleRoot,
+            });
+            return guidance.content;
+          },
           runArchitect: deps.runArchitect,
           revisionRepository: revisionRepository!,
         }) as CommandHandler,
@@ -346,8 +372,8 @@ export function createApplication(deps: BootstrapDependencies): Application {
   );
 
   commandBus.register(
-    "codexReview",
-    createCodexReviewHandler(
+    "finalReview",
+    createFinalReviewHandler(
       { loadConfig: deps.loadConfig, findFeature: deps.findFeature },
       reviewRepository,
     ) as CommandHandler,

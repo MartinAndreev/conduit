@@ -9,6 +9,8 @@ export type RunStatus =
 export interface RunRole {
   name: string;
   runner: string;
+  model?: string;
+  effort?: import("../../configuration/types/config.js").RoleReasoningEffort;
   readOnly: boolean;
   owns: string[];
   promptFile: string;

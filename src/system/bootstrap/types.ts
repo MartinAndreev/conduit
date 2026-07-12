@@ -30,7 +30,11 @@ export interface ApplicationDependencies {
   writeStory: (feature: Feature, story: string) => Promise<string>;
   writeTestCases: (feature: Feature, testCases: string) => Promise<string>;
   readStory: (feature: Feature) => Promise<string>;
-  refinementPrompt: (feature: Feature, story: string) => string;
+  refinementPrompt: (
+    feature: Feature,
+    story: string,
+    additionalContext?: string,
+  ) => string;
   collectRefinement: () => Promise<{ story: string; testCases: string }>;
   collectArchitectAnswers: (questions: string) => Promise<string>;
   runArchitect: (params: {

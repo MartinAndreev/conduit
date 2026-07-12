@@ -8,6 +8,7 @@ import type { Run, RunRole, RunResult } from "../types/run.js";
 import type { RunnerEvent } from "../types/runner-events.js";
 import type { RunEventRepository } from "../interfaces/run-event-repository.js";
 import type { RunProcessRegistry } from "./run-process-registry.js";
+import { localSpecKitRoleContract } from "@domains/features/providers/local-spec-kit-role-contract.js";
 
 interface RunnerAdapter {
   command: string;
@@ -23,7 +24,11 @@ const runnerAdapters: Record<string, RunnerAdapter> = {
 };
 
 export function commandForRole(
-  role: { runner: string; model?: string },
+  role: {
+    runner: string;
+    model?: string;
+    effort?: import("../../configuration/types/config.js").RoleReasoningEffort;
+  },
   promptFile: string,
 ): [string, string[]] {
   const adapter = runnerAdapters[role.runner];
@@ -32,7 +37,10 @@ export function commandForRole(
       `Unsupported runner: ${role.runner}. Supported runners: ${Object.keys(runnerAdapters).join(", ")}.`,
     );
   const model = role.model ? ["--model", role.model] : [];
-  const prompt = `Read ${promptFile} and perform only your assigned task.`;
+  const effort = role.effort
+    ? ` Requested reasoning effort: ${role.effort}.`
+    : "";
+  const prompt = `Read ${promptFile} and perform only your assigned task.${effort}`;
   return [
     adapter.command,
     [...adapter.beforeModel, ...model, ...adapter.afterModel, prompt],
@@ -88,14 +96,20 @@ export async function planRun({
       role,
       builtinRoot,
       allowNetwork: fetchSkills,
-    });
+    }).catch(() => ({
+      source: role.skill.source,
+      content: "No project role guidance was loaded.",
+      verified: false,
+    }));
     const promptFile = path.join(runDir, `${name}.md`);
-    const prompt = `${skill.content}\n\n---\n\n# Assignment\n\nFeature: ${featureId}\nRead the approved files in specs/${featureId}-*/ before changing code.\nOwned paths: ${(role.owns ?? ["none defined"]).join(", ")}\nDo not modify contracts or paths outside your ownership.\nReport tests run and unresolved integration risks.\n`;
+    const prompt = `${localSpecKitRoleContract(name, role.effort)}\n\n# Project role guidance (advisory)\n\n${skill.content}\n\n# Assignment (authoritative)\n\nFeature: ${featureId}\nRead the approved files in specs/${featureId}-*/ before changing code.\nOwned paths: ${(role.owns ?? ["none defined"]).join(", ")}\nDo not modify contracts or paths outside your ownership.\nReport tests run and unresolved integration risks.\n\nThe system role contract and assignment take precedence over project role guidance.`;
     await writeFile(promptFile, prompt);
     const [command, args] = commandForRole(role, promptFile);
     roles.push({
       name,
       runner: role.runner,
+      model: role.model,
+      effort: role.effort,
       readOnly: Boolean(role.readOnly),
       owns: role.owns ?? [],
       promptFile,

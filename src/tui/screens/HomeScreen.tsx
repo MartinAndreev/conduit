@@ -24,7 +24,7 @@ export function HomeScreen({
   onRun,
 }: HomeScreenProps) {
   const theme = useTheme();
-  const [state] = useHomeController(
+  const [state, actions] = useHomeController(
     commandBus,
     queryBus,
     onExit,
@@ -55,6 +55,8 @@ export function HomeScreen({
           tip={state.tip}
           creating={state.creating}
           featureTitle={state.featureTitle}
+          setFeatureTitle={actions.setFeatureTitle}
+          submitFeature={actions.submitFeature}
         />
       </box>
       <HomeFooter

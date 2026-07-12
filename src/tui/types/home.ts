@@ -28,4 +28,6 @@ export interface HomeControllerActions {
     shift: boolean;
     meta: boolean;
   }): void;
+  setFeatureTitle(title: string): void;
+  submitFeature(): void;
 }

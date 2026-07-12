@@ -19,18 +19,36 @@ function parseQuestions(source: string): readonly ClarificationQuestion[] {
   const questions = sections.map((section, index) => {
     const [heading = `Q-${String(index + 1).padStart(3, "0")}`, ...body] =
       section.trim().split("\n");
-    const text = body.join("\n").trim();
-    const options = [...text.matchAll(/^\s*[-*]\s+(.+)$/gm)].map(
-      (match) => match[1],
-    );
-    const context = text
-      .replace(/^###\s*(why it matters|context)\s*$/gim, "")
-      .replace(/^###\s*options\s*$/gim, "")
-      .replace(/^\s*[-*]\s+.+$/gm, "")
+    const blocks = body.join("\n").split(/^###\s+/m);
+    const unlabelled = blocks[0]?.trim() ?? "";
+    const labelled = blocks.slice(1).map((block) => {
+      const [label = "", ...content] = block.split("\n");
+      return {
+        label: label.trim().toLowerCase(),
+        content: content.join("\n").trim(),
+      };
+    });
+    const context = labelled
+      .filter(
+        ({ label }) => label === "why this matters" || label === "context",
+      )
+      .map(({ content }) => content)
+      .join("\n\n")
       .trim();
+    const optionSource =
+      labelled.find(({ label }) => label === "options")?.content ?? "";
+    const options = [
+      ...optionSource.matchAll(/^\s*(?:[-*]|\d+\.)\s+(.+)$/gm),
+    ].map((match) => match[1]!.trim());
+    const question =
+      heading.replace(/^Q-\d+\s*(?:[—:-]\s*)?/i, "").trim() ||
+      unlabelled ||
+      heading.trim();
     return {
-      id: heading.trim(),
-      question: context || text || heading.trim(),
+      id:
+        heading.match(/^Q-\d+/i)?.[0] ??
+        `Q-${String(index + 1).padStart(3, "0")}`,
+      question,
       context,
       options,
     };

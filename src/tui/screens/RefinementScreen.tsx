@@ -1,5 +1,6 @@
 import type { CommandBus } from "@system/bus/command-bus.js";
 import type { QueryBus } from "@system/bus/query-bus.js";
+import { useKeyboard } from "@opentui/react";
 import { useTheme } from "@tui/components/ThemeProvider.js";
 import {
   useRefinementController,
@@ -49,6 +50,7 @@ export function RefinementScreen({
       reject: actions.rejectPreview,
       quit: actions.quitPreview,
       toggleArchitect: actions.toggleArchitect,
+      cycleArchitectPreference: actions.cycleArchitectPreference,
     },
     state.view === "preview",
   );
@@ -56,10 +58,14 @@ export function RefinementScreen({
     queryBus,
     featureId,
     () => {
-      void actions.cancelArchitect();
+      void actions.cancelArchitect().finally(onExit);
     },
     state.view === "architect",
   );
+
+  useKeyboard((_event: { name: string }) => {
+    if (state.view === "error") onExit();
+  });
 
   if (state.loading) {
     return (
@@ -151,6 +157,7 @@ export function RefinementScreen({
               theme={theme}
               values={state.values}
               architectEnabled={state.architectEnabled}
+              architectPreferences={state.architectPreferences}
             />
           </box>
         </box>

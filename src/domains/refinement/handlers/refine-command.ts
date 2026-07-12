@@ -11,6 +11,7 @@ import type { Run } from "../../runs/types/run.js";
 import type { ApplicationDependencies } from "../../../system/bootstrap/types.js";
 import { textarea } from "../../../tui/textarea.js";
 import type { CommandRuntimeDependencies } from "../../../system/cli/command-support.js";
+import { formatRefinementBrief } from "@helpers/formatting/refinement-brief.js";
 
 const activeArchitectProcesses = new Map<string, ChildProcess>();
 
@@ -56,8 +57,17 @@ export async function collectRefinement(): Promise<{
   const testCases = await textarea({
     label: "QA test cases and regression scenarios",
   });
+  const guidelines = await textarea({
+    label: "Implementation and design guidance (optional)",
+  });
   return {
-    story: `Problem: ${problem}\n\nUser: ${user}\n\nDesired outcome: ${outcome}${constraints ? `\n\nConstraints and non-goals: ${constraints}` : ""}`,
+    story: formatRefinementBrief({
+      problem,
+      audience: user,
+      outcome,
+      constraints,
+      guidelines,
+    }),
     testCases,
   };
 }

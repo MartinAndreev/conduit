@@ -24,3 +24,11 @@ test("config preserves a role model override", () => {
   );
   assert.equal(parsed.roles.frontend.model, "openai/gpt-5-mini");
 });
+
+test("config preserves a role reasoning-effort preference", () => {
+  const parsed = parseConfig(
+    "version: 1\nroles:\n  frontend:\n    runner: opencode\n    mode: subagent\n    effort: high\n    skill:\n      source: builtin:frontend\n",
+  );
+  assert.equal(parsed.roles.frontend.effort, "high");
+  assert.match(serializeConfig(parsed), /effort: high/);
+});

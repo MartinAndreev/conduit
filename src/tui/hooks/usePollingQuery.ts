@@ -27,12 +27,13 @@ export function usePollingQuery<TQuery, TResult, TData>({
   const [error, setError] = useState<string | null>(null);
   const optionsRef = useRef({ execute, createQuery, project });
   const requestIdRef = useRef(0);
+  const hasLoadedRef = useRef(false);
 
   optionsRef.current = { execute, createQuery, project };
 
   const reload = useCallback(() => {
     const requestId = ++requestIdRef.current;
-    setLoading(true);
+    if (!hasLoadedRef.current) setLoading(true);
     setError(null);
     const options = optionsRef.current;
     void options
@@ -40,6 +41,7 @@ export function usePollingQuery<TQuery, TResult, TData>({
       .then((result) => {
         if (requestId !== requestIdRef.current) return;
         setData(options.project(result));
+        hasLoadedRef.current = true;
         setLoading(false);
       })
       .catch((reason: unknown) => {

@@ -1,5 +1,6 @@
 import type { FeatureReadModel } from "@domains/features/types/feature.js";
 import type { Theme } from "@tui/theme.js";
+import { RefinementTextarea } from "@tui/components/RefinementTextarea.js";
 
 interface FeatureActionsProps {
   feature: FeatureReadModel | undefined;
@@ -9,6 +10,8 @@ interface FeatureActionsProps {
   tip: string;
   creating: boolean;
   featureTitle: string;
+  setFeatureTitle: (title: string) => void;
+  submitFeature: () => void;
 }
 
 const FEATURE_ACTIONS = ["View", "Refine", "Run", "Status"] as const;
@@ -21,20 +24,37 @@ export function FeatureActions({
   tip,
   creating,
   featureTitle,
+  setFeatureTitle,
+  submitFeature,
 }: FeatureActionsProps) {
   if (!feature) {
     return (
       <box width="70%" height="100%" flexDirection="column" padding={1}>
         <text content="Welcome to Conduit" fg={theme.text.strong} />
         <text content="" />
-        <text
-          content={
-            creating
-              ? `New feature title: ${featureTitle}_`
-              : "Press n to create a feature, or select one from the sidebar."
-          }
-          fg={theme.text.default}
-        />
+        {creating ? (
+          <>
+            <box height={3} marginTop={1}>
+              <RefinementTextarea
+                fieldId="home-feature-title"
+                value={featureTitle}
+                placeholder="Feature title"
+                onChange={setFeatureTitle}
+                onSubmit={submitFeature}
+                height={3}
+              />
+            </box>
+            <text
+              content="Type a title · Ctrl+Enter create · Esc cancel"
+              fg={theme.text.muted}
+            />
+          </>
+        ) : (
+          <text
+            content="Press n to create a feature, or select one from the sidebar."
+            fg={theme.text.default}
+          />
+        )}
         <text content="" />
         <text content={`Tip: ${tip}`} fg={theme.text.muted} />
       </box>
@@ -52,14 +72,29 @@ export function FeatureActions({
         marginBottom={1}
       >
         <text content="New feature" fg={theme.action.primary} />
-        <text
-          content={
-            creating
-              ? `Title: ${featureTitle}_  · Enter create · Esc cancel`
-              : "Press n to define a new feature and begin refinement."
-          }
-          fg={creating ? theme.text.default : theme.text.muted}
-        />
+        {creating ? (
+          <box height={3} marginTop={1}>
+            <RefinementTextarea
+              fieldId="home-feature-title"
+              value={featureTitle}
+              placeholder="Feature title"
+              onChange={setFeatureTitle}
+              onSubmit={submitFeature}
+              height={3}
+            />
+          </box>
+        ) : (
+          <text
+            content="Press n to define a new feature and begin refinement."
+            fg={theme.text.muted}
+          />
+        )}
+        {creating && (
+          <text
+            content="Type a title · Ctrl+Enter create · Esc cancel"
+            fg={theme.text.muted}
+          />
+        )}
       </box>
       <text content={feature.title} fg={theme.text.strong} />
       <text content="" />

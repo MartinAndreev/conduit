@@ -7,6 +7,7 @@ export function useRefinementPreviewController(
     readonly reject: () => void;
     readonly quit: () => void;
     readonly toggleArchitect: () => void;
+    readonly cycleArchitectPreference: (kind: "effort" | "detailLevel") => void;
   },
   enabled: boolean,
 ): void {
@@ -17,6 +18,8 @@ export function useRefinementPreviewController(
       if (event.name === "r") actions.reject();
       if (event.name === "q") actions.quit();
       if (event.name === "t") actions.toggleArchitect();
+      if (event.name === "e") actions.cycleArchitectPreference("effort");
+      if (event.name === "l") actions.cycleArchitectPreference("detailLevel");
     },
     [actions, enabled],
   );

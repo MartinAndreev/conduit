@@ -1,16 +1,19 @@
 import type { Theme } from "../theme.js";
 import { MarkdownDocument } from "@tui/components/MarkdownDocument.js";
+import type { ArchitectPreferences } from "@domains/refinement/types/architect-preferences.js";
 
 interface RefinementPreviewProps {
   theme: Theme;
   values: Record<string, string>;
   architectEnabled: boolean;
+  architectPreferences: ArchitectPreferences;
 }
 
 export function RefinementPreview({
   theme,
   values,
   architectEnabled,
+  architectPreferences,
 }: RefinementPreviewProps) {
   const markdown = [
     "# Story",
@@ -19,6 +22,9 @@ export function RefinementPreview({
     `## Desired outcome\n${values.outcome ?? ""}`,
     values.constraints
       ? `## Constraints and non-goals\n${values.constraints}`
+      : "",
+    values.guidelines
+      ? `## Implementation and design guidance\n${values.guidelines}`
       : "",
     "# QA test cases",
     values.testCases ?? "",
@@ -46,7 +52,7 @@ export function RefinementPreview({
 
       <box width="100%" height={2} flexDirection="row" justifyContent="center">
         <text
-          content="r: return · a: approve · q: quit · t: toggle architect"
+          content="r: return · a: approve/start architect · q: quit · t: toggle architect · e: effort · l: detail"
           fg={theme.text.muted}
         />
       </box>
@@ -62,18 +68,33 @@ export function RefinementPreview({
 
       <box
         width="100%"
-        height={3}
-        flexDirection="row"
-        justifyContent="center"
-        alignItems="center"
+        height={5}
+        flexDirection="column"
+        paddingLeft={1}
+        backgroundColor={theme.surface.raised}
         marginTop={1}
       >
-        <text
-          content={
-            architectEnabled ? "[✓] Architect: ON" : "[ ] Architect: OFF"
-          }
-          fg={architectEnabled ? theme.action.primary : theme.text.muted}
-        />
+        <box flexDirection="row">
+          <text content="Architect: " fg={theme.text.muted} />
+          <text
+            content={architectEnabled ? "ON (t toggle)" : "OFF (t toggle)"}
+            fg={architectEnabled ? theme.action.primary : theme.text.muted}
+          />
+        </box>
+        <box flexDirection="row">
+          <text content="Effort [e]: " fg={theme.text.muted} />
+          <text
+            content={architectPreferences.effort}
+            fg={theme.action.attention}
+          />
+        </box>
+        <box flexDirection="row">
+          <text content="Detail [l]: " fg={theme.text.muted} />
+          <text
+            content={architectPreferences.detailLevel}
+            fg={theme.action.primary}
+          />
+        </box>
       </box>
 
       <box
@@ -86,7 +107,7 @@ export function RefinementPreview({
         <text
           content={
             architectEnabled
-              ? "a: approve → start architect"
+              ? "a: approve → start architect · e: cycle effort · l: cycle detail"
               : "a: approve → return to home"
           }
           fg={theme.text.muted}

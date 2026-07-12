@@ -8,6 +8,9 @@ import type {
 } from "@domains/refinement/interfaces/commands/start-architect-refinement.js";
 import type { RefinementRevisionRepository } from "@domains/refinement/interfaces/revision-repository.js";
 import type { CommandHandler } from "@system/bus/command-bus.js";
+import { DEFAULT_ARCHITECT_PREFERENCES } from "@domains/refinement/types/architect-preferences.js";
+import { architectExecutionContract } from "@domains/refinement/types/architect-execution-contract.js";
+import { localSpecKitArchitectContract } from "@domains/features/providers/local-spec-kit-role-contract.js";
 
 export interface StartArchitectRefinementDependencies {
   readonly projectRoot: string;
@@ -17,7 +20,13 @@ export interface StartArchitectRefinementDependencies {
     config: Config;
     featureId: string;
   }) => Promise<Feature>;
-  readonly refinementPrompt: (feature: Feature, story: string) => string;
+  readonly refinementPrompt: (
+    feature: Feature,
+    story: string,
+    additionalContext?: string,
+  ) => string;
+  /** Loads project-authored guidance. Failures intentionally omit guidance. */
+  readonly projectRoleGuidance?: (config: Config) => Promise<string>;
   readonly runArchitect: (params: {
     projectRoot: string;
     prompt: string;
@@ -34,7 +43,11 @@ export function createStartArchitectRefinementHandler(
 > {
   return async (command) => {
     try {
+      const preferences = command.preferences ?? DEFAULT_ARCHITECT_PREFERENCES;
       const config = await deps.loadConfig(deps.projectRoot);
+      const guidance = deps.projectRoleGuidance
+        ? await deps.projectRoleGuidance(config).catch(() => "")
+        : "";
       const feature = await deps.findFeature({
         projectRoot: deps.projectRoot,
         config,
@@ -62,6 +75,17 @@ export function createStartArchitectRefinementHandler(
           revision.feedback
             ? `${command.story}\n\nPrior packet review feedback (preserve already-approved decisions unless this feedback changes them):\n${revision.feedback}`
             : command.story,
+          `${architectExecutionContract(preferences)}\n\n${localSpecKitArchitectContract()}\n\n# Configured role ownership (authoritative)\n\n${Object.entries(
+            config.roles,
+          )
+            .filter(([name]) => name !== "architect")
+            .map(
+              ([name, role]) =>
+                `- ${name}: ${(role.owns ?? ["no owned paths configured"]).join(", ")}${role.readOnly ? " (read-only)" : ""}`,
+            )
+            .join(
+              "\n",
+            )}${guidance ? `\n\n# Project architect guidance (advisory)\n\n${guidance}` : ""}`,
         ),
         logFile,
       });

@@ -103,9 +103,3 @@ export async function readStory(feature: Feature): Promise<string> {
     );
   return content.replace(/^# Story\s*/i, "").trim();
 }
-
-export function refinementPrompt(feature: Feature, story: string): string {
-  const questionsFile = path.join(feature.directory, "questions.md");
-  const clarificationsFile = path.join(feature.directory, "clarifications.md");
-  return `You are Conduit's architect. Refine feature ${feature.id} into an implementation-ready specification.\n\nUser story:\n${story}\n\nRead ${clarificationsFile} when it exists; its recorded answers are product decisions. Read and update ${path.join(feature.directory, "spec.md")}, ${path.join(feature.directory, "plan.md")}, ${path.join(feature.directory, "tasks.md")}, ${path.join(feature.directory, "test-cases.md")}, and files under ${path.join(feature.directory, "contracts")}. Define acceptance criteria, API/event/shared-type/UI contracts, role ownership, QA test cases, and unresolved questions. Do not implement production code.\n\nDo not guess or silently choose product behavior. If a material decision is unclear after repository investigation, stop refinement and write only ${questionsFile}. Give each question an ID, explain why it matters, state the viable options when known, and ask the smallest question that unblocks progress. Do not update the implementation handoff until those questions are answered. If there are no material questions, do not leave ${questionsFile} behind and complete the refinement.`;
-}

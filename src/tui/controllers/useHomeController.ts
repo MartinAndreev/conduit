@@ -19,6 +19,7 @@ type HomeInteractionAction =
   | { type: "actions" }
   | { type: "idle" }
   | { type: "append"; value: string }
+  | { type: "setTitle"; value: string }
   | { type: "backspace" }
   | { type: "nextAction" }
   | { type: "previousAction" };
@@ -42,6 +43,10 @@ function interactionReducer(
         : state.kind === "create"
           ? { ...state, title: state.title + action.value }
           : state;
+    case "setTitle":
+      return state.kind === "create"
+        ? { ...state, title: action.value }
+        : state;
     case "backspace":
       return state.kind === "search"
         ? { ...state, query: state.query.slice(0, -1) }
@@ -115,6 +120,21 @@ export function useHomeController(
         f.title.toLowerCase().includes(searchQuery.toLowerCase()),
       )
     : features;
+  const setFeatureTitle = useCallback(
+    (title: string) => dispatchInteraction({ type: "setTitle", value: title }),
+    [],
+  );
+  const submitFeature = useCallback(() => {
+    if (interaction.kind !== "create" || !interaction.title.trim()) return;
+    void commandBus
+      .dispatch({ type: "createFeature", title: interaction.title.trim() })
+      .then((result) => {
+        if (result.success) {
+          dispatchInteraction({ type: "idle" });
+          onRefine((result.data as { id: string }).id);
+        }
+      });
+  }, [commandBus, interaction, onRefine]);
 
   const handleKeyDown = useCallback(
     (event: { name: string; ctrl: boolean; shift: boolean; meta: boolean }) => {
@@ -143,23 +163,6 @@ export function useHomeController(
           dispatchInteraction({ type: "idle" });
           return;
         }
-        if (key === "backspace") {
-          dispatchInteraction({ type: "backspace" });
-          return;
-        }
-        if (key === "return" && interaction.title.trim()) {
-          void commandBus
-            .dispatch({ type: "createFeature", title: interaction.title })
-            .then((result) => {
-              if (result.success) {
-                dispatchInteraction({ type: "idle" });
-                onRefine((result.data as { id: string }).id);
-              }
-            });
-          return;
-        }
-        if (key.length === 1)
-          dispatchInteraction({ type: "append", value: key });
         return;
       }
 
@@ -275,6 +278,6 @@ export function useHomeController(
       tip,
       filteredFeatures,
     },
-    { handleKeyDown },
+    { handleKeyDown, setFeatureTitle, submitFeature },
   ];
 }

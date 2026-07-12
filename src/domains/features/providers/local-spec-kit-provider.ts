@@ -62,6 +62,7 @@ export class LocalSpecKitProvider implements FeatureProvider {
   }
 
   private async loadFeatures(): Promise<void> {
+    this.features.clear();
     if (!(await pathExists(this.specsDir))) return;
 
     const entries = await readdir(this.specsDir);
@@ -96,12 +97,14 @@ export class LocalSpecKitProvider implements FeatureProvider {
   }
 
   async listFeatures(): Promise<readonly FeatureReadModel[]> {
-    await this.ensureLoaded();
+    await this.loadFeatures();
+    this.loaded = true;
     return [...this.features.values()];
   }
 
   async getFeature(id: string): Promise<FeatureReadModel | undefined> {
-    await this.ensureLoaded();
+    await this.loadFeatures();
+    this.loaded = true;
     return this.features.get(id);
   }
 
