@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { useKeyboard } from "@opentui/react";
 import type { ClarificationQuestion } from "@domains/refinement/types/revision.js";
+import { MarkdownDocument } from "@tui/components/MarkdownDocument.js";
 import { RefinementTextarea } from "@tui/components/RefinementTextarea.js";
 import type { Theme } from "@tui/theme.js";
 
@@ -17,10 +18,28 @@ export function ArchitectClarifications({
 }) {
   const [answers, setAnswers] = useState("");
   const submit = useCallback(() => onSubmit(answers), [answers, onSubmit]);
+  const questionsMarkdown = questions
+    .map((question) =>
+      [
+        `## ${question.id}`,
+        question.question,
+        question.context,
+        question.options.length
+          ? [
+              "### Options",
+              ...question.options.map((option) => `- ${option}`),
+            ].join("\n")
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+    )
+    .join("\n\n");
   useKeyboard(
     useCallback(
-      (event: { name: string }) => {
-        if (event.name === "escape" || event.name === "q") onExit();
+      (event: { name: string; ctrl: boolean }) => {
+        if (event.name === "escape" || (event.ctrl && event.name === "q"))
+          onExit();
       },
       [onExit],
     ),
@@ -35,33 +54,22 @@ export function ArchitectClarifications({
     >
       <text content="Architect clarification" fg={theme.action.primary} />
       <text
-        content="Answer the open product decisions. Ctrl+Enter resumes the architect; q returns without cancelling it."
+        content="Answer the open product decisions."
+        fg={theme.text.muted}
+      />
+      <text
+        content="Ctrl+Enter resumes the architect · Esc returns."
         fg={theme.text.muted}
       />
       <box
-        flexDirection="column"
+        flexGrow={1}
         marginTop={1}
         padding={1}
         backgroundColor={theme.surface.raised}
       >
-        {questions.map((question) => (
-          <box key={question.id} flexDirection="column" marginBottom={1}>
-            <text
-              content={`${question.id} · ${question.question}`}
-              fg={theme.text.strong}
-            />
-            {question.context && (
-              <text content={question.context} fg={theme.text.muted} />
-            )}
-            {question.options.map((option) => (
-              <text
-                key={option}
-                content={`  ○ ${option}`}
-                fg={theme.text.default}
-              />
-            ))}
-          </box>
-        ))}
+        <MarkdownDocument
+          content={questionsMarkdown || "## No open questions"}
+        />
       </box>
       <text content="Your answers" fg={theme.action.primary} />
       <box height={10} backgroundColor={theme.surface.raised} marginTop={1}>

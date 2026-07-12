@@ -555,7 +555,7 @@ export async function executeRun({
       status: "dry-run" as const,
       command: [role.command, ...role.args],
     }));
-  const launches = run.roles.map(async (role): Promise<RunResult> => {
+  const launchRole = async (role: RunRole): Promise<RunResult> => {
     onProgress(
       `${role.name}: preparing ${role.readOnly ? "project workspace" : "isolated worktree"}`,
     );
@@ -575,8 +575,53 @@ export async function executeRun({
       processRegistry,
       signal,
     );
-  });
-  const results = await Promise.all(launches);
+  };
+  const launchRoleSafely = async (role: RunRole): Promise<RunResult> => {
+    try {
+      return await launchRole(role);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      await eventRepository?.append({
+        type: "error",
+        runId: run.id,
+        roleId: role.name,
+        timestamp: new Date().toISOString(),
+        payload: {
+          kind: "error",
+          code: "ROLE_LAUNCH_FAILED",
+          message,
+          recoverable: false,
+        },
+      });
+      await eventRepository?.append({
+        type: "lifecycle",
+        runId: run.id,
+        roleId: role.name,
+        timestamp: new Date().toISOString(),
+        payload: {
+          kind: "lifecycle",
+          state: "failed",
+          message: `${role.name}: failed to start`,
+        },
+      });
+      return { role: role.name, status: "failed", error: message };
+    }
+  };
+  // Documentation and review are integration gates, not parallel
+  // implementation tasks. Documentation runs after the implementation work;
+  // review runs after every other selected role has reached a terminal result.
+  const workerRoles = run.roles.filter(
+    (role) => role.name !== "documentation" && role.name !== "reviewer",
+  );
+  const documentationRoles = run.roles.filter(
+    (role) => role.name === "documentation",
+  );
+  const reviewerRoles = run.roles.filter((role) => role.name === "reviewer");
+  const results = await Promise.all(workerRoles.map(launchRoleSafely));
+  for (const documentation of documentationRoles)
+    results.push(await launchRoleSafely(documentation));
+  for (const reviewer of reviewerRoles)
+    results.push(await launchRoleSafely(reviewer));
   run.status = results.some((result) => result.status === "cancelled")
     ? "cancelled"
     : results.every((result) => result.status === "completed")

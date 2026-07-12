@@ -106,13 +106,13 @@ test("refinement form field validation", () => {
 
 test("refinement preview keyboard shortcuts", () => {
   const shortcuts = {
-    r: "return to form",
+    "Ctrl+R": "return to form",
     a: "approve and write packet",
     q: "quit without approving",
     t: "toggle architect",
   };
 
-  assert.equal(shortcuts.r, "return to form");
+  assert.equal(shortcuts["Ctrl+R"], "return to form");
   assert.equal(shortcuts.a, "approve and write packet");
   assert.equal(shortcuts.q, "quit without approving");
   assert.equal(shortcuts.t, "toggle architect");

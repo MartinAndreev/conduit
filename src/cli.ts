@@ -358,6 +358,7 @@ export async function handleBareConduit(
   await homeFn({
     commandBus: app.commandBus,
     queryBus: app.queryBus,
+    projectRoot,
   });
 }
 

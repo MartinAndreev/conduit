@@ -162,17 +162,23 @@ export function useWorkerMonitorController(
     loadRun();
   }, [loadRun]);
   useEffect(() => {
-    if (!eventQuery.data) return;
+    const eventData = eventQuery.data;
+    if (!eventData) return;
+    const configuredRoleIds = state.run?.roles.map((role) => role.name) ?? [];
+    const roleIds = [
+      ...new Set([
+        ...configuredRoleIds,
+        ...eventData.roleIds.filter((roleId) => roleId !== "system"),
+      ]),
+    ];
     dispatch({
       type: "eventsLoaded",
-      events: eventQuery.data.events,
-      roles: eventQuery.data.roleIds
-        .filter((roleId) => roleId !== "system")
-        .map((roleId) =>
-          deriveRolePresentation(eventQuery.data!.events, roleId),
-        ),
+      events: eventData.events,
+      roles: roleIds.map((roleId) =>
+        deriveRolePresentation(eventData.events, roleId),
+      ),
     });
-  }, [eventQuery.data]);
+  }, [eventQuery.data, state.run]);
   useEffect(() => {
     if (eventQuery.error)
       dispatch({ type: "loadError", message: eventQuery.error });
@@ -239,7 +245,7 @@ export function useWorkerMonitorController(
   }, [state.diff, state.changedFiles, state.selectedFileIndex]);
 
   const onKey = useCallback(
-    (event: { name: string; ctrl?: boolean }) => {
+    (event: { name: string; ctrl?: boolean; shift?: boolean }) => {
       if (!enabled) return;
       if (event.name === "q") {
         if (cancelOnExit) {
@@ -283,10 +289,9 @@ export function useWorkerMonitorController(
           });
         return;
       }
-      if (event.name === "tab") {
-        dispatch({ type: "toggleFocus" });
-        return;
-      }
+      if (event.name === "left" || (event.name === "tab" && event.shift))
+        return roles.previous();
+      if (event.name === "right" || event.name === "tab") return roles.next();
       if (state.focusMode === "roles") {
         if (event.name === "up") return roles.previous();
         if (event.name === "down") return roles.next();

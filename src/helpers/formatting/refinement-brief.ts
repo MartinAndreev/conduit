@@ -36,20 +36,35 @@ export function parseRefinementBrief(story: string): RefinementBriefFields {
     constraints: "",
     guidelines: "",
   };
-  const markdownSections: readonly [keyof RefinementBriefFields, string][] = [
-    ["problem", "Problem / user story"],
-    ["audience", "User or audience"],
-    ["outcome", "Desired outcome and acceptance criteria"],
-    ["constraints", "Constraints and non-goals"],
-    ["guidelines", "Implementation and design guidance"],
+  const markdownSections: readonly [
+    keyof RefinementBriefFields,
+    readonly string[],
+  ][] = [
+    ["problem", ["Problem / user story", "Problem"]],
+    ["audience", ["User or audience", "User", "Audience"]],
+    [
+      "outcome",
+      [
+        "Desired outcome and acceptance criteria",
+        "Desired outcome",
+        "Acceptance criteria",
+      ],
+    ],
+    ["constraints", ["Constraints and non-goals"]],
+    ["guidelines", ["Implementation and design guidance"]],
   ];
-  for (const [key, heading] of markdownSections) {
-    const expression = new RegExp(
-      `^## ${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\n([\\s\\S]*?)(?=^## |$)`,
-      "im",
-    );
-    const value = body.match(expression)?.[1]?.trim();
-    if (value) result[key] = value;
+  for (const [key, headings] of markdownSections) {
+    for (const heading of headings) {
+      const expression = new RegExp(
+        `^## ${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\n([\\s\\S]*?)(?=^## |$)`,
+        "im",
+      );
+      const value = body.match(expression)?.[1]?.trim();
+      if (value) {
+        result[key] = value;
+        break;
+      }
+    }
   }
   for (let index = 0; index < labels.length; index += 1) {
     const [key, label] = labels[index]!;

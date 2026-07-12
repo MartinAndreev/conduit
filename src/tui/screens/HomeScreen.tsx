@@ -1,5 +1,6 @@
 import type { CommandBus } from "@system/bus/command-bus.js";
 import type { QueryBus } from "@system/bus/query-bus.js";
+import type { FeatureReadModel } from "@domains/features/types/feature.js";
 import { HomeFooter } from "@tui/components/HomeFooter.js";
 import { useTheme } from "@tui/components/ThemeProvider.js";
 import { useHomeController } from "@tui/controllers/useHomeController.js";
@@ -9,28 +10,34 @@ import { Sidebar } from "@tui/sections/Sidebar.js";
 interface HomeScreenProps {
   commandBus: CommandBus;
   queryBus: QueryBus;
+  projectRoot: string;
   onExit: () => void;
   onRefine: (featureId: string) => void;
   onView: (featureId: string) => void;
-  onRun: (runId: string) => void;
+  onRun: (feature: FeatureReadModel) => void;
+  onStatus: (feature: FeatureReadModel) => void;
 }
 
 export function HomeScreen({
   commandBus,
   queryBus,
+  projectRoot,
   onExit,
   onRefine,
   onView,
   onRun,
+  onStatus,
 }: HomeScreenProps) {
   const theme = useTheme();
   const [state, actions] = useHomeController(
     commandBus,
     queryBus,
+    projectRoot,
     onExit,
     onRefine,
     onView,
     onRun,
+    onStatus,
   );
 
   return (

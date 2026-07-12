@@ -9,6 +9,13 @@ import { formatEventDescription } from "@tui/helpers/event-presentation.js";
 import { AgentActivity } from "./AgentActivity.js";
 import { SplitDiff } from "./SplitDiff.js";
 import { WorktreeChanges } from "./WorktreeChanges.js";
+import { WORKFLOW_ROLES, type WorkflowRole } from "./WorkflowMascotPreview.js";
+
+function mascotForRole(roleId: string): WorkflowRole | undefined {
+  return WORKFLOW_ROLES.includes(roleId as WorkflowRole)
+    ? (roleId as WorkflowRole)
+    : undefined;
+}
 
 interface WorkerMonitorScreenProps {
   readonly runId: string;
@@ -67,8 +74,8 @@ export function WorkerMonitorScreen(props: WorkerMonitorScreenProps) {
       <text
         content={
           props.cancelOnExit
-            ? "Tab focus · ↑/↓ navigate · Enter select/toggle · j/k scroll activity · Ctrl+C cancel · Esc/q cancel and exit"
-            : "Tab focus · ↑/↓ navigate · Enter select/toggle · j/k scroll activity · Ctrl+C cancel · q exit"
+            ? "←/→ or Tab switch roles · ↑/↓ navigate · j/k scroll · Ctrl+C cancel · Esc/q cancel and exit"
+            : "←/→ or Tab switch roles · ↑/↓ navigate · j/k scroll · Ctrl+C cancel · q exit"
         }
         fg={theme.text.muted}
       />
@@ -84,6 +91,19 @@ export function WorkerMonitorScreen(props: WorkerMonitorScreenProps) {
           fg={theme.action.attention}
         />
       )}
+      <box flexDirection="row" marginTop={1}>
+        {props.roles.map((item, index) => (
+          <text
+            key={item.roleId}
+            content={`${index === props.selectedRoleIndex ? "[" : " "}${item.roleId}${index === props.selectedRoleIndex ? "]" : " "} `}
+            fg={
+              index === props.selectedRoleIndex
+                ? theme.action.primary
+                : theme.text.muted
+            }
+          />
+        ))}
+      </box>
       <box flexDirection="row" width="100%" flexGrow={1} marginTop={1}>
         <box
           width="30%"
@@ -120,11 +140,7 @@ export function WorkerMonitorScreen(props: WorkerMonitorScreenProps) {
                 runner=""
                 message={role.message}
                 state={role.state}
-                mascotRole={
-                  role.roleId === "architect" || role.roleId === "researcher"
-                    ? role.roleId
-                    : undefined
-                }
+                mascotRole={mascotForRole(role.roleId)}
               />
               <text
                 content={`${props.focusMode === "activity" ? "▸ " : ""}Activity (${props.events.length} events)`}
