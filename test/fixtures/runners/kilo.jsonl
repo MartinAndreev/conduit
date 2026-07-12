@@ -1,0 +1,6 @@
+{"type":"text","text":"Starting kilo run"}
+{"type":"text","text":"Writing tests"}
+{"type":"tool_call","tool":"write","parameters":{"file":"test/api.test.ts"}}
+{"type":"tool_result","tool":"write","output":"File written successfully"}
+{"type":"text","text":"Test failed: expected 200 but got 404"}
+{"type":"text","text":"Tests completed with failures"}

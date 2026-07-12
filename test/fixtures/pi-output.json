@@ -1,0 +1,4 @@
+{"type":"text","text":"Reading the spec file..."}
+{"type":"tool_use","name":"read","args":{"file":"specs/001/spec.md"}}
+{"type":"tool_result","name":"read","result":"# Feature 001\n\n## Acceptance criteria\n- [ ] Criterion 1"}
+{"type":"file_edit","file":"src/config.ts","additions":3,"deletions":1}

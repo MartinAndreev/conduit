@@ -5,7 +5,14 @@ import prettier from "prettier";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const rolesDirectory = path.join(root, "skills", "roles");
-const outputFile = path.join(root, "src", "role-templates.js");
+const outputFile = path.join(
+  root,
+  "src",
+  "domains",
+  "roles",
+  "assets",
+  "role-templates.ts",
+);
 
 export async function generateRoleTemplates() {
   const names = (await readdir(rolesDirectory))
@@ -20,7 +27,7 @@ export async function generateRoleTemplates() {
       ]),
     ),
   );
-  const source = `// Generated from skills/roles/*.md by scripts/generate-role-templates.js. Do not edit manually.\nexport const roleTemplates = ${JSON.stringify(templates, null, 2)};\n`;
+  const source = `// Generated from skills/roles/*.md by scripts/generate-role-templates.js. Do not edit manually.\nexport const roleTemplates: Record<string, string> = ${JSON.stringify(templates, null, 2)};\n`;
   await writeFile(
     outputFile,
     await prettier.format(source, { filepath: outputFile }),
