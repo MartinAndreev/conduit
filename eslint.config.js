@@ -3,7 +3,9 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default [
-  { ignores: ["dist/**", "node_modules/**", ".conduit/**"] },
+  {
+    ignores: ["**/dist/**", "**/node_modules/**", ".conduit/**", ".turbo/**"],
+  },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -29,7 +31,10 @@ export default [
     languageOptions: { globals: globals.node },
   },
   {
-    files: ["scripts/build-standalone.js", "scripts/build.js"],
+    files: [
+      "packages/conduit/scripts/build-standalone.js",
+      "packages/conduit/scripts/build.js",
+    ],
     languageOptions: { globals: { ...globals.node, Bun: "readonly" } },
   },
 ];

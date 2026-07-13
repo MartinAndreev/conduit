@@ -31,11 +31,11 @@ jobs:
           cache: pnpm
       - uses: oven-sh/setup-bun@v2
       - run: pnpm install --frozen-lockfile
-      - run: bun scripts/build-standalone.js ${{ matrix.target }}
+      - run: pnpm build:standalone -- ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
           name: conduit-${{ matrix.target }}
-          path: dist/release/*
+          path: packages/conduit/dist/release/*
 
   publish:
     needs: build
@@ -44,17 +44,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          path: dist/release
+          path: packages/conduit/dist/release
           merge-multiple: true
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - run: |
-          cp install.sh dist/release/install.sh
-          sed "s|__CONDUIT_REPOSITORY__|${{ github.repository }}|g" install.ps1 > dist/release/install.ps1
-          chmod +x dist/release/install.sh
-      - run: node scripts/write-checksums.mjs
+          cp install.sh packages/conduit/dist/release/install.sh
+          sed "s|__CONDUIT_REPOSITORY__|${{ github.repository }}|g" install.ps1 > packages/conduit/dist/release/install.ps1
+          chmod +x packages/conduit/dist/release/install.sh
+      - run: pnpm release:checksums
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: dist/release/*
+          files: packages/conduit/dist/release/*

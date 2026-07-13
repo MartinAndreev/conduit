@@ -1,0 +1,33 @@
+<section class="cli-section" id="cli" aria-labelledby="cli-title">
+  <div class="cli-copy">
+    <p class="eyebrow"><span></span>CLI friendly</p>
+    <h2 id="cli-title">The full workflow, without leaving your shell.</h2>
+    <p>
+      Conduit’s compact commands are stable fallbacks for scripts, automation,
+      CI, and terminals that cannot run the interactive TUI.
+    </p>
+  </div>
+
+  <div class="cli-terminal" aria-label="Conduit command line workflow example">
+    <div class="cli-terminal-bar"><span>conduit — zsh</span><span>~/acme-store</span></div>
+    <div class="cli-session">
+      <div class="cli-beat cli-beat-one">
+        <p><span>$</span> conduit feature "Add payment observability"</p>
+        <p class="cli-output">✓ Created feature 014-payment-observability</p>
+      </div>
+      <div class="cli-beat cli-beat-two">
+        <p><span>$</span> conduit refine 014 --architect --compact</p>
+        <p class="cli-output"><b>◠</b> architect&nbsp; Refining feature specification</p>
+        <p class="cli-output">✓ Approved packet written to specs/014-payment-observability</p>
+      </div>
+      <div class="cli-beat cli-beat-three">
+        <p><span>$</span> conduit run 014 --roles frontend,backend,qa --compact</p>
+        <p class="cli-output"><b>◝</b> frontend&nbsp; working &nbsp; <b>◜</b> backend&nbsp; working &nbsp; ○ qa&nbsp; waiting</p>
+      </div>
+      <div class="cli-beat cli-beat-four">
+        <p class="cli-output">✓ Run complete · 8 files changed · ready for review</p>
+        <p><span>$</span> <i class="terminal-cursor" aria-hidden="true"></i></p>
+      </div>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,109 @@
+---
+interface Props {
+  readonly base: string;
+  readonly repositoryUrl: string;
+}
+
+const { base, repositoryUrl } = Astro.props;
+---
+
+<section class="hero" aria-labelledby="hero-title">
+  <div class="network" aria-hidden="true">
+    <svg viewBox="0 0 1200 760" preserveAspectRatio="xMidYMid slice">
+      <defs>
+        <filter id="signal-glow" x="-100%" y="-100%" width="300%" height="300%">
+          <feGaussianBlur stdDeviation="7" result="blur"></feGaussianBlur>
+          <feMerge>
+            <feMergeNode in="blur"></feMergeNode>
+            <feMergeNode in="SourceGraphic"></feMergeNode>
+          </feMerge>
+        </filter>
+        <linearGradient id="conduit-fade" x1="0" x2="1">
+          <stop offset="0" stop-color="#93bd9f" stop-opacity="0"></stop>
+          <stop offset=".48" stop-color="#93bd9f" stop-opacity=".42"></stop>
+          <stop offset="1" stop-color="#d5bf86" stop-opacity=".08"></stop>
+        </linearGradient>
+        <path id="route-a" d="M-80 148H210c64 0 66 98 130 98h214c64 0 66-108 130-108h210c64 0 68 92 132 92h270"></path>
+        <path id="route-b" d="M-100 590H130c72 0 74-118 146-118h202c70 0 72 108 142 108h166c70 0 72-146 142-146h360"></path>
+        <path id="route-c" d="M370-80v150c0 70 112 72 112 142v170c0 70-106 72-106 142v280"></path>
+        <path id="route-d" d="M890-70v178c0 70-112 72-112 142v112c0 70 118 72 118 142v290"></path>
+      </defs>
+
+      <g class="routes">
+        <use href="#route-a"></use>
+        <use href="#route-b"></use>
+        <use href="#route-c"></use>
+        <use href="#route-d"></use>
+        <path d="M80 360h190c58 0 60-70 118-70h368c58 0 60 70 118 70h250"></path>
+        <path d="M126 690v-92c0-58 70-60 70-118V242"></path>
+        <path d="M1060 64v158c0 56-72 58-72 114v356"></path>
+      </g>
+
+      <g class="route-highlights">
+        <use href="#route-a"></use>
+        <use href="#route-b"></use>
+      </g>
+
+      <g class="nodes">
+        <circle cx="210" cy="148" r="5"></circle>
+        <circle cx="554" cy="246" r="5"></circle>
+        <circle cx="684" cy="138" r="5"></circle>
+        <circle cx="276" cy="472" r="5"></circle>
+        <circle cx="620" cy="580" r="5"></circle>
+        <circle cx="778" cy="362" r="5"></circle>
+        <circle cx="896" cy="504" r="5"></circle>
+        <circle cx="482" cy="290" r="5"></circle>
+        <circle cx="988" cy="336" r="5"></circle>
+      </g>
+
+      <g class="signals" filter="url(#signal-glow)">
+        <circle r="6" fill="#b8ef86">
+          <animateMotion dur="7s" repeatCount="indefinite">
+            <mpath href="#route-a"></mpath>
+          </animateMotion>
+        </circle>
+        <circle r="5" fill="#e8cd8e">
+          <animateMotion dur="9s" begin="-4s" repeatCount="indefinite">
+            <mpath href="#route-b"></mpath>
+          </animateMotion>
+        </circle>
+        <circle r="4" fill="#b8ef86">
+          <animateMotion dur="8s" begin="-2s" repeatCount="indefinite">
+            <mpath href="#route-c"></mpath>
+          </animateMotion>
+        </circle>
+        <circle r="4" fill="#e8cd8e">
+          <animateMotion dur="10s" begin="-6s" repeatCount="indefinite">
+            <mpath href="#route-d"></mpath>
+          </animateMotion>
+        </circle>
+      </g>
+    </svg>
+  </div>
+
+  <div class="hero-content">
+    <p class="eyebrow"><span></span>Spec-driven agent orchestration</p>
+    <h1 id="hero-title">
+      <span class="title-line">Turn intent into</span>
+      <span class="title-line title-accent">working software.</span>
+    </h1>
+    <p class="hero-summary">
+      Conduit turns approved feature specs into bounded, parallel work for
+      coding-agent teams—then keeps every decision, run, and result visible.
+    </p>
+    <div class="hero-actions">
+      <a class="button button-primary" href={repositoryUrl}>
+        Explore Conduit
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M4 10h11m-4.5-4.5L15 10l-4.5 4.5"></path>
+        </svg>
+      </a>
+      <a class="button button-secondary" href={`${base}#demo`}>Watch the workflow</a>
+    </div>
+  </div>
+
+  <div class="hero-footnote" aria-hidden="true">
+    <span>01</span>
+    <p>Refine · Delegate · Review</p>
+  </div>
+</section>

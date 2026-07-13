@@ -1,0 +1,44 @@
+---
+import Header from "../components/Header.astro";
+import Hero from "../components/Hero.astro";
+import CliFlow from "../components/CliFlow.astro";
+import Install from "../components/Install.astro";
+import Principles from "../components/Principles.astro";
+import TerminalDemo from "../components/TerminalDemo.astro";
+import WhyBuilt from "../components/WhyBuilt.astro";
+import "../styles/global.css";
+
+const base = import.meta.env.BASE_URL;
+const repositoryUrl = "https://github.com/MartinAndreev/conduit";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta
+      name="description"
+      content="Conduit turns approved feature specifications into focused, observable coding-agent work."
+    />
+    <link rel="icon" href={`${base}favicon.svg`} />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <title>Conduit — orchestrate coding-agent teams</title>
+  </head>
+  <body>
+    <Header base={base} repositoryUrl={repositoryUrl} />
+    <main id="top">
+      <Hero base={base} repositoryUrl={repositoryUrl} />
+      <TerminalDemo />
+      <WhyBuilt />
+      <CliFlow />
+      <Install repositoryUrl={repositoryUrl} />
+      <Principles />
+    </main>
+  </body>
+</html>

@@ -1,0 +1,41 @@
+---
+interface Props {
+  readonly repositoryUrl: string;
+}
+
+const { repositoryUrl } = Astro.props;
+---
+
+<section class="install-section" id="install" aria-labelledby="install-title">
+  <div class="install-heading">
+    <p class="eyebrow"><span></span>Installation</p>
+    <h2 id="install-title">Bring Conduit into your next repository.</h2>
+    <p>Use the standalone binary for the simplest setup, or add the development package with pnpm.</p>
+  </div>
+
+  <div class="install-options">
+    <article class="install-card install-card-primary">
+      <div>
+        <span class="install-tag">Recommended</span>
+        <h3>Standalone binary</h3>
+        <p>Download the platform binary from GitHub Releases, verify it, and place it on your PATH.</p>
+      </div>
+      <pre><code><span>$</span> chmod +x conduit-linux-x64
+<span>$</span> install -m 755 conduit-linux-x64 ~/.local/bin/conduit
+<span>$</span> conduit init .</code></pre>
+      <a href={`${repositoryUrl}/releases/latest`}>View latest release <span>→</span></a>
+    </article>
+
+    <article class="install-card">
+      <div>
+        <span class="install-tag">Development package</span>
+        <h3>Install with pnpm</h3>
+        <p>Add the publishable package to an existing project and initialize Conduit in place.</p>
+      </div>
+      <pre><code><span>$</span> pnpm add -D conduit-orchestrator
+<span>$</span> pnpm exec conduit init .
+<span>$</span> pnpm exec conduit</code></pre>
+      <a href={repositoryUrl}>Read the documentation <span>→</span></a>
+    </article>
+  </div>
+</section>

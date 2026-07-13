@@ -1,0 +1,227 @@
+<section class="demo-section" id="demo" aria-labelledby="demo-title">
+  <div class="demo-heading">
+    <p class="eyebrow"><span></span>The product, in motion</p>
+    <h2 id="demo-title">One deliberate path from story to software.</h2>
+    <p>
+      Conduit keeps every stage visible. Refine the intent, ground it in the
+      repository, approve the packet, and watch bounded agents deliver it.
+    </p>
+  </div>
+
+  <div class="demo-steps">
+    <article class="demo-step">
+      <div class="step-copy">
+        <span class="step-index">01 / REFINE</span>
+        <h3>Start with the problem, not a prompt.</h3>
+        <p>
+          Capture the audience, desired outcome, constraints, QA scenarios,
+          and implementation guidance in a structured refinement form.
+        </p>
+      </div>
+
+      <div class="tui-window" aria-label="Conduit refinement form preview">
+        <div class="tui-grid tui-grid-refinement">
+          <div class="tui-pane tui-sidebar">
+            <div class="tui-brand" aria-hidden="true">
+              <span>●──┬─●</span><b>conduit</b>
+            </div>
+            <p class="tui-label">Refinement fields</p>
+            <p class="tui-selection">▸ Problem / user story * · 147</p>
+            <p class="tui-muted">&nbsp; User or audience * · 10</p>
+            <p class="tui-muted">&nbsp; Desired outcome and acceptance criteria * · 420</p>
+            <p class="tui-muted">&nbsp; Constraints and non-goals · 0</p>
+            <p class="tui-muted">&nbsp; QA test cases and regressions * · 640</p>
+            <p class="tui-muted">&nbsp; Implementation guidance · 67</p>
+            <p class="tui-pane-footer">Tab/Shift+Tab&nbsp; field<br />Ctrl+Enter&nbsp;&nbsp;&nbsp; preview<br />Esc&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; cancel</p>
+          </div>
+          <div class="tui-pane tui-form">
+            <p class="tui-form-title">Refinement Form</p>
+            <p class="tui-centered tui-muted">Complete each required field, then press Ctrl+Enter to review your draft.</p>
+            <p class="tui-centered">Field 1 of 6: Problem / user story</p>
+            <p class="tui-field-help">Describe the problem or user story this feature addresses.</p>
+            <p class="tui-label">Problem / user story *</p>
+            <div class="tui-input">
+              As an operator, I need each payment attempt to expose its lifecycle so I can diagnose failures without reading raw logs.<span class="terminal-cursor" aria-hidden="true"></span>
+            </div>
+            <p class="tui-attention">Tip: Make the gap observable and describe the expected outcome.</p>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <article class="demo-step">
+      <div class="step-copy">
+        <span class="step-index">02 / RESEARCH</span>
+        <h3>Ground the story in the repository.</h3>
+        <p>
+          A researcher inspects the existing architecture, tests, and domain
+          boundaries. You can follow its runner activity before the architect
+          receives that context.
+        </p>
+      </div>
+
+      <div class="tui-window" aria-label="Conduit research preflight preview">
+        <div class="tui-fullscreen">
+          <p class="tui-screen-title">Conduit · Research preflight · 014-1783867884368</p>
+          <p class="tui-keys">←/→ or Tab switch roles · ↑/↓ navigate · j/k scroll · Ctrl+C cancel · Esc/q exit</p>
+          <p class="tui-selection">[researcher]</p>
+          <div class="tui-grid tui-grid-monitor">
+            <div class="tui-pane tui-sidebar">
+              <p class="tui-label">▸ Roles</p>
+              <p class="tui-selection">› researcher · working</p>
+            </div>
+            <div class="tui-pane">
+              <div class="tui-agent-line">
+                <span class="tui-mascot">┌┤<br />└┤</span>
+                <span class="tui-spinner">◜</span>
+                <strong>researcher</strong>
+                <span>researcher: agent started</span>
+              </div>
+              <div class="tui-progress"><i></i></div>
+              <p class="tui-label">Activity (5 events)</p>
+              <p>researcher: agent starting</p>
+              <p>researcher: agent started</p>
+              <p>runner stderr → Reading additional input from stdin...</p>
+              <p>runner stderr → OpenAI Codex</p>
+              <p class="tui-muted">workdir: ~/projects/acme-store</p>
+              <p class="tui-subheading">Changed files</p>
+              <p class="tui-muted">No worktree changes detected</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <article class="demo-step">
+      <div class="step-copy">
+        <span class="step-index">03 / ARCHITECT</span>
+        <h3>Turn evidence into an implementation contract.</h3>
+        <p>
+          The architect combines the approved brief with repository research,
+          exposes its activity, and writes the files that will bound every
+          downstream agent.
+        </p>
+      </div>
+
+      <div class="tui-window" aria-label="Conduit architect activity preview">
+        <div class="tui-fullscreen">
+          <div class="tui-agent-line tui-agent-header">
+            <span class="tui-mascot">┌┤<br />└┤</span>
+            <span class="tui-spinner">◠</span>
+            <strong>architect</strong>
+            <span class="tui-muted">runner pending</span>
+            <span>Refining feature 014</span>
+          </div>
+          <div class="tui-progress"><i></i></div>
+          <p class="tui-attention">Architect is refining the packet. Activity appears as its transcript is captured.</p>
+          <p class="tui-keys">↑/↓ select a changed file · Enter open/close its diff · Esc close · q exit</p>
+          <p>Changed files: 4 | Events: 12</p>
+          <div class="tui-grid tui-grid-architect">
+            <div class="tui-pane tui-sidebar">
+              <p class="tui-label">Changed files</p>
+              <p class="tui-selection">▶ specs/014/spec.md</p>
+              <p>specs/014/plan.md</p>
+              <p>specs/014/tasks.md</p>
+              <p>specs/014/test-cases.md</p>
+            </div>
+            <div class="tui-pane">
+              <p class="tui-label">Activity</p>
+              <p><span class="tui-event">activity</span> Refining feature specification</p>
+              <p><span class="tui-event">tool-call</span> rg --files src/domains/payments</p>
+              <p><span class="tui-event">tool-call</span> read contracts and QA cases</p>
+              <p><span class="tui-event">file-change</span> wrote specs/014/spec.md</p>
+              <p class="tui-selection"><span class="tui-event">activity</span> Defining bounded task ownership</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <article class="demo-step">
+      <div class="step-copy">
+        <span class="step-index">04 / APPROVE</span>
+        <h3>Review the story before agents act.</h3>
+        <p>
+          Read the generated Markdown, adjust research and architect settings,
+          and approve only when the story, acceptance criteria, and delivery
+          detail are right.
+        </p>
+      </div>
+
+      <div class="tui-window" aria-label="Conduit Markdown story preview">
+        <div class="tui-grid tui-grid-preview">
+          <div class="tui-pane tui-sidebar">
+            <div class="tui-brand" aria-hidden="true"><span>●──┬─●</span><b>conduit</b></div>
+            <p class="tui-label">Refinement fields</p>
+            <p class="tui-selection">▸ Problem / user story * · 147</p>
+            <p class="tui-muted">&nbsp; User or audience * · 10</p>
+            <p class="tui-muted">&nbsp; Desired outcome and acceptance criteria * · 420</p>
+            <p class="tui-muted">&nbsp; QA test cases and regressions * · 640</p>
+          </div>
+          <div class="tui-pane tui-document">
+            <p class="tui-form-title">Markdown Preview</p>
+            <p class="tui-centered tui-muted">a approve · Ctrl+R edit · q quit · t architect · s research</p>
+            <div class="tui-markdown">
+              <p class="tui-heading"># Story</p>
+              <p class="tui-heading">## Problem / user story</p>
+              <p>As an operator, I need each payment attempt to expose its lifecycle so failures can be diagnosed without reading raw logs.</p>
+              <p class="tui-heading">## Desired outcome and acceptance criteria</p>
+              <p>– Every attempt publishes observable lifecycle events.</p>
+              <p>– Operators can inspect failures from the TUI.</p>
+            </div>
+            <div class="tui-options">
+              <p>Research [s]: <span>ON (preflight)</span></p>
+              <p>Architect [t]: <span>ON</span></p>
+              <p>Detail [l]: <span>implementation-blueprint</span></p>
+            </div>
+            <p class="tui-centered tui-muted">Approve: research preflight, then architect</p>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <article class="demo-step">
+      <div class="step-copy">
+        <span class="step-index">05 / ORCHESTRATE</span>
+        <h3>Watch bounded agents deliver in parallel.</h3>
+        <p>
+          Switch between roles, inspect normalized runner events, and review
+          changed files without losing sight of who owns what or which agents
+          are waiting.
+        </p>
+      </div>
+
+      <div class="tui-window" aria-label="Conduit worker monitor preview">
+        <div class="tui-fullscreen">
+          <p class="tui-screen-title">Conduit · Worker Monitor · 014-1783867884368</p>
+          <p class="tui-keys">←/→ or Tab switch roles · ↑/↓ navigate · j/k scroll · Ctrl+C cancel · q exit</p>
+          <p class="tui-role-tabs"><span>frontend</span><span>reviewer</span><span>documentation</span><span>[qa]</span></p>
+          <div class="tui-grid tui-grid-monitor">
+            <div class="tui-pane tui-sidebar">
+              <p class="tui-label">▸ Roles</p>
+              <p>frontend · completed</p>
+              <p class="tui-muted">reviewer · waiting</p>
+              <p class="tui-muted">documentation · waiting</p>
+              <p class="tui-selection">› qa · working</p>
+            </div>
+            <div class="tui-pane">
+              <div class="tui-agent-line">
+                <span class="tui-mascot">┌┤<br />└┤</span>
+                <span class="tui-spinner">◝</span><strong>qa</strong><span>qa: agent started</span>
+              </div>
+              <div class="tui-progress"><i></i></div>
+              <p class="tui-label">Activity (15 events)</p>
+              <p>qa: agent starting</p>
+              <p>qa: agent started</p>
+              <p>runner stderr → Reading additional input from stdin...</p>
+              <p>runner stderr → codex</p>
+              <p class="tui-selection">runner → Running focused test suite</p>
+              <p class="tui-subheading">Changed files</p>
+              <p>tests/payment-events.test.ts</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+  </div>
+</section>

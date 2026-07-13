@@ -232,6 +232,24 @@ pnpm test
 pnpm build
 ```
 
+### Workspace layout
+
+This repository is a pnpm/Turborepo workspace. The publishable CLI lives in
+`packages/conduit`; the Astro website lives in `packages/website`. Root commands
+run the relevant workspace tasks:
+
+```sh
+pnpm start --help
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm --filter @conduit/website dev
+```
+
+The website deploys to GitHub Pages from `main` through GitHub Actions. Enable
+**Settings → Pages → Source → GitHub Actions** before the first deployment.
+
 Build a self-contained Linux binary with Bun:
 
 ```bash
