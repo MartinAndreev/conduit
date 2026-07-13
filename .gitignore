@@ -4,4 +4,7 @@ dist/
 .conduit/cache/
 .conduit/worktrees/
 .conduit/drafts/
+.conduit/state.db
+.conduit/state.db-wal
+.conduit/state.db-shm
 .idea/

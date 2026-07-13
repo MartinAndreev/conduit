@@ -205,6 +205,9 @@ export async function initializeProject(
     ".conduit/cache/",
     ".conduit/worktrees/",
     ".conduit/assignments/",
+    ".conduit/state.db",
+    ".conduit/state.db-wal",
+    ".conduit/state.db-shm",
   ];
   const missingIgnore = requiredIgnore.filter(
     (entry) => !existingIgnore.split(/\r?\n/).includes(entry),

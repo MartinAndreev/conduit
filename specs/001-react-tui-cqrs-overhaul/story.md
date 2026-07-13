@@ -1,3 +1,13 @@
 # Story
 
 Conduit needs a structured, keyboard-first terminal application that makes feature planning, agent execution, and review easy to understand without losing the existing CLI automation surface. The implementation must become maintainable enough for future provider integrations and additional agent runners.
+
+Users should be able to reuse a global role setup across projects instead of recreating roles on every `conduit init`. Persistent local-first configuration should provide named global profiles with a default provider plus per-role enabled state, runner, model, reasoning effort, mode, read-only status, owned paths, and reusable guidance Markdown. The global store also holds the selected default profile, architect effort/detail defaults, research-preflight preference, theme, recent projects, and non-secret credential-profile references.
+
+A project selects a profile in `conduit.yml` and overrides only the fields that differ. Configuration resolves in this exact order: built-in defaults → selected global profile → project `conduit.yml` override → project `.conduit/roles/<role>.md` advisory guidance. Project guidance may add repository-specific constraints, but cannot replace role identity, provider workflow, ownership, security requirements, or selected effort/detail. `conduit init` must not copy role Markdown into every project unless the user explicitly requests a project override.
+
+Use embedded Turso as the local state engine, with no Turso Cloud, sync, URL, token, or replication integration. The global database lives in the platform data directory and the ignored project database lives at `.conduit/state.turso`. Both use versioned migrations and short transactions. Multiple local Conduit processes must safely append state and runner events; no transaction may remain open while an agent runs.
+
+Project-local state includes drafts, refinement field values, architect preferences, research reports, clarification questions/answers, revision feedback, lifecycle metadata, runs, normalized events, transcript indexes, changed-file snapshots, and review results. The UI must recover interrupted workflows from this state.
+
+Intermediate refinement drafts, research, questions, answers, and review iterations must remain local state and never be written into the feature packet. On final user approval, Conduit writes only the durable story, specification, plan, tasks, QA cases, and required contracts to the Git-visible project files. Credentials remain in the operating-system keychain or encrypted fallback; databases hold only references or encrypted ciphertext, never plaintext secrets.

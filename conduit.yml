@@ -6,33 +6,41 @@ roles:
     description: "Turns a story into an approved, implementation-ready specification."
     runner: codex
     mode: primary
+    model: gpt-5.6-terra
     skill:
       source: file:.conduit/roles/architect.md
   researcher:
     description: "Investigates the repository and reports evidence without changing code."
-    runner: opencode
+    runner: codex
     mode: subagent
     readOnly: true
+    model: gpt-5.6-luna
     skill:
       source: file:.conduit/roles/researcher.md
   frontend:
     description: "Implements approved user-interface work within its owned paths."
-    runner: opencode
+    runner: codex
     mode: subagent
+    readOnly: true
+    model: gpt-5.6-terra
     owns: [apps/web, packages/ui]
     skill:
       source: file:.conduit/roles/frontend.md
   backend:
     description: "Implements approved API, service, and data-contract work."
-    runner: opencode
+    runner: codex
     mode: subagent
+    readOnly: true
+    model: gpt-5.6-terra
     owns: [apps/api, packages/contracts]
     skill:
       source: file:.conduit/roles/backend.md
   qa:
     description: "Converts approved cases into tests and reports reproducible defects."
-    runner: opencode
+    runner: codex
     mode: subagent
+    readOnly: true
+    model: gpt-5.6-terra
     owns: [tests, e2e]
     skill:
       source: file:.conduit/roles/qa.md
@@ -40,13 +48,15 @@ roles:
     description: "Writes and verifies user, operator, and developer documentation."
     runner: opencode
     mode: subagent
+    model: opencode-go/mimo-v2.5-pro
     owns: [docs, README.md]
     skill:
       source: file:.conduit/roles/documentation.md
   reviewer:
     description: "Independently checks the integrated change against the approved spec."
     runner: codex
-    mode: primary
+    mode: subagent
     readOnly: true
+    model: gpt-5.6-luna
     skill:
       source: file:.conduit/roles/reviewer.md
