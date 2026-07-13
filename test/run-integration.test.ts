@@ -489,7 +489,18 @@ test("executeRun follows configured role dependency groups", async () => {
   try {
     const runDir = path.join(projectRoot, ".conduit", "runs", "run-flow");
     await mkdir(runDir, { recursive: true });
-    const orderFile = path.join(projectRoot, "order.txt");
+    const marker = (name: string) => path.join(projectRoot, `${name}.done`);
+    const script = (name: string, dependencies: string[]) => `
+      const fs = require("fs");
+      const missing = ${JSON.stringify(dependencies)}.filter(
+        (dependency) => !fs.existsSync(${JSON.stringify(projectRoot)} + "/" + dependency + ".done"),
+      );
+      if (missing.length) {
+        console.error("missing dependencies: " + missing.join(","));
+        process.exit(1);
+      }
+      fs.writeFileSync(${JSON.stringify(projectRoot)} + "/" + ${JSON.stringify(name)} + ".done", "done");
+    `;
     const role = (
       name: string,
       dependsOn: string[] = [],
@@ -502,10 +513,7 @@ test("executeRun follows configured role dependency groups", async () => {
       promptFile: path.join(runDir, `${name}.md`),
       prompt: name,
       command: process.execPath,
-      args: [
-        "-e",
-        `const fs=require('fs'); fs.appendFileSync(${JSON.stringify(orderFile)}, ${JSON.stringify(name + "\\n")});`,
-      ],
+      args: ["-e", script(name, dependsOn)],
       skillSource: "test",
       status: "planned" as const,
     });
@@ -534,11 +542,12 @@ test("executeRun follows configured role dependency groups", async () => {
       results.map((result) => result.role),
       ["frontend", "backend", "qa", "documentation", "reviewer"],
     );
-    const order = (await readFile(orderFile, "utf8")).trim().split("\n");
-    assert.ok(order.indexOf("frontend") < order.indexOf("qa"));
-    assert.ok(order.indexOf("backend") < order.indexOf("qa"));
-    assert.ok(order.indexOf("qa") < order.indexOf("reviewer"));
-    assert.ok(order.indexOf("documentation") < order.indexOf("reviewer"));
+    await Promise.all(
+      ["frontend", "backend", "qa", "documentation", "reviewer"].map(
+        async (name) =>
+          assert.equal(await readFile(marker(name), "utf8"), "done"),
+      ),
+    );
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
   }
