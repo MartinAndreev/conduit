@@ -179,19 +179,22 @@ export function useRefinementController(
           tasks: string;
         };
         setPacketContent(content);
-        hasPacket = Boolean(
-          content.spec.trim() || content.plan.trim() || content.tasks.trim(),
-        );
-        setValues((current) =>
-          current.problem
-            ? current
-            : {
-                ...parseRefinementBrief(content.story || content.spec),
-                testCases: content.testCases
-                  .replace(/^# QA test cases\s*/i, "")
-                  .trim(),
-              },
-        );
+        // A newly-created feature has scaffolded spec, plan, task, and test
+        // files. Those are not an approved refinement packet and must not be
+        // interpreted as a story draft.
+        hasPacket = Boolean(content.story.trim());
+        if (content.story.trim()) {
+          setValues((current) =>
+            current.problem
+              ? current
+              : {
+                  ...parseRefinementBrief(content.story),
+                  testCases: content.testCases
+                    .replace(/^# QA test cases\s*/i, "")
+                    .trim(),
+                },
+          );
+        }
       }
 
       const draftResult = await queryBus.execute({

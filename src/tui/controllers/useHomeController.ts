@@ -77,10 +77,12 @@ function randomTip(): string {
 export function useHomeController(
   commandBus: CommandBus,
   queryBus: QueryBus,
+  projectRoot: string,
   onExit: () => void,
   onRefine: (featureId: string) => void,
   onView: (featureId: string) => void,
-  onRun: (runId: string) => void,
+  onRun: (feature: FeatureReadModel) => void,
+  onStatus: (feature: FeatureReadModel) => void,
 ): [HomeControllerState, HomeControllerActions] {
   const [features, setFeatures] = useState<readonly FeatureReadModel[]>([]);
   const [portraits, setPortraits] = useState<HomeControllerState["portraits"]>(
@@ -196,23 +198,11 @@ export function useHomeController(
               })
               .finally(() => onRefine(feature.id));
           }
-          if ((action === "Run" || action === "Status") && onRun) {
-            void queryBus
-              .execute({ type: "latestRuns" })
-              .then((result) => {
-                if (result.success) {
-                  const runs = result.data as Array<{
-                    id: string;
-                    featureId: string;
-                  }>;
-                  const match = runs.find(
-                    (r) => r.featureId === filteredFeatures[selectedIndex]?.id,
-                  );
-                  if (match) onRun(match.id);
-                }
-              })
-              .catch(() => {});
+          if (action === "Status" && filteredFeatures[selectedIndex]) {
+            onStatus(filteredFeatures[selectedIndex]!);
           }
+          if (action === "Run" && filteredFeatures[selectedIndex])
+            onRun(filteredFeatures[selectedIndex]!);
           dispatchInteraction({ type: "idle" });
           return;
         }
@@ -254,10 +244,12 @@ export function useHomeController(
       filteredFeatures,
       commandBus,
       queryBus,
+      projectRoot,
       onExit,
       onRefine,
       onView,
       onRun,
+      onStatus,
     ],
   );
 

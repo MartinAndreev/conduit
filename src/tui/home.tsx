@@ -8,6 +8,9 @@ import { HomeScreen } from "./screens/HomeScreen.js";
 import { RefinementScreen } from "./screens/RefinementScreen.js";
 import { FeatureDetailsScreen } from "./screens/FeatureDetailsScreen.js";
 import { RunScreen } from "./screens/RunScreen.js";
+import { FeatureStatusScreen } from "./screens/FeatureStatusScreen.js";
+import { RoleRunSelectionScreen } from "./screens/RoleRunSelectionScreen.js";
+import type { FeatureReadModel } from "@domains/features/types/feature.js";
 
 function HomeApplication({
   commandBus,
@@ -20,6 +23,10 @@ function HomeApplication({
   );
   const [viewingFeatureId, setViewingFeatureId] = useState<string | null>(null);
   const [runningRunId, setRunningRunId] = useState<string | null>(null);
+  const [runFeature, setRunFeature] = useState<FeatureReadModel | null>(null);
+  const [statusFeature, setStatusFeature] = useState<FeatureReadModel | null>(
+    null,
+  );
   if (runningRunId && projectRoot)
     return (
       <RunScreen
@@ -47,14 +54,42 @@ function HomeApplication({
         onExit={() => setViewingFeatureId(null)}
       />
     );
+  if (statusFeature)
+    return (
+      <FeatureStatusScreen
+        queryBus={queryBus}
+        projectRoot={projectRoot ?? process.cwd()}
+        feature={statusFeature}
+        onOpenRun={(runId) => {
+          setStatusFeature(null);
+          setRunningRunId(runId);
+        }}
+        onExit={() => setStatusFeature(null)}
+      />
+    );
+  if (runFeature)
+    return (
+      <RoleRunSelectionScreen
+        commandBus={commandBus}
+        queryBus={queryBus}
+        feature={runFeature}
+        onStarted={(runId) => {
+          setRunFeature(null);
+          setRunningRunId(runId);
+        }}
+        onExit={() => setRunFeature(null)}
+      />
+    );
   return (
     <HomeScreen
       commandBus={commandBus}
       queryBus={queryBus}
+      projectRoot={projectRoot ?? process.cwd()}
       onExit={onExit}
       onRefine={setRefiningFeatureId}
       onView={setViewingFeatureId}
-      onRun={setRunningRunId}
+      onRun={setRunFeature}
+      onStatus={setStatusFeature}
     />
   );
 }
@@ -66,7 +101,7 @@ export interface StartHomeParams {
 }
 
 export async function startHome(params: StartHomeParams): Promise<void> {
-  const { commandBus, queryBus, projectRoot } = params;
+  const { commandBus, queryBus, projectRoot = process.cwd() } = params;
 
   const renderer = await createCliRenderer({
     exitOnCtrlC: false,
@@ -85,8 +120,8 @@ export async function startHome(params: StartHomeParams): Promise<void> {
       <HomeApplication
         commandBus={commandBus}
         queryBus={queryBus}
-        onExit={handleExit}
         projectRoot={projectRoot}
+        onExit={handleExit}
       />
     </ThemeProvider>,
   );

@@ -50,3 +50,22 @@ test("legacy label-based stories retain their content", () => {
   assert.equal(parsed.problem, "Build a monitor");
   assert.equal(parsed.audience, "Operators");
 });
+
+test("legacy Markdown headings populate their matching refinement fields", () => {
+  const parsed = parseRefinementBrief(`## Problem
+
+Build a monitor.
+
+## User
+
+Operators
+
+## Acceptance criteria
+
+- [ ] Failures are actionable.
+`);
+
+  assert.equal(parsed.problem, "Build a monitor.");
+  assert.equal(parsed.audience, "Operators");
+  assert.equal(parsed.outcome, "- [ ] Failures are actionable.");
+});

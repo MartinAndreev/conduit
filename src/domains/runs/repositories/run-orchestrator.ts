@@ -143,6 +143,15 @@ function worktreePath(projectRoot: string, run: Run, role: RunRole): string {
 }
 
 function addWorktree(projectRoot: string, run: Run, role: RunRole): string {
+  // A newly initialized repository can have an unborn HEAD. Git cannot make
+  // a worktree from it, but roles can still work safely in the project root
+  // when their configured ownership does not overlap.
+  const head = spawnSync(
+    "git",
+    ["-C", projectRoot, "rev-parse", "--verify", "HEAD"],
+    { encoding: "utf8" },
+  );
+  if (head.status !== 0) return projectRoot;
   const target = worktreePath(projectRoot, run, role);
   const branch = `conduit/${run.id}/${role.name}`;
   const result: SpawnSyncReturns<string> = spawnSync(
@@ -555,14 +564,14 @@ export async function executeRun({
       status: "dry-run" as const,
       command: [role.command, ...role.args],
     }));
-  const launches = run.roles.map(async (role): Promise<RunResult> => {
+  const launchRole = async (role: RunRole): Promise<RunResult> => {
     onProgress(
       `${role.name}: preparing ${role.readOnly ? "project workspace" : "isolated worktree"}`,
     );
     const cwd = role.readOnly
       ? projectRoot
       : addWorktree(projectRoot, run, role);
-    role.worktree = role.readOnly ? undefined : cwd;
+    role.worktree = role.readOnly || cwd === projectRoot ? undefined : cwd;
     if (!role.readOnly) await writeWorktreePrompt(cwd, run, role);
     return runProcess(
       role,
@@ -575,8 +584,53 @@ export async function executeRun({
       processRegistry,
       signal,
     );
-  });
-  const results = await Promise.all(launches);
+  };
+  const launchRoleSafely = async (role: RunRole): Promise<RunResult> => {
+    try {
+      return await launchRole(role);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      await eventRepository?.append({
+        type: "error",
+        runId: run.id,
+        roleId: role.name,
+        timestamp: new Date().toISOString(),
+        payload: {
+          kind: "error",
+          code: "ROLE_LAUNCH_FAILED",
+          message,
+          recoverable: false,
+        },
+      });
+      await eventRepository?.append({
+        type: "lifecycle",
+        runId: run.id,
+        roleId: role.name,
+        timestamp: new Date().toISOString(),
+        payload: {
+          kind: "lifecycle",
+          state: "failed",
+          message: `${role.name}: failed to start`,
+        },
+      });
+      return { role: role.name, status: "failed", error: message };
+    }
+  };
+  // Documentation and review are integration gates, not parallel
+  // implementation tasks. Documentation runs after the implementation work;
+  // review runs after every other selected role has reached a terminal result.
+  const workerRoles = run.roles.filter(
+    (role) => role.name !== "documentation" && role.name !== "reviewer",
+  );
+  const documentationRoles = run.roles.filter(
+    (role) => role.name === "documentation",
+  );
+  const reviewerRoles = run.roles.filter((role) => role.name === "reviewer");
+  const results = await Promise.all(workerRoles.map(launchRoleSafely));
+  for (const documentation of documentationRoles)
+    results.push(await launchRoleSafely(documentation));
+  for (const reviewer of reviewerRoles)
+    results.push(await launchRoleSafely(reviewer));
   run.status = results.some((result) => result.status === "cancelled")
     ? "cancelled"
     : results.every((result) => result.status === "completed")

@@ -1,6 +1,7 @@
 import type { Theme } from "../theme.js";
 import { MarkdownDocument } from "@tui/components/MarkdownDocument.js";
 import type { ArchitectPreferences } from "@domains/refinement/types/architect-preferences.js";
+import { formatRefinementBrief } from "@helpers/formatting/refinement-brief.js";
 
 interface RefinementPreviewProps {
   theme: Theme;
@@ -19,15 +20,13 @@ export function RefinementPreview({
 }: RefinementPreviewProps) {
   const markdown = [
     "# Story",
-    `## Problem\n${values.problem ?? ""}`,
-    `## User\n${values.audience ?? ""}`,
-    `## Desired outcome\n${values.outcome ?? ""}`,
-    values.constraints
-      ? `## Constraints and non-goals\n${values.constraints}`
-      : "",
-    values.guidelines
-      ? `## Implementation and design guidance\n${values.guidelines}`
-      : "",
+    formatRefinementBrief({
+      problem: values.problem ?? "",
+      audience: values.audience ?? "",
+      outcome: values.outcome ?? "",
+      constraints: values.constraints ?? "",
+      guidelines: values.guidelines ?? "",
+    }),
     "# QA test cases",
     values.testCases ?? "",
   ]
@@ -52,9 +51,13 @@ export function RefinementPreview({
         <text content="Markdown Preview" fg={theme.action.primary} />
       </box>
 
-      <box width="100%" height={2} flexDirection="row" justifyContent="center">
+      <box width="100%" height={3} flexDirection="column" alignItems="center">
         <text
-          content="r: return · a: approve · q: quit · t: architect · s: research · e: effort · l: detail"
+          content="a approve · Ctrl+R edit · q quit"
+          fg={theme.text.muted}
+        />
+        <text
+          content="t architect · s research · e effort · l detail"
           fg={theme.text.muted}
         />
       </box>
@@ -117,9 +120,9 @@ export function RefinementPreview({
           content={
             architectEnabled
               ? researchEnabled
-                ? "a: approve → research preflight · e: cycle effort · l: cycle detail"
-                : "a: approve → start architect · e: cycle effort · l: cycle detail"
-              : "a: approve → return to home"
+                ? "Approve: research preflight, then architect"
+                : "Approve: start architect"
+              : "Approve: save refinement"
           }
           fg={theme.text.muted}
         />

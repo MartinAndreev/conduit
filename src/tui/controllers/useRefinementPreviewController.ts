@@ -13,10 +13,10 @@ export function useRefinementPreviewController(
   enabled: boolean,
 ): void {
   const onKey = useCallback(
-    (event: { name: string }) => {
+    (event: { name: string; ctrl: boolean }) => {
       if (!enabled) return;
       if (event.name === "a") actions.approve();
-      if (event.name === "r") actions.reject();
+      if (event.ctrl && event.name === "r") actions.reject();
       if (event.name === "q") actions.quit();
       if (event.name === "t") actions.toggleArchitect();
       if (event.name === "s") actions.toggleResearch();

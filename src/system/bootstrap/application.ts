@@ -61,6 +61,7 @@ import { createGetRunHandler } from "../../domains/runs/handlers/get-run-handler
 import { createFinalReviewHandler } from "../../domains/runs/handlers/final-review-handler.js";
 import { WorktreeDiffReader } from "../../domains/runs/repositories/worktree-diff-reader.js";
 import { createRunProcessRegistry } from "../../domains/runs/repositories/run-process-registry.js";
+import type { StartFeatureRunCommand } from "../../domains/runs/interfaces/commands/start-feature-run.js";
 
 export interface Application {
   readonly commandBus: CommandBus;
@@ -196,6 +197,40 @@ export function createApplication(deps: BootstrapDependencies): Application {
       }) as CommandHandler,
     );
 
+  const executeRun = deps.executeRun;
+  if (projectRoot && executeRun) {
+    commandBus.register("startFeatureRun", (async (
+      command: StartFeatureRunCommand,
+    ) => {
+      const config = await deps.loadConfig(projectRoot);
+      const roleNames = [...command.roleNames];
+      if (!roleNames.length)
+        return {
+          success: false,
+          error: {
+            code: "NO_RUN_ROLES",
+            message: "Configure at least one role before starting a run.",
+          },
+        };
+      const { run, runDir } = await deps.planRun({
+        projectRoot,
+        config,
+        featureId: command.featureId,
+        roleNames,
+        builtinRoot: deps.builtinRoleRoot ?? "",
+      });
+      void executeRun({
+        projectRoot,
+        run,
+        runDir,
+        dryRun: false,
+        eventRepository: runEventRepository,
+        processRegistry,
+      }).catch(() => {});
+      return { success: true, data: { runId: run.id } };
+    }) as CommandHandler);
+  }
+
   queryBus.register("projectBootstrapState", (async (
     q: Query & { projectRoot: string },
   ) => {
@@ -215,6 +250,19 @@ export function createApplication(deps: BootstrapDependencies): Application {
       };
     }
   }) as QueryHandler);
+
+  if (projectRoot)
+    queryBus.register("listRunRoles", (async () => {
+      const config = await deps.loadConfig(projectRoot);
+      return {
+        success: true,
+        data: Object.entries(config.roles).map(([name, role]) => ({
+          name,
+          runner: role.runner,
+          description: role.description,
+        })),
+      };
+    }) as QueryHandler);
 
   queryBus.register("latestRuns", (async (
     q: Query & { projectRoot: string },
