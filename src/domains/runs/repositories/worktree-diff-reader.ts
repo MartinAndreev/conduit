@@ -49,7 +49,9 @@ export class WorktreeDiffReader implements DiffReader {
       for (const filePath of untrackedResult.stdout.trim().split("\n")) {
         const absolutePath = path.join(worktree, filePath);
         const content = readFileSync(absolutePath, "utf8");
-        const additions = content.length ? content.split("\n").length : 0;
+        const additions = content.length
+          ? content.replace(/\n$/, "").split("\n").length
+          : 0;
         changedFiles.push({ path: filePath, additions, deletions: 0 });
         const noIndexDiff = spawnSync(
           "git",
@@ -63,7 +65,8 @@ export class WorktreeDiffReader implements DiffReader {
     }
 
     const diff = [trackedDiff, ...untrackedDiffs].filter(Boolean).join("\n");
-    const normalizedDiff = diff.trim() ? diff.trim() : undefined;
+    const trimmedDiff = diff.trim();
+    const normalizedDiff = trimmedDiff || undefined;
 
     const totalAdditions = changedFiles.reduce(
       (sum, f) => sum + f.additions,

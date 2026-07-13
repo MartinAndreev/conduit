@@ -356,6 +356,7 @@ test("WorktreeDiffReader reports untracked agent-created files", async () => {
       result.changedFiles.map((file) => file.path),
       ["agent-output.txt"],
     );
+    assert.equal(result.changedFiles[0]?.additions, 1);
     assert.ok(result.diff?.includes("agent-output.txt"));
     assert.ok(extractFileDiff(result.diff ?? "", "agent-output.txt"));
   } finally {
