@@ -141,13 +141,13 @@ export function roleExecutionStages(roles: RunRole[]): RunRole[][] {
 
   while (pending.size) {
     const stage = [...pending.values()].filter((role) =>
-      role.dependsOn
+      (role.dependsOn ?? [])
         .filter((dependency) => selected.has(dependency))
         .every((dependency) => completed.has(dependency)),
     );
     if (!stage.length) {
       const blocked = [...pending.values()]
-        .map((role) => `${role.name} -> [${role.dependsOn.join(", ")}]`)
+        .map((role) => `${role.name} -> [${(role.dependsOn ?? []).join(", ")}]`)
         .join("; ");
       throw new Error(`Role dependency cycle or unsatisfied order: ${blocked}`);
     }

@@ -45,7 +45,6 @@ test("research preflight saves a visible report before architect refinement", as
               runner: "opencode",
               readOnly: true,
               owns: [],
-              dependsOn: [],
               promptFile,
               prompt: "# Researcher",
               command: "opencode",
