@@ -1,21 +1,9 @@
-import test, { describe } from "node:test";
-import assert from "node:assert/strict";
-import { access, readdir, readFile } from "node:fs/promises";
+import { exists, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { describe, expect, test } from "bun:test";
 
-const testDirectory = path.dirname(fileURLToPath(import.meta.url));
-const projectRoot = path.resolve(testDirectory, "..");
+const projectRoot = path.resolve(import.meta.dir, "..");
 const sourceRoot = path.join(projectRoot, "src");
-
-async function pathExists(target: string): Promise<boolean> {
-  try {
-    await access(target);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 async function sourceFiles(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -42,7 +30,7 @@ describe("domain boundaries", () => {
       "role-templates.ts",
       "commands",
     ]) {
-      assert.equal(await pathExists(path.join(sourceRoot, file)), false);
+      expect(await exists(path.join(sourceRoot, file))).toBe(false);
     }
   });
 
@@ -50,9 +38,8 @@ describe("domain boundaries", () => {
     const files = await sourceFiles(path.join(sourceRoot, "tui"));
     for (const file of files) {
       const source = await readFile(file, "utf8");
-      assert.doesNotMatch(source, /from ["']node:(?:fs|child_process|crypto)/);
-      assert.doesNotMatch(
-        source,
+      expect(source).not.toMatch(/from ["']node:(?:fs|child_process|crypto)/);
+      expect(source).not.toMatch(
         /from ["'][^"']*domains\/[^"']+\/(?:repositories|providers)/,
       );
     }

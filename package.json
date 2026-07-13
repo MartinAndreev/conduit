@@ -26,11 +26,10 @@
     "format:check": "prettier --check .",
     "run-if-changed": "run-if-changed",
     "prepare": "husky",
-    "test": "tsx --test",
+    "test": "bun test",
     "test:node": "tsx --test",
     "typecheck": "tsc --noEmit",
-    "start": "tsx ./bin/conduit.js",
-    "test:bun": "bun test"
+    "start": "tsx ./bin/conduit.js"
   },
   "dependencies": {
     "@opentui/core": "^0.4.3",
