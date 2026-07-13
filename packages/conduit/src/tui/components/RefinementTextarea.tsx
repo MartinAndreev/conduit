@@ -43,7 +43,10 @@ export function RefinementTextarea({
         focusedTextColor: "#D8D5C8",
         cursorColor: "#D8C28B",
         wrapMode: "word",
-        keyBindings: [{ name: "return", ctrl: true, action: "submit" }],
+        keyBindings: [
+          { name: "return", ctrl: true, action: "submit" },
+          { name: "f10", action: "submit" },
+        ],
         onContentChange: () => onChangeRef.current(textarea.plainText),
         onSubmit: () => onSubmitRef.current(),
       });

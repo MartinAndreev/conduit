@@ -1,6 +1,7 @@
 import { ConduitMark } from "@tui/components/ConduitMark.js";
 import type { DraftField } from "@domains/refinement/types/draft.js";
 import type { Theme } from "@tui/theme.js";
+import { useTerminalSubmitKey } from "@tui/hooks/useTerminalSubmitKey.js";
 
 interface RefinementSidebarProps {
   readonly theme: Theme;
@@ -15,6 +16,7 @@ export function RefinementSidebar({
   values,
   activeFieldIndex,
 }: RefinementSidebarProps) {
+  const submitKey = useTerminalSubmitKey();
   return (
     <box
       width="30%"
@@ -38,7 +40,10 @@ export function RefinementSidebar({
       <box flexGrow={1} />
       <box flexDirection="column" paddingLeft={1} paddingBottom={1}>
         <text content="Tab/Shift+Tab  field" fg={theme.text.muted} />
-        <text content="Ctrl+Enter     preview" fg={theme.text.muted} />
+        <text
+          content={`${submitKey.label.padEnd(15)}preview`}
+          fg={theme.text.muted}
+        />
         <text content="Esc            cancel" fg={theme.text.muted} />
       </box>
     </box>

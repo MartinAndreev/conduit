@@ -4,6 +4,7 @@ import type { ClarificationQuestion } from "@domains/refinement/types/revision.j
 import { MarkdownDocument } from "@tui/components/MarkdownDocument.js";
 import { RefinementTextarea } from "@tui/components/RefinementTextarea.js";
 import type { Theme } from "@tui/theme.js";
+import { useTerminalSubmitKey } from "@tui/hooks/useTerminalSubmitKey.js";
 
 export function ArchitectClarifications({
   theme,
@@ -16,6 +17,7 @@ export function ArchitectClarifications({
   readonly onSubmit: (answers: string) => void;
   readonly onExit: () => void;
 }) {
+  const submitKey = useTerminalSubmitKey();
   const [answers, setAnswers] = useState("");
   const submit = useCallback(() => onSubmit(answers), [answers, onSubmit]);
   const questionsMarkdown = questions
@@ -58,7 +60,7 @@ export function ArchitectClarifications({
         fg={theme.text.muted}
       />
       <text
-        content="Ctrl+Enter resumes the architect · Esc returns."
+        content={`${submitKey.label} resumes the architect · Esc returns.`}
         fg={theme.text.muted}
       />
       <box

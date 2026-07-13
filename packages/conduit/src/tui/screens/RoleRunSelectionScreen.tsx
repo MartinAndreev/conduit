@@ -4,6 +4,8 @@ import type { FeatureReadModel } from "@domains/features/types/feature.js";
 import type { CommandBus } from "@system/bus/command-bus.js";
 import type { QueryBus } from "@system/bus/query-bus.js";
 import { useTheme } from "@tui/components/ThemeProvider.js";
+import { isSubmitKey } from "@tui/helpers/submit-key.js";
+import { useTerminalSubmitKey } from "@tui/hooks/useTerminalSubmitKey.js";
 
 interface RunnableRole {
   readonly name: string;
@@ -25,6 +27,7 @@ export function RoleRunSelectionScreen({
   readonly onExit: () => void;
 }) {
   const theme = useTheme();
+  const submitKey = useTerminalSubmitKey();
   const [roles, setRoles] = useState<readonly RunnableRole[]>([]);
   const [selected, setSelected] = useState<readonly string[]>([]);
   const [cursor, setCursor] = useState(0);
@@ -52,7 +55,7 @@ export function RoleRunSelectionScreen({
           : [...current, role.name],
       );
     }
-    if (event.name === "return" && event.ctrl) {
+    if (isSubmitKey(event)) {
       if (!selected.length) return setError("Select at least one role.");
       void commandBus
         .dispatch({
@@ -77,7 +80,7 @@ export function RoleRunSelectionScreen({
     >
       <text content={`Run · ${feature.title}`} fg={theme.action.primary} />
       <text
-        content="↑/↓ choose · Space toggle · Ctrl+Enter start · Esc return"
+        content={`↑/↓ choose · Space toggle · ${submitKey.label} start · Esc return`}
         fg={theme.text.muted}
       />
       <box

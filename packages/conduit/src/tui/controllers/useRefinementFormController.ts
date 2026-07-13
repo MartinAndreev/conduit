@@ -3,6 +3,7 @@ import { useKeyboard } from "@opentui/react";
 import type { DraftField } from "@domains/refinement/types/draft.js";
 import refinementTips from "@tui/assets/refinement-tips.json" with { type: "json" };
 import type { RefinementFormViewModel } from "@tui/types/refinement.js";
+import { isSubmitKey } from "@tui/helpers/submit-key.js";
 
 export function useRefinementFormController(
   fields: readonly DraftField[],
@@ -46,7 +47,7 @@ export function useRefinementFormController(
         setCursorPosition(0);
         return;
       }
-      if (key === "return" && event.ctrl) {
+      if (isSubmitKey(event)) {
         if (
           fields.every(
             (field) => !field.required || Boolean(values[field.name]?.trim()),

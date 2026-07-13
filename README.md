@@ -94,7 +94,7 @@ Home is the default screen opened by `conduit`. It lists Local Spec Kit feature 
 
 Conduit supports three refinement paths from Home's **Refine** action or from `conduit refine <feature-id>`:
 
-1. **Manual packet approval**: fill in the refinement form, press `Ctrl+Enter` to preview, leave architect refinement off, then press `a` to approve and write the packet. Use this when the story is already implementation-ready and you only need Conduit to persist the packet files.
+1. **Manual packet approval**: fill in the refinement form, press the displayed submit key (`Ctrl+Enter` on compatible terminals, otherwise `F10`) to preview, leave architect refinement off, then press `a` to approve and write the packet. Use this when the story is already implementation-ready and you only need Conduit to persist the packet files.
 2. **Architect refinement**: fill in the form, preview, press `t` to enable the architect, optionally press `e` and `l` to cycle effort and detail, then press `a`. Conduit saves the brief, runs Codex, and opens packet review. Press `a` to approve the generated packet or `r` to request changes and send feedback back through another architect pass.
 3. **Research-assisted architect refinement**: in preview, press `s` to enable repository research and `t` to enable the architect, then press `a`. The researcher gathers repository context first; review the report with `a` to accept and start the architect, `r` to rerun research, or `e` to return to the brief.
 
@@ -107,7 +107,7 @@ When a material product or technical decision is unclear, the architect stops in
 Conduit supports three run paths from Home's **Run** and **Status** actions or from `conduit run <feature-id>`:
 
 1. **Plan-only run**: use `conduit run <feature-id> --roles <roles> --dry-run` to validate role selection, skill resolution, worktree setup, and launch commands without starting agents.
-2. **Interactive worker run**: choose **Run** in Home, select one or more configured roles with `Space`, and press `Ctrl+Enter`. Conduit starts isolated role work and opens the worker monitor with role progress, normalized runner events, changed files, split diffs, cancellation, and review results where available.
+2. **Interactive worker run**: choose **Run** in Home, select one or more configured roles with `Space`, and press the displayed submit key (`Ctrl+Enter` on compatible terminals, otherwise `F10`). Conduit starts isolated role work and opens the worker monitor with role progress, normalized runner events, changed files, split diffs, cancellation, and review results where available.
 3. **Direct run/status entry**: use `conduit run <feature-id> --roles <roles>` to start the live monitor from the shell, `--compact` for spinner-style progress, or `conduit status --tui` / Home's **Status** action to reopen recent run state.
 
 Inside the worker monitor, use `←`/`→` or `Tab` to switch roles, `Enter` or `Space` to move from roles into activity, `j`/`k` or `↑`/`↓` to scroll activity, `t` to toggle transcript payloads, and `Ctrl+C` to request cancellation. From the files focus, `Enter` or `Space` toggles the selected file's split diff. `q` exits the monitor without cancelling a normal run.
