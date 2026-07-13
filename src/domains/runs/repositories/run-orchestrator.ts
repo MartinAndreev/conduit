@@ -143,6 +143,15 @@ function worktreePath(projectRoot: string, run: Run, role: RunRole): string {
 }
 
 function addWorktree(projectRoot: string, run: Run, role: RunRole): string {
+  // A newly initialized repository can have an unborn HEAD. Git cannot make
+  // a worktree from it, but roles can still work safely in the project root
+  // when their configured ownership does not overlap.
+  const head = spawnSync(
+    "git",
+    ["-C", projectRoot, "rev-parse", "--verify", "HEAD"],
+    { encoding: "utf8" },
+  );
+  if (head.status !== 0) return projectRoot;
   const target = worktreePath(projectRoot, run, role);
   const branch = `conduit/${run.id}/${role.name}`;
   const result: SpawnSyncReturns<string> = spawnSync(
@@ -562,7 +571,7 @@ export async function executeRun({
     const cwd = role.readOnly
       ? projectRoot
       : addWorktree(projectRoot, run, role);
-    role.worktree = role.readOnly ? undefined : cwd;
+    role.worktree = role.readOnly || cwd === projectRoot ? undefined : cwd;
     if (!role.readOnly) await writeWorktreePrompt(cwd, run, role);
     return runProcess(
       role,
