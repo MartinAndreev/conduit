@@ -27,4 +27,4 @@ Only `status.error` is outside the logo palette because red communicates a requi
 
 ## Interaction
 
-Tab and Shift+Tab move form focus. Ctrl+Enter submits a refinement form. Sidebar search has a documented global focus shortcut selected during implementation. `q` closes the active modal/view; Ctrl+C cancels an active run only after confirmation. Narrow terminals show an actionable minimum-size message rather than a broken layout.
+Tab and Shift+Tab move form focus. Ctrl+Enter submits a refinement form when the terminal reports support for modified Enter; F10 is the fallback and is shown until support is detected. Sidebar search has a documented global focus shortcut selected during implementation. `q` closes the active modal/view; Ctrl+C cancels an active run only after confirmation. Narrow terminals show an actionable minimum-size message rather than a broken layout.

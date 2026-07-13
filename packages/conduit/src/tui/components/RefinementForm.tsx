@@ -1,6 +1,7 @@
 import type { Theme } from "../theme.js";
 import type { DraftField } from "../../domains/refinement/types/draft.js";
 import { RefinementTextarea } from "@tui/components/RefinementTextarea.js";
+import { useTerminalSubmitKey } from "@tui/hooks/useTerminalSubmitKey.js";
 
 interface RefinementFormProps {
   theme: Theme;
@@ -21,6 +22,7 @@ export function RefinementForm({
   submit,
   tip,
 }: RefinementFormProps) {
+  const submitKey = useTerminalSubmitKey();
   const activeField = fields[activeFieldIndex];
   const currentValue = activeField ? (values[activeField.name] ?? "") : "";
 
@@ -45,7 +47,7 @@ export function RefinementForm({
 
       <box width="100%" height={2} flexDirection="row" justifyContent="center">
         <text
-          content="Complete each required field, then press Ctrl+Enter to review your draft."
+          content={`Complete each required field, then press ${submitKey.label} to review your draft.`}
           fg={theme.text.muted}
         />
       </box>

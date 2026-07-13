@@ -1,6 +1,7 @@
 import type { FeatureReadModel } from "@domains/features/types/feature.js";
 import type { Theme } from "@tui/theme.js";
 import { RefinementTextarea } from "@tui/components/RefinementTextarea.js";
+import { useTerminalSubmitKey } from "@tui/hooks/useTerminalSubmitKey.js";
 
 interface FeatureActionsProps {
   feature: FeatureReadModel | undefined;
@@ -27,6 +28,7 @@ export function FeatureActions({
   setFeatureTitle,
   submitFeature,
 }: FeatureActionsProps) {
+  const submitKey = useTerminalSubmitKey();
   if (!feature) {
     return (
       <box width="70%" height="100%" flexDirection="column" padding={1}>
@@ -45,7 +47,7 @@ export function FeatureActions({
               />
             </box>
             <text
-              content="Type a title · Ctrl+Enter create · Esc cancel"
+              content={`Type a title · ${submitKey.label} create · Esc cancel`}
               fg={theme.text.muted}
             />
           </>
@@ -91,7 +93,7 @@ export function FeatureActions({
         )}
         {creating && (
           <text
-            content="Type a title · Ctrl+Enter create · Esc cancel"
+            content={`Type a title · ${submitKey.label} create · Esc cancel`}
             fg={theme.text.muted}
           />
         )}

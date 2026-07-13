@@ -3,6 +3,7 @@ import { useKeyboard } from "@opentui/react";
 import { MarkdownDocument } from "@tui/components/MarkdownDocument.js";
 import { RefinementTextarea } from "@tui/components/RefinementTextarea.js";
 import type { Theme } from "@tui/theme.js";
+import { useTerminalSubmitKey } from "@tui/hooks/useTerminalSubmitKey.js";
 
 export function RefinementPacketReview({
   theme,
@@ -22,6 +23,7 @@ export function RefinementPacketReview({
   readonly onRequestChanges: (feedback: string) => void;
   readonly onExit: () => void;
 }) {
+  const submitKey = useTerminalSubmitKey();
   const [editingFeedback, setEditingFeedback] = useState(false);
   const [feedback, setFeedback] = useState("");
   useKeyboard(
@@ -50,7 +52,7 @@ export function RefinementPacketReview({
       <text
         content={
           editingFeedback
-            ? "Describe what must change, then Ctrl+Enter sends the packet back to the architect."
+            ? `Describe what must change, then ${submitKey.label} sends the packet back to the architect.`
             : "a: approve packet · r: request changes · q: return home"
         }
         fg={theme.text.muted}
