@@ -412,6 +412,7 @@ test("executeRun persists role worktrees before agent completion and emits flow 
           runner: "codex",
           readOnly: false,
           owns: ["src"],
+          dependsOn: [],
           promptFile: path.join(runDir, "backend.md"),
           prompt: "prompt",
           command: "codex",
@@ -424,6 +425,7 @@ test("executeRun persists role worktrees before agent completion and emits flow 
           runner: "node",
           readOnly: true,
           owns: [],
+          dependsOn: ["backend"],
           promptFile: path.join(runDir, "reviewer.md"),
           prompt: "review",
           command: process.execPath,
@@ -476,5 +478,77 @@ test("executeRun persists role worktrees before agent completion and emits flow 
       recursive: true,
       force: true,
     });
+  }
+});
+
+test("executeRun follows configured role dependency groups", async () => {
+  const { executeRun } =
+    await import("../src/domains/runs/repositories/run-orchestrator.js");
+  const { mkdir, readFile } = await import("node:fs/promises");
+  const projectRoot = await mkdtemp(path.join(tmpdir(), "conduit-flow-"));
+  try {
+    const runDir = path.join(projectRoot, ".conduit", "runs", "run-flow");
+    await mkdir(runDir, { recursive: true });
+    const marker = (name: string) => path.join(projectRoot, `${name}.done`);
+    const script = (name: string, dependencies: string[]) => `
+      const fs = require("fs");
+      const missing = ${JSON.stringify(dependencies)}.filter(
+        (dependency) => !fs.existsSync(${JSON.stringify(projectRoot)} + "/" + dependency + ".done"),
+      );
+      if (missing.length) {
+        console.error("missing dependencies: " + missing.join(","));
+        process.exit(1);
+      }
+      fs.writeFileSync(${JSON.stringify(projectRoot)} + "/" + ${JSON.stringify(name)} + ".done", "done");
+    `;
+    const role = (
+      name: string,
+      dependsOn: string[] = [],
+    ): Run["roles"][number] => ({
+      name,
+      runner: "node",
+      readOnly: true,
+      owns: [],
+      dependsOn,
+      promptFile: path.join(runDir, `${name}.md`),
+      prompt: name,
+      command: process.execPath,
+      args: ["-e", script(name, dependsOn)],
+      skillSource: "test",
+      status: "planned" as const,
+    });
+    const run: Run = {
+      id: "run-flow",
+      featureId: "001",
+      status: "planned" as const,
+      createdAt: new Date().toISOString(),
+      roles: [
+        role("frontend"),
+        role("backend"),
+        role("qa", ["frontend", "backend"]),
+        role("documentation", ["frontend", "backend"]),
+        role("reviewer", ["qa", "documentation"]),
+      ],
+    };
+
+    const results = await executeRun({
+      projectRoot,
+      run,
+      runDir,
+      dryRun: false,
+    });
+
+    assert.deepEqual(
+      results.map((result) => result.role),
+      ["frontend", "backend", "qa", "documentation", "reviewer"],
+    );
+    await Promise.all(
+      ["frontend", "backend", "qa", "documentation", "reviewer"].map(
+        async (name) =>
+          assert.equal(await readFile(marker(name), "utf8"), "done"),
+      ),
+    );
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
   }
 });

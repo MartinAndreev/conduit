@@ -237,6 +237,7 @@ export async function refineCommand(
         runner: "codex",
         readOnly: false,
         owns: [],
+        dependsOn: [],
         promptFile: "",
         prompt: "",
         command: "",

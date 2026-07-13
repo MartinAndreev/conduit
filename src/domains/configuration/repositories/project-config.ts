@@ -46,6 +46,7 @@ export const defaultConfig: Config = {
       runner: "opencode",
       mode: "subagent",
       owns: ["tests", "e2e"],
+      dependsOn: ["frontend", "backend"],
       skill: { source: "file:.conduit/roles/qa.md" },
     },
     documentation: {
@@ -54,6 +55,7 @@ export const defaultConfig: Config = {
       runner: "opencode",
       mode: "subagent",
       owns: ["docs", "README.md"],
+      dependsOn: ["frontend", "backend"],
       skill: { source: "file:.conduit/roles/documentation.md" },
     },
     reviewer: {
@@ -62,6 +64,7 @@ export const defaultConfig: Config = {
       runner: "codex",
       mode: "primary",
       readOnly: true,
+      dependsOn: ["qa", "documentation"],
       skill: { source: "file:.conduit/roles/reviewer.md" },
     },
   },
@@ -83,6 +86,8 @@ export function serializeConfig(config: Config = defaultConfig): string {
     if (role.effort) lines.push(`    effort: ${role.effort}`);
     if (role.readOnly) lines.push("    readOnly: true");
     if (role.owns?.length) lines.push(`    owns: [${role.owns.join(", ")}]`);
+    if (role.dependsOn?.length)
+      lines.push(`    dependsOn: [${role.dependsOn.join(", ")}]`);
     lines.push("    skill:");
     lines.push(`      source: ${role.skill.source}`);
     if (role.skill.sha256) lines.push(`      sha256: ${role.skill.sha256}`);
