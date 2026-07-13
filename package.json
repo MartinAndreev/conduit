@@ -1,42 +1,22 @@
 {
-  "name": "conduit-orchestrator",
-  "version": "0.2.22",
-  "packageManager": "pnpm@10.32.1",
-  "description": "Spec-driven, local-first orchestration for coding agents.",
-  "license": "MIT",
-  "files": [
-    "dist",
-    "skills",
-    "README.md"
-  ],
+  "name": "conduit-workspace",
+  "private": true,
   "type": "module",
-  "bin": {
-    "conduit": "./dist/conduit.js"
-  },
+  "packageManager": "pnpm@10.32.1",
   "scripts": {
-    "build": "bun scripts/build.js",
-    "build:standalone": "bun scripts/build-standalone.js",
-    "generate:role-templates": "bun scripts/generate-role-templates.js",
-    "install:local": "mkdir -p \"$HOME/.local/bin\" && install -m 755 dist/release/conduit-linux-x64 \"$HOME/.local/bin/conduit\"",
-    "release:checksums": "node scripts/write-checksums.mjs",
-    "prepack": "pnpm build",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
+    "build": "turbo run build",
+    "build:standalone": "pnpm --filter conduit-orchestrator build:standalone",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "run-if-changed": "run-if-changed",
-    "prepare": "husky",
-    "test": "bun test",
-    "test:node": "tsx --test",
-    "typecheck": "tsc --noEmit",
-    "start": "tsx ./bin/conduit.js"
-  },
-  "dependencies": {
-    "@opentui/core": "^0.4.3",
-    "@opentui/react": "^0.4.3",
-    "commander": "^14.0.0",
-    "ora": "^9.3.0",
-    "react": "^19.2.7"
+    "install:local": "pnpm --filter conduit-orchestrator install:local",
+    "lint": "turbo run lint",
+    "release:checksums": "pnpm --filter conduit-orchestrator release:checksums",
+    "start": "pnpm --filter conduit-orchestrator start",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "website:build": "pnpm --filter @conduit/website build",
+    "website:dev": "pnpm --filter @conduit/website dev",
+    "website:preview": "pnpm --filter @conduit/website preview"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.0.0",
@@ -52,6 +32,7 @@
     "lint-staged": "^17.0.0",
     "prettier": "^3.0.0",
     "tsx": "^4.23.0",
+    "turbo": "^2.10.5",
     "typescript": "^5.0.0",
     "typescript-eslint": "^8.0.0"
   },
@@ -62,9 +43,6 @@
     "*.{js,jsx,ts,tsx,mjs,cjs,json,md,mdx,yml,yaml,css,scss,html}": [
       "prettier --write"
     ]
-  },
-  "run-if-changed": {
-    "package.json": "pnpm install --prefer-frozen-lockfile"
   },
   "engines": {
     "node": ">=22"

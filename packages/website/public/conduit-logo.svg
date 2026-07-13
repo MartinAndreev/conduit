@@ -1,0 +1,13 @@
+<svg width="720" height="180" viewBox="0 0 720 180" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Conduit</title>
+  <desc id="desc">A flowing, connected path representing spec-driven agent orchestration.</desc>
+  <path d="M64 90H134C154 90 162 56 184 56H238" stroke="#8FB6A0" stroke-width="16" stroke-linecap="round"/>
+  <path d="M64 90H134C154 90 162 124 184 124H238" stroke="#D8C28B" stroke-width="16" stroke-linecap="round"/>
+  <circle cx="64" cy="90" r="18" fill="#D8D5C8"/>
+  <circle cx="254" cy="56" r="18" fill="#8FB6A0"/>
+  <circle cx="254" cy="124" r="18" fill="#D8C28B"/>
+  <path d="M272 56H330C352 56 360 90 382 90H438" stroke="#8FB6A0" stroke-width="16" stroke-linecap="round"/>
+  <path d="M272 124H330C352 124 360 90 382 90H438" stroke="#D8C28B" stroke-width="16" stroke-linecap="round"/>
+  <circle cx="454" cy="90" r="18" fill="#D8D5C8"/>
+  <text x="490" y="104" fill="#E5E1D4" font-family="ui-sans-serif, system-ui, sans-serif" font-size="52" font-weight="700" letter-spacing="-2">conduit</text>
+</svg>

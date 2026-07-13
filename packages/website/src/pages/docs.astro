@@ -1,0 +1,459 @@
+---
+import Header from "../components/Header.astro";
+import "../styles/global.css";
+
+const base = import.meta.env.BASE_URL;
+const repositoryUrl = "https://github.com/MartinAndreev/conduit";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta
+      name="description"
+      content="Install, configure, and run Conduit with project roles and repository-backed feature packets."
+    />
+    <link rel="icon" href={`${base}favicon.svg`} />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <title>Documentation — Conduit</title>
+  </head>
+  <body>
+    <Header base={base} repositoryUrl={repositoryUrl} />
+
+    <main class="docs-page" id="top">
+      <header class="docs-hero">
+        <p class="eyebrow"><span></span>Documentation</p>
+        <h1>Set up Conduit.</h1>
+        <p>
+          Configure repository-backed feature packets, assign bounded agent
+          roles, and run the workflow from the TUI or command line.
+        </p>
+      </header>
+
+      <div class="docs-layout">
+        <aside class="docs-sidebar">
+          <p>On this page</p>
+          <nav aria-label="Documentation sections">
+            <a href="#installation">Installation</a>
+            <a href="#quick-start">Quick start</a>
+            <a href="#project-config">Project configuration</a>
+            <a href="#global-config">Global configuration</a>
+            <a href="#roles">Roles and runners</a>
+            <a href="#skills">Role skills</a>
+            <a href="#refinement">Refinement</a>
+            <a href="#runs">Running agents</a>
+            <a href="#packets">Feature packets</a>
+            <a href="#commands">Command reference</a>
+          </nav>
+        </aside>
+
+        <article class="docs-content">
+          <section id="installation">
+            <p class="docs-kicker">Getting started</p>
+            <h2>Installation</h2>
+            <p>
+              The standalone binary is the recommended installation. Download
+              the correct platform artifact from GitHub Releases, verify it
+              against <code>SHA256SUMS</code>, and place it on your{" "}
+              <code>PATH</code>.
+            </p>
+
+            <div class="docs-code-label"><span>Linux and macOS installer</span><span>shell</span></div>
+            <pre><code>curl -fsSL https://github.com/MartinAndreev/conduit/releases/latest/download/install.sh | sh</code></pre>
+
+            <div class="docs-code-label"><span>Windows installer</span><span>powershell</span></div>
+            <pre><code>irm https://github.com/MartinAndreev/conduit/releases/latest/download/install.ps1 | iex</code></pre>
+
+            <p>You can also install the development package inside a project:</p>
+            <pre><code>pnpm add -D conduit-orchestrator
+pnpm exec conduit init .</code></pre>
+          </section>
+
+          <section id="quick-start">
+            <p class="docs-kicker">First project</p>
+            <h2>Quick start</h2>
+            <p>
+              Conduit operates on an existing Git repository. Initialize the
+              current repository, then run the bare command to open Home.
+            </p>
+            <pre><code>cd your-project
+conduit init .
+conduit</code></pre>
+            <p><code>conduit init</code> creates:</p>
+            <pre><code>conduit.yml          # committed project configuration
+.conduit/roles/      # editable role instructions
+specs/               # committed feature packets</code></pre>
+            <p>
+              It also adds local run data, caches, worktrees, assignments, and
+              the local state database beneath <code>.conduit/</code> to{" "}
+              <code>.gitignore</code>.
+            </p>
+            <div class="docs-note">
+              Run from another directory with <code>--project &lt;path&gt;</code>.
+              Project resolution uses the invocation directory or this explicit
+              path—it never uses Conduit’s package directory.
+            </div>
+          </section>
+
+          <section id="project-config">
+            <p class="docs-kicker">Local settings</p>
+            <h2>Project configuration</h2>
+            <p>
+              The repository-root <code>conduit.yml</code> is the source of
+              truth for project directories and role definitions. Commit it so
+              every contributor and agent uses the same boundaries.
+            </p>
+            <pre><code>version: 1
+specsDir: specs
+stateDir: .conduit
+roles:
+  frontend:
+    description: "Implements approved interface work."
+    runner: opencode
+    mode: subagent
+    model: openai/gpt-5-mini
+    owns: [apps/web, packages/ui]
+    skill:
+      source: file:.conduit/roles/frontend.md
+
+  qa:
+    description: "Turns approved cases into tests."
+    runner: pi
+    mode: subagent
+    owns: [tests, e2e]
+    dependsOn: [frontend]
+    skill:
+      source: file:.conduit/roles/qa.md</code></pre>
+
+            <div class="docs-table-wrap">
+              <table>
+                <thead><tr><th>Setting</th><th>Purpose</th><th>Default</th></tr></thead>
+                <tbody>
+                  <tr><td><code>version</code></td><td>Configuration schema version.</td><td><code>1</code></td></tr>
+                  <tr><td><code>specsDir</code></td><td>Directory containing committed feature packets.</td><td><code>specs</code></td></tr>
+                  <tr><td><code>stateDir</code></td><td>Ignored local runtime state, logs, caches, and worktrees.</td><td><code>.conduit</code></td></tr>
+                  <tr><td><code>roles</code></td><td>Named specialists available to refinement and runs.</td><td>Built-in role set</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="global-config">
+            <p class="docs-kicker">Machine settings</p>
+            <h2>Global configuration</h2>
+            <p>
+              Global settings store machine-wide provider defaults and named
+              credential-profile references. Project configuration supplies
+              project-specific paths and roles. Effective settings resolve in
+              this order: CLI option, project configuration, global setting,
+              then built-in default.
+            </p>
+
+            <div class="docs-table-wrap">
+              <table>
+                <thead><tr><th>Platform</th><th>Global settings file</th></tr></thead>
+                <tbody>
+                  <tr><td>Linux</td><td><code>~/.config/conduit/settings.yml</code></td></tr>
+                  <tr><td>macOS</td><td><code>~/Library/Application Support/conduit/settings.yml</code></td></tr>
+                  <tr><td>Windows</td><td><code>%APPDATA%\conduit\settings.yml</code></td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <pre><code>version: 1
+defaultProvider: local-spec-kit
+credentialProfiles:
+  work:
+    description: "Work account"
+providerSettings:
+  local-spec-kit:
+    enabled: true</code></pre>
+
+            <div class="docs-note">
+              <strong>Current provider support:</strong> Local Spec Kit is the
+              only selectable provider today. GitHub, Linear, Jira, and Asana
+              providers are planned, but are not available in the current
+              release.
+            </div>
+            <div class="docs-note docs-note-security">
+              <strong>Never put tokens in configuration.</strong> Provider
+              secrets are stored in the operating-system credential vault. If
+              it is unavailable, Conduit uses an encrypted fallback vault in
+              the global configuration directory. Settings may reference named
+              profiles, but never contain plaintext credentials.
+            </div>
+          </section>
+
+          <section id="roles">
+            <p class="docs-kicker">Agent boundaries</p>
+            <h2>Roles and runners</h2>
+            <p>
+              Roles live under the <code>roles</code> key in{" "}
+              <code>conduit.yml</code>. Use <code>conduit roles</code> to list
+              the configured purpose, runner, ownership, and skill source.
+            </p>
+
+            <div class="docs-table-wrap">
+              <table>
+                <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+                <tbody>
+                  <tr><td><code>description</code></td><td>Human-readable responsibility shown during role selection.</td></tr>
+                  <tr><td><code>runner</code></td><td>Execution adapter: <code>codex</code>, <code>opencode</code>, <code>pi</code>, or <code>kilo</code>.</td></tr>
+                  <tr><td><code>mode</code></td><td><code>primary</code> for coordinating roles or <code>subagent</code> for bounded workers.</td></tr>
+                  <tr><td><code>model</code></td><td>Optional runner-specific model ID. Omit it to use the runner default.</td></tr>
+                  <tr><td><code>effort</code></td><td>Optional reasoning effort from <code>minimal</code> through <code>max</code>, when supported.</td></tr>
+                  <tr><td><code>readOnly</code></td><td>Marks evidence-gathering or review roles that must not modify the worktree.</td></tr>
+                  <tr><td><code>owns</code></td><td>Paths the role is explicitly allowed to change.</td></tr>
+                  <tr><td><code>dependsOn</code></td><td>Roles that should complete before this role starts.</td></tr>
+                  <tr><td><code>skill</code></td><td>Instruction source defining inputs, boundaries, verification, and reporting.</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <p>The default role set is intentionally narrow:</p>
+            <ul>
+              <li><strong>architect</strong> creates the approved specification and contracts.</li>
+              <li><strong>researcher</strong> gathers repository evidence without editing.</li>
+              <li><strong>frontend</strong> and <strong>backend</strong> implement owned product paths.</li>
+              <li><strong>qa</strong> converts approved cases into tests.</li>
+              <li><strong>documentation</strong> owns user and developer documentation.</li>
+              <li><strong>reviewer</strong> independently checks the integrated result.</li>
+            </ul>
+          </section>
+
+          <section id="skills">
+            <p class="docs-kicker">Role instructions</p>
+            <h2>Role skills</h2>
+            <p>
+              A role entry in <code>conduit.yml</code> answers
+              <em>who runs, with which model, and which paths they own</em>.
+              The role’s skill file answers <em>how that agent should work</em>.
+              It is the durable instruction contract supplied to the runner
+              alongside the approved feature assignment.
+            </p>
+
+            <div class="docs-compare">
+              <article>
+                <span>conduit.yml</span>
+                <h3>Execution configuration</h3>
+                <p>Runner, model, mode, read-only state, owned paths, dependencies, and skill location.</p>
+              </article>
+              <article>
+                <span>.conduit/roles/*.md</span>
+                <h3>Behavioral contract</h3>
+                <p>Purpose, required inputs, working rules, forbidden changes, verification, and handoff format.</p>
+              </article>
+            </div>
+
+            <h3>Project role files</h3>
+            <p>
+              <code>conduit init</code> materializes the default role skills in
+              <code>.conduit/roles/</code>. They are normal Markdown files,
+              intended to be edited for the repository and committed with
+              <code>conduit.yml</code>. This lets a team review agent behavior
+              with the same process it uses for code and specifications.
+            </p>
+            <pre><code>.conduit/roles/
+  architect.md
+  researcher.md
+  frontend.md
+  backend.md
+  qa.md
+  documentation.md
+  reviewer.md</code></pre>
+
+            <h3>What a useful skill contains</h3>
+            <p>
+              Keep the role narrow and operational. A worker should be able to
+              read the skill and determine what evidence to load, what it may
+              change, which checks it must run, and what a complete handoff
+              looks like without inventing missing policy.
+            </p>
+            <pre><code># Frontend role
+
+## Purpose
+Implement approved user-interface tasks from the feature packet.
+
+## Required inputs
+- Read spec.md, plan.md, the assigned task, and test-cases.md.
+- Inspect relevant contracts before changing code.
+
+## Boundaries
+- Change only paths listed in the assignment.
+- Do not change API contracts or add provider integrations.
+- Stop and report a blocker when the packet is ambiguous.
+
+## Workflow
+1. Confirm the assigned acceptance criteria.
+2. Inspect the existing implementation and tests.
+3. Implement the smallest contract-complete change.
+4. Run the checks required by the task packet.
+
+## Handoff
+Report changed files, verification commands, failures, and contract risks.</code></pre>
+
+            <div class="docs-note">
+              <strong>Avoid duplicating the feature specification.</strong>
+              Skills define stable role behavior; the assignment and feature
+              packet define the current work. Keeping those concerns separate
+              prevents an old role prompt from overriding an approved spec.
+            </div>
+
+            <h3>Skill sources</h3>
+            <p>A role skill can resolve from one of three sources:</p>
+            <pre><code>skill:
+  source: builtin:frontend
+
+skill:
+  source: file:.conduit/roles/frontend.md
+
+skill:
+  source: https://example.com/roles/frontend.md
+  sha256: &lt;reviewed-content-hash&gt;</code></pre>
+
+            <div class="docs-table-wrap">
+              <table>
+                <thead><tr><th>Source</th><th>Resolution behavior</th></tr></thead>
+                <tbody>
+                  <tr><td><code>builtin:&lt;name&gt;</code></td><td>Loads the role template bundled with the installed Conduit release.</td></tr>
+                  <tr><td><code>file:&lt;path&gt;</code></td><td>Loads a project-relative Markdown file. Initialization uses this form so role instructions remain editable.</td></tr>
+                  <tr><td><code>https://…</code></td><td>Requires an exact SHA-256 pin. Conduit rejects redirects and verifies content before caching it locally.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p>
+              Local file sources resolve from the project root. Remote HTTPS
+              skills require a SHA-256 pin, reject redirects, and are cached
+              only after explicit fetching under the ignored local cache.
+            </p>
+            <pre><code>conduit role resolve frontend
+conduit role resolve frontend --fetch-skills</code></pre>
+            <p>
+              The first command validates an already available built-in, local,
+              or cached skill. The second explicitly permits fetching a pinned
+              remote skill after its URL and hash have been reviewed. A missing
+              file, unknown built-in, unpinned remote URL, or hash mismatch
+              stops the role before an agent launches.
+            </p>
+          </section>
+
+          <section id="refinement">
+            <p class="docs-kicker">From story to packet</p>
+            <h2>Refinement</h2>
+            <p>Conduit supports three refinement paths:</p>
+            <ol>
+              <li><strong>Manual approval:</strong> complete the form, preview with <code>Ctrl+Enter</code>, and approve without the architect.</li>
+              <li><strong>Architect refinement:</strong> enable the architect with <code>t</code>, approve the brief, then review or revise the generated packet.</li>
+              <li><strong>Research-assisted refinement:</strong> enable research with <code>s</code> so repository evidence is reviewed before the architect starts.</li>
+            </ol>
+            <p>
+              Material questions stop refinement rather than being guessed.
+              Answers are committed in <code>clarifications.md</code> when the
+              packet is approved.
+            </p>
+          </section>
+
+          <section id="runs">
+            <p class="docs-kicker">Execution</p>
+            <h2>Running agents</h2>
+            <pre><code># Validate role selection and worktree setup
+conduit run 001 --roles frontend,backend --dry-run
+
+# Open the interactive worker monitor
+conduit run 001 --roles frontend,backend
+
+# Use spinner-style CLI progress
+conduit run 001 --roles frontend,backend --compact</code></pre>
+            <p>
+              Writing workers run in isolated Git worktrees. The monitor
+              presents normalized runner events, role state, changed files,
+              split diffs, cancellation, and review results. Local transcripts
+              and run artifacts remain under the ignored state directory.
+            </p>
+          </section>
+
+          <section id="packets">
+            <p class="docs-kicker">Committed source of truth</p>
+            <h2>Feature packets</h2>
+            <pre><code>specs/001-team-invitations/
+  story.md
+  spec.md
+  plan.md
+  tasks.md
+  test-cases.md
+  clarifications.md
+  contracts/</code></pre>
+            <p>
+              Packet files are intended to be reviewed and committed. Drafts,
+              run logs, caches, worktrees, assignments, and the local database
+              are runtime state and stay out of Git.
+            </p>
+          </section>
+
+          <section id="commands">
+            <p class="docs-kicker">Reference</p>
+            <h2>Command line</h2>
+            <div class="docs-table-wrap">
+              <table>
+                <thead><tr><th>Command</th><th>Purpose</th></tr></thead>
+                <tbody>
+                  <tr><td><code>conduit</code></td><td>Open the interactive Home workspace.</td></tr>
+                  <tr><td><code>conduit init [path]</code></td><td>Initialize an existing Git repository.</td></tr>
+                  <tr><td><code>conduit feature &lt;title&gt;</code></td><td>Create a new feature packet.</td></tr>
+                  <tr><td><code>conduit refine &lt;id&gt; [story]</code></td><td>Open refinement or provide a non-interactive story.</td></tr>
+                  <tr><td><code>conduit roles</code></td><td>List configured specialist roles.</td></tr>
+                  <tr><td><code>conduit role resolve &lt;name&gt;</code></td><td>Validate a role skill source.</td></tr>
+                  <tr><td><code>conduit run &lt;id&gt; --roles &lt;roles&gt;</code></td><td>Plan or execute isolated role work.</td></tr>
+                  <tr><td><code>conduit status --tui</code></td><td>Open the recent run dashboard.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </article>
+      </div>
+    </main>
+
+    <script>
+      const sections = Array.from(document.querySelectorAll<HTMLElement>(".docs-content section[id]"));
+      const links = Array.from(document.querySelectorAll<HTMLAnchorElement>(".docs-sidebar a[href^='#']"));
+      let updatePending = false;
+
+      const updateActiveSection = () => {
+        const readingLine = window.scrollY + window.innerHeight * 0.28;
+        let current = sections[0];
+
+        for (const section of sections) {
+          if (section.offsetTop <= readingLine) current = section;
+          else break;
+        }
+
+        links.forEach((link) => {
+          const active = link.hash === `#${current?.id}`;
+          link.classList.toggle("is-active", active);
+          if (active) link.setAttribute("aria-current", "location");
+          else link.removeAttribute("aria-current");
+        });
+
+        updatePending = false;
+      };
+
+      const requestUpdate = () => {
+        if (updatePending) return;
+        updatePending = true;
+        window.requestAnimationFrame(updateActiveSection);
+      };
+
+      window.addEventListener("scroll", requestUpdate, { passive: true });
+      window.addEventListener("resize", requestUpdate);
+      window.addEventListener("hashchange", requestUpdate);
+      updateActiveSection();
+    </script>
+  </body>
+</html>

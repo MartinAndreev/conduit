@@ -1,0 +1,37 @@
+{
+  "name": "conduit-orchestrator",
+  "version": "0.2.22",
+  "description": "Spec-driven, local-first orchestration for coding agents.",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "dist",
+    "skills",
+    "README.md"
+  ],
+  "bin": {
+    "conduit": "./dist/conduit.js"
+  },
+  "scripts": {
+    "build": "bun scripts/build.js",
+    "build:standalone": "bun scripts/build-standalone.js",
+    "generate:role-templates": "bun scripts/generate-role-templates.js",
+    "install:local": "mkdir -p \"$HOME/.local/bin\" && install -m 755 dist/release/conduit-linux-x64 \"$HOME/.local/bin/conduit\"",
+    "prepack": "pnpm build",
+    "release:checksums": "node scripts/write-checksums.mjs",
+    "lint": "eslint .",
+    "start": "tsx ./bin/conduit.js",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opentui/core": "^0.4.3",
+    "@opentui/react": "^0.4.3",
+    "commander": "^14.0.0",
+    "ora": "^9.3.0",
+    "react": "^19.2.7"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

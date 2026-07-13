@@ -3,7 +3,9 @@ node_modules/
 .conduit/
 *.lock
 pnpm-lock.yaml
-test/fixtures/*.jsonl
-test/fixtures/kilo-output.json
-test/fixtures/opencode-output.json
-test/fixtures/pi-output.json
+packages/conduit/test/fixtures/*.jsonl
+# Runner transcript fixtures intentionally contain newline-delimited JSON.
+packages/conduit/test/fixtures/kilo-output.json
+packages/conduit/test/fixtures/opencode-output.json
+packages/conduit/test/fixtures/pi-output.json
+packages/*/.astro/
