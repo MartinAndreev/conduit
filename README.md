@@ -12,11 +12,12 @@ Conduit turns an approved feature specification into bounded, parallel agent wor
 Refine story → approve spec and contracts → parallel workers → QA/review → integrate
 ```
 
-- Creates committed feature packets: `story.md`, `spec.md`, `plan.md`, `tasks.md`, contracts, and QA cases.
-- Runs Codex for high-value requirement and architecture refinement.
+- Opens a React/OpenTUI workspace from bare `conduit` for the day-to-day flow: create features, refine packets, launch runs, and inspect status.
+- Creates committed feature packets: `story.md`, `spec.md`, `plan.md`, `tasks.md`, contracts, QA cases, and clarification history.
+- Runs Codex for high-value requirement and architecture refinement from the TUI or a compact command-line fallback.
 - Delegates bounded work to Codex, OpenCode, Pi, or Kilo.
 - Isolates writing workers in Git worktrees.
-- Captures agent transcripts locally and presents compact OpenTUI views with expandable logs and diffs.
+- Captures agent transcripts locally and presents compact TUI views with expandable logs, review findings, and split diffs.
 - Keeps run state, caches, and worktrees out of Git.
 
 ## Install
@@ -55,30 +56,63 @@ Initialize an existing Git repository:
 conduit init .
 ```
 
-Create a feature packet, capture the story, then have the architect refine it:
+Then run Conduit with no arguments:
+
+```bash
+conduit
+```
+
+Bare `conduit` is the primary workspace. If the current Git repository is not initialized, it offers to initialize it. For initialized projects, it opens Home with searchable feature packets, lifecycle status, and selected-feature actions.
+
+From Home you can:
+
+- Press `n` to create a feature and jump into refinement.
+- Press `/` to search features.
+- Use `↑`/`↓` to select a feature, then `Enter` to choose **View**, **Refine**, **Run**, or **Status**.
+- Use **View** to read packet files, **Refine** to edit and approve packet updates, **Run** to choose roles and start isolated work, and **Status** to open the latest run.
+
+The non-verbose CLI remains available for automation, scripts, and terminals that cannot run the TUI:
 
 ```bash
 conduit feature "Add team invitations"
-conduit refine 001
-conduit refine 001 --architect
+conduit refine 001 --no-interactive "Invite teammates by email and track pending invitations."
+conduit refine 001 --architect --compact
+conduit run 001 --roles frontend,backend --dry-run
+conduit run 001 --roles frontend,backend --compact
+conduit status --tui
 ```
 
-The interactive refinement view accepts multiline input. Press `Ctrl+Enter` to save a field. Architect refinement opens a live, compact dashboard in a compatible terminal; use `--compact` for a one-line progress mode.
+`conduit refine 001` without `--compact` opens the same interactive refinement experience used by Home. Use `--compact` when you want spinner-style architect or worker progress instead of live dashboards.
+
+## TUI workflow
+
+### Home
+
+Home is the default screen opened by `conduit`. It lists Local Spec Kit feature packets from `specs/`, shows lifecycle metadata, and keeps creation, search, and feature actions mutually exclusive so keyboard focus stays predictable.
+
+### Supported refinement flows
+
+Conduit supports three refinement paths from Home's **Refine** action or from `conduit refine <feature-id>`:
+
+1. **Manual packet approval**: fill in the refinement form, press `Ctrl+Enter` to preview, leave architect refinement off, then press `a` to approve and write the packet. Use this when the story is already implementation-ready and you only need Conduit to persist the packet files.
+2. **Architect refinement**: fill in the form, preview, press `t` to enable the architect, optionally press `e` and `l` to cycle effort and detail, then press `a`. Conduit saves the brief, runs Codex, and opens packet review. Press `a` to approve the generated packet or `r` to request changes and send feedback back through another architect pass.
+3. **Research-assisted architect refinement**: in preview, press `s` to enable repository research and `t` to enable the architect, then press `a`. The researcher gathers repository context first; review the report with `a` to accept and start the architect, `r` to rerun research, or `e` to return to the brief.
+
+The refinement form collects problem/user story, audience, desired outcome and acceptance criteria, optional constraints, QA cases, and optional implementation guidance. Existing packet content or saved drafts are loaded back into the form when available.
 
 When a material product or technical decision is unclear, the architect stops instead of assuming. Conduit shows its questions in a multiline answer field, stores your response in `clarifications.md`, and resumes refinement. `questions.md` is only a temporary handoff file; `clarifications.md` should be committed with the feature packet.
 
-Plan implementation before launching any agent:
+### Supported run flows
 
-```bash
-conduit run 001 --roles frontend,backend --dry-run
-```
+Conduit supports three run paths from Home's **Run** and **Status** actions or from `conduit run <feature-id>`:
 
-Then execute the isolated workers:
+1. **Plan-only run**: use `conduit run <feature-id> --roles <roles> --dry-run` to validate role selection, skill resolution, worktree setup, and launch commands without starting agents.
+2. **Interactive worker run**: choose **Run** in Home, select one or more configured roles with `Space`, and press `Ctrl+Enter`. Conduit starts isolated role work and opens the worker monitor with role progress, normalized runner events, changed files, split diffs, cancellation, and review results where available.
+3. **Direct run/status entry**: use `conduit run <feature-id> --roles <roles>` to start the live monitor from the shell, `--compact` for spinner-style progress, or `conduit status --tui` / Home's **Status** action to reopen recent run state.
 
-```bash
-conduit run 001 --roles frontend,backend --execute
-conduit status --tui
-```
+Inside the worker monitor, use `←`/`→` or `Tab` to switch roles, `Enter` or `Space` to move from roles into activity, `j`/`k` or `↑`/`↓` to scroll activity, `t` to toggle transcript payloads, and `Ctrl+C` to request cancellation. From the files focus, `Enter` or `Space` toggles the selected file's split diff. `q` exits the monitor without cancelling a normal run.
+
+Status shows the selected feature lifecycle and latest run. Press `Enter` from Status to open that run in the monitor.
 
 ## Feature packet
 
@@ -170,17 +204,22 @@ roles:
 
 Use `opencode models`, `pi --list-models`, or `kilo models` to discover models available through your authenticated provider configuration. For OpenCode Go, MiMo-V2.5-Pro is `opencode-go/mimo-v2.5-pro`.
 
-## Dashboard
+## Command-line reference
 
-`conduit status --tui` keeps agent activity concise:
+The TUI is the recommended interactive path; these commands are stable fallbacks for scripts and non-TUI environments.
 
-```text
-› ✓ architect     codex
-    • Ran project discovery
-      └ 63 lines captured · Enter to preview patch
-```
-
-Raw transcripts are captured to `.conduit/runs/`, while patches expand with a native diff view and file navigation.
+| Command                                              | Purpose                                                                 |
+| ---------------------------------------------------- | ----------------------------------------------------------------------- |
+| `conduit`                                            | Open Home, offering project initialization when needed.                 |
+| `conduit init [path]`                                | Bootstrap Conduit in an existing Git repository.                        |
+| `conduit feature <title>`                            | Create a feature packet from a title.                                   |
+| `conduit refine <feature-id> [story]`                | Open refinement, or use `--no-interactive` with a story for automation. |
+| `conduit refine <feature-id> --architect --compact`  | Run architect refinement with compact progress.                         |
+| `conduit roles`                                      | List configured specialist roles.                                       |
+| `conduit role resolve <name>`                        | Validate the selected role's skill source.                              |
+| `conduit run <feature-id> --roles <roles>`           | Start a live worker monitor for selected roles.                         |
+| `conduit run <feature-id> --roles <roles> --dry-run` | Plan commands without launching agents.                                 |
+| `conduit status --tui`                               | Open the run-status dashboard directly.                                 |
 
 ## Development
 
@@ -200,10 +239,6 @@ pnpm build:standalone -- linux-x64
 dist/release/conduit-linux-x64 --version
 ```
 
-## License
-
-MIT. See [LICENSE](LICENSE).
-
 Install that local binary onto your `PATH` with:
 
 ```bash
@@ -211,3 +246,7 @@ pnpm install:local
 ```
 
 The release workflow builds Linux, macOS, and Windows binaries when a version tag is pushed.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
