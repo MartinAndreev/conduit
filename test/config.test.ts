@@ -32,3 +32,13 @@ test("config preserves a role reasoning-effort preference", () => {
   assert.equal(parsed.roles.frontend.effort, "high");
   assert.match(serializeConfig(parsed), /effort: high/);
 });
+
+test("config preserves role dependency ordering", () => {
+  const parsed = parseConfig(serializeConfig(defaultConfig));
+  assert.deepEqual(parsed.roles.qa.dependsOn, ["frontend", "backend"]);
+  assert.deepEqual(parsed.roles.documentation.dependsOn, [
+    "frontend",
+    "backend",
+  ]);
+  assert.deepEqual(parsed.roles.reviewer.dependsOn, ["qa", "documentation"]);
+});

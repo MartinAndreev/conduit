@@ -45,6 +45,7 @@ export const defaultConfig: Config = {
         "Converts approved cases into tests and reports reproducible defects.",
       runner: "opencode",
       mode: "subagent",
+      dependsOn: ["frontend", "backend"],
       owns: ["tests", "e2e"],
       skill: { source: "file:.conduit/roles/qa.md" },
     },
@@ -53,6 +54,7 @@ export const defaultConfig: Config = {
         "Writes and verifies user, operator, and developer documentation.",
       runner: "opencode",
       mode: "subagent",
+      dependsOn: ["frontend", "backend"],
       owns: ["docs", "README.md"],
       skill: { source: "file:.conduit/roles/documentation.md" },
     },
@@ -62,6 +64,7 @@ export const defaultConfig: Config = {
       runner: "codex",
       mode: "primary",
       readOnly: true,
+      dependsOn: ["qa", "documentation"],
       skill: { source: "file:.conduit/roles/reviewer.md" },
     },
   },
@@ -82,6 +85,8 @@ export function serializeConfig(config: Config = defaultConfig): string {
     if (role.model) lines.push(`    model: ${role.model}`);
     if (role.effort) lines.push(`    effort: ${role.effort}`);
     if (role.readOnly) lines.push("    readOnly: true");
+    if (role.dependsOn?.length)
+      lines.push(`    dependsOn: [${role.dependsOn.join(", ")}]`);
     if (role.owns?.length) lines.push(`    owns: [${role.owns.join(", ")}]`);
     lines.push("    skill:");
     lines.push(`      source: ${role.skill.source}`);

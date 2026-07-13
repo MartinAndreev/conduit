@@ -13,6 +13,7 @@ export interface RunRole {
   effort?: import("../../configuration/types/config.js").RoleReasoningEffort;
   readOnly: boolean;
   owns: string[];
+  dependsOn: string[];
   promptFile: string;
   prompt: string;
   command: string;

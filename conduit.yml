@@ -33,6 +33,7 @@ roles:
     description: "Converts approved cases into tests and reports reproducible defects."
     runner: opencode
     mode: subagent
+    dependsOn: [frontend, backend]
     owns: [tests, e2e]
     skill:
       source: file:.conduit/roles/qa.md
@@ -40,6 +41,7 @@ roles:
     description: "Writes and verifies user, operator, and developer documentation."
     runner: opencode
     mode: subagent
+    dependsOn: [frontend, backend]
     owns: [docs, README.md]
     skill:
       source: file:.conduit/roles/documentation.md
@@ -48,5 +50,6 @@ roles:
     runner: codex
     mode: primary
     readOnly: true
+    dependsOn: [qa, documentation]
     skill:
       source: file:.conduit/roles/reviewer.md

@@ -112,6 +112,7 @@ export async function planRun({
       effort: role.effort,
       readOnly: Boolean(role.readOnly),
       owns: role.owns ?? [],
+      dependsOn: role.dependsOn ?? [],
       promptFile,
       prompt,
       command,
@@ -130,6 +131,34 @@ export async function planRun({
   };
   await writeFile(path.join(runDir, "run.json"), JSON.stringify(run, null, 2));
   return { run, runDir };
+}
+
+export function roleExecutionStages(roles: RunRole[]): RunRole[][] {
+  const selected = new Set(roles.map((role) => role.name));
+  const completed = new Set<string>();
+  const pending = new Map(roles.map((role) => [role.name, role]));
+  const stages: RunRole[][] = [];
+
+  while (pending.size) {
+    const stage = [...pending.values()].filter((role) =>
+      role.dependsOn
+        .filter((dependency) => selected.has(dependency))
+        .every((dependency) => completed.has(dependency)),
+    );
+    if (!stage.length) {
+      const blocked = [...pending.values()]
+        .map((role) => `${role.name} -> [${role.dependsOn.join(", ")}]`)
+        .join("; ");
+      throw new Error(`Role dependency cycle or unsatisfied order: ${blocked}`);
+    }
+    stages.push(stage);
+    for (const role of stage) {
+      pending.delete(role.name);
+      completed.add(role.name);
+    }
+  }
+
+  return stages;
 }
 
 function worktreePath(projectRoot: string, run: Run, role: RunRole): string {
@@ -616,21 +645,11 @@ export async function executeRun({
       return { role: role.name, status: "failed", error: message };
     }
   };
-  // Documentation and review are integration gates, not parallel
-  // implementation tasks. Documentation runs after the implementation work;
-  // review runs after every other selected role has reached a terminal result.
-  const workerRoles = run.roles.filter(
-    (role) => role.name !== "documentation" && role.name !== "reviewer",
-  );
-  const documentationRoles = run.roles.filter(
-    (role) => role.name === "documentation",
-  );
-  const reviewerRoles = run.roles.filter((role) => role.name === "reviewer");
-  const results = await Promise.all(workerRoles.map(launchRoleSafely));
-  for (const documentation of documentationRoles)
-    results.push(await launchRoleSafely(documentation));
-  for (const reviewer of reviewerRoles)
-    results.push(await launchRoleSafely(reviewer));
+  const results: RunResult[] = [];
+  for (const stage of roleExecutionStages(run.roles)) {
+    const stageResults = await Promise.all(stage.map(launchRoleSafely));
+    results.push(...stageResults);
+  }
   run.status = results.some((result) => result.status === "cancelled")
     ? "cancelled"
     : results.every((result) => result.status === "completed")

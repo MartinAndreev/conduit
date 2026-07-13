@@ -11,6 +11,7 @@ export interface RoleConfig {
   effort?: RoleReasoningEffort;
   readOnly?: boolean;
   owns?: string[];
+  dependsOn?: string[];
   skill: {
     source: string;
     sha256?: string;
