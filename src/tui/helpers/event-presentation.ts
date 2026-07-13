@@ -70,7 +70,9 @@ export function extractFileDiff(
   file: string,
 ): string | undefined {
   const sections = patch.split(/(?=^diff --git a\/)/m);
-  return sections.find((section) =>
-    section.startsWith(`diff --git a/${file} b/${file}`),
+  return sections.find(
+    (section) =>
+      section.startsWith(`diff --git a/${file} b/${file}`) ||
+      section.startsWith(`diff --git a/dev/null b/${file}`),
   );
 }

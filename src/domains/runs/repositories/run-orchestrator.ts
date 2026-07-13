@@ -128,7 +128,7 @@ export async function planRun({
     createdAt: new Date().toISOString(),
     roles,
   };
-  await writeFile(path.join(runDir, "run.json"), JSON.stringify(run, null, 2));
+  await persistRunSnapshot(runDir, run);
   return { run, runDir };
 }
 
@@ -183,6 +183,10 @@ async function writeWorktreePrompt(
   role.command = command;
   role.args = args;
   role.worktreePromptFile = promptFile;
+}
+
+async function persistRunSnapshot(runDir: string, run: Run): Promise<void> {
+  await writeFile(path.join(runDir, "run.json"), JSON.stringify(run, null, 2));
 }
 
 function terminate(child: ChildProcess): void {
@@ -573,6 +577,7 @@ export async function executeRun({
       : addWorktree(projectRoot, run, role);
     role.worktree = role.readOnly || cwd === projectRoot ? undefined : cwd;
     if (!role.readOnly) await writeWorktreePrompt(cwd, run, role);
+    await persistRunSnapshot(runDir, run);
     return runProcess(
       role,
       run.id,
@@ -640,11 +645,19 @@ export async function executeRun({
     role.status =
       (results.find((result) => result.role === role.name)
         ?.status as RunRole["status"]) ?? "failed";
-  await writeFile(path.join(runDir, "run.json"), JSON.stringify(run, null, 2));
+  await persistRunSnapshot(runDir, run);
   await writeFile(
     path.join(runDir, "results.json"),
     JSON.stringify(results, null, 2),
   );
+
+  const successfulRun = run.status === "completed";
+  const reviewerSelected = reviewerRoles.length > 0;
+  const completionMessage = successfulRun
+    ? reviewerSelected
+      ? "Flow finished: reviewer completed with no required fixes."
+      : "Flow finished: all selected agents completed."
+    : `Run ${run.status}`;
 
   // Emit system-level completion event
   if (eventRepository) {
@@ -661,9 +674,21 @@ export async function executeRun({
             : run.status === "cancelled"
               ? "cancelled"
               : "failed",
-        message: `Run ${run.status}`,
+        message: completionMessage,
       },
     });
+    if (successfulRun) {
+      await eventRepository.append({
+        type: "activity",
+        runId: run.id,
+        roleId: "system",
+        timestamp: new Date().toISOString(),
+        payload: {
+          kind: "activity",
+          message: completionMessage,
+        },
+      });
+    }
   }
 
   return results;
