@@ -129,7 +129,7 @@ export async function planRun({
     createdAt: new Date().toISOString(),
     roles,
   };
-  await writeFile(path.join(runDir, "run.json"), JSON.stringify(run, null, 2));
+  await persistRunState(runDir, run);
   return { run, runDir };
 }
 
@@ -551,6 +551,10 @@ function runProcess(
   });
 }
 
+async function persistRunState(runDir: string, run: Run): Promise<void> {
+  await writeFile(path.join(runDir, "run.json"), JSON.stringify(run, null, 2));
+}
+
 export async function executeRun({
   projectRoot,
   run,
@@ -602,6 +606,9 @@ export async function executeRun({
       : addWorktree(projectRoot, run, role);
     role.worktree = role.readOnly || cwd === projectRoot ? undefined : cwd;
     if (!role.readOnly) await writeWorktreePrompt(cwd, run, role);
+    role.status = "running";
+    run.status = "running";
+    await persistRunState(runDir, run);
     return runProcess(
       role,
       run.id,
@@ -659,7 +666,7 @@ export async function executeRun({
     role.status =
       (results.find((result) => result.role === role.name)
         ?.status as RunRole["status"]) ?? "failed";
-  await writeFile(path.join(runDir, "run.json"), JSON.stringify(run, null, 2));
+  await persistRunState(runDir, run);
   await writeFile(
     path.join(runDir, "results.json"),
     JSON.stringify(results, null, 2),
