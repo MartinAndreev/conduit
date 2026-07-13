@@ -16,6 +16,8 @@ test("generated config round-trips built-in roles", () => {
   );
   assert.deepEqual(parsed.roles.documentation.owns, ["docs", "README.md"]);
   assert.match(parsed.roles.documentation.description!, /documentation/);
+  assert.deepEqual(parsed.roles.qa.dependsOn, ["frontend", "backend"]);
+  assert.deepEqual(parsed.roles.reviewer.dependsOn, ["qa", "documentation"]);
 });
 
 test("config preserves a role model override", () => {
@@ -31,4 +33,12 @@ test("config preserves a role reasoning-effort preference", () => {
   );
   assert.equal(parsed.roles.frontend.effort, "high");
   assert.match(serializeConfig(parsed), /effort: high/);
+});
+
+test("config preserves role dependency preferences", () => {
+  const parsed = parseConfig(
+    "version: 1\nroles:\n  qa:\n    runner: opencode\n    mode: subagent\n    dependsOn: [frontend, backend]\n    skill:\n      source: builtin:qa\n",
+  );
+  assert.deepEqual(parsed.roles.qa.dependsOn, ["frontend", "backend"]);
+  assert.match(serializeConfig(parsed), /dependsOn: \[frontend, backend\]/);
 });

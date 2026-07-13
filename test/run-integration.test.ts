@@ -412,6 +412,7 @@ test("executeRun persists role worktrees before agent completion and emits flow 
           runner: "codex",
           readOnly: false,
           owns: ["src"],
+          dependsOn: [],
           promptFile: path.join(runDir, "backend.md"),
           prompt: "prompt",
           command: "codex",
@@ -424,6 +425,7 @@ test("executeRun persists role worktrees before agent completion and emits flow 
           runner: "node",
           readOnly: true,
           owns: [],
+          dependsOn: ["backend"],
           promptFile: path.join(runDir, "reviewer.md"),
           prompt: "review",
           command: process.execPath,
@@ -476,5 +478,68 @@ test("executeRun persists role worktrees before agent completion and emits flow 
       recursive: true,
       force: true,
     });
+  }
+});
+
+test("executeRun follows configured role dependency groups", async () => {
+  const { executeRun } =
+    await import("../src/domains/runs/repositories/run-orchestrator.js");
+  const { mkdir, readFile } = await import("node:fs/promises");
+  const projectRoot = await mkdtemp(path.join(tmpdir(), "conduit-flow-"));
+  try {
+    const runDir = path.join(projectRoot, ".conduit", "runs", "run-flow");
+    await mkdir(runDir, { recursive: true });
+    const orderFile = path.join(projectRoot, "order.txt");
+    const role = (
+      name: string,
+      dependsOn: string[] = [],
+    ): Run["roles"][number] => ({
+      name,
+      runner: "node",
+      readOnly: true,
+      owns: [],
+      dependsOn,
+      promptFile: path.join(runDir, `${name}.md`),
+      prompt: name,
+      command: process.execPath,
+      args: [
+        "-e",
+        `const fs=require('fs'); fs.appendFileSync(${JSON.stringify(orderFile)}, ${JSON.stringify(name + "\\n")});`,
+      ],
+      skillSource: "test",
+      status: "planned" as const,
+    });
+    const run: Run = {
+      id: "run-flow",
+      featureId: "001",
+      status: "planned" as const,
+      createdAt: new Date().toISOString(),
+      roles: [
+        role("frontend"),
+        role("backend"),
+        role("qa", ["frontend", "backend"]),
+        role("documentation", ["frontend", "backend"]),
+        role("reviewer", ["qa", "documentation"]),
+      ],
+    };
+
+    const results = await executeRun({
+      projectRoot,
+      run,
+      runDir,
+      dryRun: false,
+    });
+
+    assert.deepEqual(
+      results.map((result) => result.role),
+      ["frontend", "backend", "qa", "documentation", "reviewer"],
+    );
+    const order = (await readFile(orderFile, "utf8")).trim().split("\n");
+    assert.ok(order.indexOf("frontend") < order.indexOf("qa"));
+    assert.ok(order.indexOf("backend") < order.indexOf("qa"));
+    assert.ok(order.indexOf("qa") < order.indexOf("reviewer"));
+    assert.ok(order.indexOf("documentation") < order.indexOf("reviewer"));
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
   }
 });

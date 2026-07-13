@@ -102,7 +102,8 @@ export async function planRun({
       verified: false,
     }));
     const promptFile = path.join(runDir, `${name}.md`);
-    const prompt = `${localSpecKitRoleContract(name, role.effort)}\n\n# Project role guidance (advisory)\n\n${skill.content}\n\n# Assignment (authoritative)\n\nFeature: ${featureId}\nRead the approved files in specs/${featureId}-*/ before changing code.\nOwned paths: ${(role.owns ?? ["none defined"]).join(", ")}\nDo not modify contracts or paths outside your ownership.\nReport tests run and unresolved integration risks.\n\nThe system role contract and assignment take precedence over project role guidance.`;
+    const roleDependencies = role.dependsOn ?? [];
+    const prompt = `${localSpecKitRoleContract(name, role.effort)}\n\n# Project role guidance (advisory)\n\n${skill.content}\n\n# Assignment (authoritative)\n\nFeature: ${featureId}\nRead the approved files in specs/${featureId}-*/ before changing code.\nOwned paths: ${(role.owns ?? ["none defined"]).join(", ")}\nRun dependencies: ${roleDependencies.length ? roleDependencies.join(", ") : "none"}\nDo not modify contracts or paths outside your ownership.\nReport tests run and unresolved integration risks.\n\nThe system role contract and assignment take precedence over project role guidance.`;
     await writeFile(promptFile, prompt);
     const [command, args] = commandForRole(role, promptFile);
     roles.push({
@@ -112,6 +113,7 @@ export async function planRun({
       effort: role.effort,
       readOnly: Boolean(role.readOnly),
       owns: role.owns ?? [],
+      dependsOn: roleDependencies,
       promptFile,
       prompt,
       command,
@@ -526,6 +528,29 @@ function runProcess(
   });
 }
 
+function roleExecutionGroups(roles: RunRole[]): RunRole[][] {
+  const selected = new Map(roles.map((role) => [role.name, role]));
+  const pending = new Set(roles.map((role) => role.name));
+  const groups: RunRole[][] = [];
+  while (pending.size) {
+    const ready = [...pending]
+      .map((name) => selected.get(name)!)
+      .filter((role) =>
+        role.dependsOn.every(
+          (dependency) => !selected.has(dependency) || !pending.has(dependency),
+        ),
+      );
+    if (!ready.length) {
+      throw new Error(
+        `Role dependency cycle detected among: ${[...pending].sort().join(", ")}.`,
+      );
+    }
+    groups.push(ready);
+    for (const role of ready) pending.delete(role.name);
+  }
+  return groups;
+}
+
 export async function executeRun({
   projectRoot,
   run,
@@ -621,21 +646,49 @@ export async function executeRun({
       return { role: role.name, status: "failed", error: message };
     }
   };
-  // Documentation and review are integration gates, not parallel
-  // implementation tasks. Documentation runs after the implementation work;
-  // review runs after every other selected role has reached a terminal result.
-  const workerRoles = run.roles.filter(
-    (role) => role.name !== "documentation" && role.name !== "reviewer",
-  );
-  const documentationRoles = run.roles.filter(
-    (role) => role.name === "documentation",
-  );
-  const reviewerRoles = run.roles.filter((role) => role.name === "reviewer");
-  const results = await Promise.all(workerRoles.map(launchRoleSafely));
-  for (const documentation of documentationRoles)
-    results.push(await launchRoleSafely(documentation));
-  for (const reviewer of reviewerRoles)
-    results.push(await launchRoleSafely(reviewer));
+  const results: RunResult[] = [];
+  const terminalByRole = new Map<string, RunResult>();
+  for (const group of roleExecutionGroups(run.roles)) {
+    const blocked = group.filter((role) =>
+      role.dependsOn.some((dependency) =>
+        terminalByRole.has(dependency)
+          ? terminalByRole.get(dependency)?.status !== "completed"
+          : false,
+      ),
+    );
+    for (const role of blocked) {
+      const failedDependencies = role.dependsOn.filter(
+        (dependency) =>
+          terminalByRole.has(dependency) &&
+          terminalByRole.get(dependency)?.status !== "completed",
+      );
+      const result: RunResult = {
+        role: role.name,
+        status: "failed",
+        error: `Skipped because dependencies failed: ${failedDependencies.join(", ")}`,
+      };
+      results.push(result);
+      terminalByRole.set(role.name, result);
+      await eventRepository?.append({
+        type: "lifecycle",
+        runId: run.id,
+        roleId: role.name,
+        timestamp: new Date().toISOString(),
+        payload: {
+          kind: "lifecycle",
+          state: "failed",
+          message: `${role.name}: skipped because dependencies failed`,
+        },
+      });
+    }
+    const runnable = group.filter((role) => !terminalByRole.has(role.name));
+    const groupResults = await Promise.all(runnable.map(launchRoleSafely));
+    for (const result of groupResults) {
+      results.push(result);
+      terminalByRole.set(result.role, result);
+    }
+  }
+  const reviewerSelected = run.roles.some((role) => role.name === "reviewer");
   run.status = results.some((result) => result.status === "cancelled")
     ? "cancelled"
     : results.every((result) => result.status === "completed")
@@ -652,7 +705,6 @@ export async function executeRun({
   );
 
   const successfulRun = run.status === "completed";
-  const reviewerSelected = reviewerRoles.length > 0;
   const completionMessage = successfulRun
     ? reviewerSelected
       ? "Flow finished: reviewer completed with no required fixes."
