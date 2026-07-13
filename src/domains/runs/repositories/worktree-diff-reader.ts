@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { ChangedFile, RunDiffResult } from "../types/review.js";
 
 export interface DiffReader {
@@ -12,7 +14,7 @@ export class WorktreeDiffReader implements DiffReader {
       ["-C", worktree, "diff", "--no-ext-diff", "--unified=3", "HEAD"],
       { encoding: "utf8" },
     );
-    const diff =
+    const trackedDiff =
       diffResult.status === 0 && diffResult.stdout.trim()
         ? diffResult.stdout.trim()
         : undefined;
@@ -37,6 +39,32 @@ export class WorktreeDiffReader implements DiffReader {
       }
     }
 
+    const untrackedResult = spawnSync(
+      "git",
+      ["-C", worktree, "ls-files", "--others", "--exclude-standard"],
+      { encoding: "utf8" },
+    );
+    const untrackedDiffs: string[] = [];
+    if (untrackedResult.status === 0 && untrackedResult.stdout.trim()) {
+      for (const filePath of untrackedResult.stdout.trim().split("\n")) {
+        const absolutePath = path.join(worktree, filePath);
+        const content = readFileSync(absolutePath, "utf8");
+        const additions = content.length ? content.split("\n").length : 0;
+        changedFiles.push({ path: filePath, additions, deletions: 0 });
+        const noIndexDiff = spawnSync(
+          "git",
+          ["-C", worktree, "diff", "--no-index", "--", "/dev/null", filePath],
+          { encoding: "utf8" },
+        );
+        if (noIndexDiff.stdout.trim()) {
+          untrackedDiffs.push(noIndexDiff.stdout.trim());
+        }
+      }
+    }
+
+    const diff = [trackedDiff, ...untrackedDiffs].filter(Boolean).join("\n");
+    const normalizedDiff = diff.trim() ? diff.trim() : undefined;
+
     const totalAdditions = changedFiles.reduce(
       (sum, f) => sum + f.additions,
       0,
@@ -46,6 +74,11 @@ export class WorktreeDiffReader implements DiffReader {
       0,
     );
 
-    return { diff, changedFiles, totalAdditions, totalDeletions };
+    return {
+      diff: normalizedDiff,
+      changedFiles,
+      totalAdditions,
+      totalDeletions,
+    };
   }
 }

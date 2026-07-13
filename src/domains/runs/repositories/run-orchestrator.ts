@@ -672,6 +672,14 @@ export async function executeRun({
     JSON.stringify(results, null, 2),
   );
 
+  const successfulRun = run.status === "completed";
+  const reviewerSelected = run.roles.some((role) => role.name === "reviewer");
+  const completionMessage = successfulRun
+    ? reviewerSelected
+      ? "Flow finished: reviewer completed with no required fixes."
+      : "Flow finished: all selected agents completed."
+    : `Run ${run.status}`;
+
   // Emit system-level completion event
   if (eventRepository) {
     await eventRepository.append({
@@ -687,9 +695,21 @@ export async function executeRun({
             : run.status === "cancelled"
               ? "cancelled"
               : "failed",
-        message: `Run ${run.status}`,
+        message: completionMessage,
       },
     });
+    if (successfulRun) {
+      await eventRepository.append({
+        type: "activity",
+        runId: run.id,
+        roleId: "system",
+        timestamp: new Date().toISOString(),
+        payload: {
+          kind: "activity",
+          message: completionMessage,
+        },
+      });
+    }
   }
 
   return results;
