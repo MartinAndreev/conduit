@@ -14,6 +14,7 @@ import type {
   RunnerEvent,
   LifecyclePayload,
 } from "../src/domains/runs/types/runner-events.js";
+import type { Run } from "../src/domains/runs/types/run.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -326,4 +327,154 @@ test("commandForRole builds correct args for all runners", async () => {
     "kilo",
     ["run", "Read /tmp/p.md and perform only your assigned task."],
   ]);
+});
+
+test("WorktreeDiffReader reports untracked agent-created files", async () => {
+  const { WorktreeDiffReader } =
+    await import("../src/domains/runs/repositories/worktree-diff-reader.js");
+  const dir = await mkdtemp(path.join(tmpdir(), "conduit-diff-"));
+  try {
+    const { spawnSync } = await import("node:child_process");
+    const { writeFile } = await import("node:fs/promises");
+    spawnSync("git", ["-C", dir, "init"], { encoding: "utf8" });
+    spawnSync("git", ["-C", dir, "config", "user.email", "test@example.com"], {
+      encoding: "utf8",
+    });
+    spawnSync("git", ["-C", dir, "config", "user.name", "Test"], {
+      encoding: "utf8",
+    });
+    await writeFile(path.join(dir, "tracked.txt"), "base\n");
+    spawnSync("git", ["-C", dir, "add", "tracked.txt"], { encoding: "utf8" });
+    spawnSync("git", ["-C", dir, "commit", "-m", "init"], {
+      encoding: "utf8",
+    });
+    await writeFile(path.join(dir, "agent-output.txt"), "created\n");
+
+    const result = new WorktreeDiffReader().readDiff(dir);
+
+    assert.deepEqual(
+      result.changedFiles.map((file) => file.path),
+      ["agent-output.txt"],
+    );
+    assert.ok(result.diff?.includes("agent-output.txt"));
+    assert.ok(extractFileDiff(result.diff ?? "", "agent-output.txt"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("executeRun persists role worktrees before agent completion and emits flow completion", async () => {
+  const { executeRun } =
+    await import("../src/domains/runs/repositories/run-orchestrator.js");
+  const { readFile, mkdir } = await import("node:fs/promises");
+  const { spawnSync } = await import("node:child_process");
+  const projectRoot = await mkdtemp(path.join(tmpdir(), "conduit-run-"));
+  const previousPath = process.env.PATH;
+  try {
+    spawnSync("git", ["-C", projectRoot, "init"], { encoding: "utf8" });
+    spawnSync(
+      "git",
+      ["-C", projectRoot, "config", "user.email", "test@example.com"],
+      { encoding: "utf8" },
+    );
+    spawnSync("git", ["-C", projectRoot, "config", "user.name", "Test"], {
+      encoding: "utf8",
+    });
+    await import("node:fs/promises").then(({ writeFile }) =>
+      writeFile(path.join(projectRoot, "README.md"), "base\n"),
+    );
+    spawnSync("git", ["-C", projectRoot, "add", "README.md"], {
+      encoding: "utf8",
+    });
+    spawnSync("git", ["-C", projectRoot, "commit", "-m", "init"], {
+      encoding: "utf8",
+    });
+    const runDir = path.join(projectRoot, ".conduit", "runs", "run-1");
+    await mkdir(runDir, { recursive: true });
+    const binDir = path.join(projectRoot, "bin");
+    await mkdir(binDir, { recursive: true });
+    await import("node:fs/promises").then(({ writeFile, chmod }) =>
+      writeFile(
+        path.join(binDir, "codex"),
+        "#!/bin/sh\nprintf 'created\n' > agent-output.txt\nsleep 0.25\n",
+      ).then(() => chmod(path.join(binDir, "codex"), 0o755)),
+    );
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+    const eventRepository = new InMemoryRunEventRepository();
+    const run: Run = {
+      id: "run-1",
+      featureId: "001",
+      status: "planned" as const,
+      createdAt: new Date().toISOString(),
+      roles: [
+        {
+          name: "backend",
+          runner: "codex",
+          readOnly: false,
+          owns: ["src"],
+          promptFile: path.join(runDir, "backend.md"),
+          prompt: "prompt",
+          command: "codex",
+          args: [],
+          skillSource: "test",
+          status: "planned" as const,
+        },
+        {
+          name: "reviewer",
+          runner: "node",
+          readOnly: true,
+          owns: [],
+          promptFile: path.join(runDir, "reviewer.md"),
+          prompt: "review",
+          command: process.execPath,
+          args: ["-e", "process.exit(0)"],
+          skillSource: "test",
+          status: "planned" as const,
+        },
+      ],
+    };
+
+    const executing = executeRun({
+      projectRoot,
+      run,
+      runDir,
+      dryRun: false,
+      eventRepository,
+    });
+
+    let persistedWorktree = "";
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      const raw = await readFile(path.join(runDir, "run.json"), "utf8").catch(
+        () => "",
+      );
+      if (!raw) continue;
+      const persisted = JSON.parse(raw) as typeof run;
+      persistedWorktree = persisted.roles[0]?.worktree ?? "";
+      if (persistedWorktree) break;
+    }
+    assert.ok(persistedWorktree);
+
+    const results = await executing;
+    assert.equal(
+      results.every((result) => result.status === "completed"),
+      true,
+    );
+    const events = await eventRepository.loadByRun("run-1");
+    assert.ok(
+      events.some(
+        (event) =>
+          event.roleId === "system" &&
+          event.payload.kind === "activity" &&
+          event.payload.message.includes("Flow finished"),
+      ),
+    );
+  } finally {
+    process.env.PATH = previousPath;
+    await rm(projectRoot, { recursive: true, force: true });
+    await rm(path.join(tmpdir(), ".conduit-worktrees"), {
+      recursive: true,
+      force: true,
+    });
+  }
 });
