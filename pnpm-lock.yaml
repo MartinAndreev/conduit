@@ -65,6 +65,9 @@ importers:
       '@opentui/react':
         specifier: ^0.4.3
         version: 0.4.3(react-devtools-core@7.0.1)(react@19.2.7)(typescript@5.9.3)(web-tree-sitter@0.25.10)(ws@8.21.0)
+      '@tursodatabase/database':
+        specifier: ^0.7.0
+        version: 0.7.0
       commander:
         specifier: ^14.0.0
         version: 14.0.3
@@ -1022,6 +1025,34 @@ packages:
     resolution: {integrity: sha512-sog+wP+8YSJrdWZ/rUJg8xghVTrwoG+BrSlDQpnK5fzSgJHn1INRWXbVWRH0d3vX8dBI01E3yxXRre9Dn+OXQA==}
     cpu: [arm64]
     os: [win32]
+
+  '@tursodatabase/database-common@0.7.0':
+    resolution: {integrity: sha512-7Www/wk04L558B3ioa6LnXMktd9+6BkMj7RnoveanyOCGKkJHRVlIUzAR9lblQH1AHIXG4VIpb0/tZ5IndRoxA==}
+
+  '@tursodatabase/database-darwin-arm64@0.7.0':
+    resolution: {integrity: sha512-QlK5WzEa5q0e3PjGS/jTCROAEOw0TZSey3++cJmJkmZL3nfv2O9yMurr6IHQYBSO5fLbXKsT9f0oPLVVdgv5vQ==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@tursodatabase/database-linux-arm64-gnu@0.7.0':
+    resolution: {integrity: sha512-pk0Zd9WUyCmW4oEMull2MI42C6pnk/kU+fxGki4HAm2YrLAOHgHniDTpiZx3EMr2WJU5hbapIaXNvhH7Do7Jrg==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@tursodatabase/database-linux-x64-gnu@0.7.0':
+    resolution: {integrity: sha512-6qH+f1dErF8GfLxTrKI6b30DDrsIb38n17j8ayiMqkW5CX9Z+1pCSghqFLTXhfIBvwThUbeS1F9Vthc468qXQA==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@tursodatabase/database-win32-x64-msvc@0.7.0':
+    resolution: {integrity: sha512-+AECWhFs7/8P5nZiC+GcABfSrScVuTAAxa0WjbeJg+0ihZr3OPxOblda2FUIZ086sHbnKhRF152TFFv8Fl8gDw==}
+    cpu: [x64]
+    os: [win32]
+
+  '@tursodatabase/database@0.7.0':
+    resolution: {integrity: sha512-rp5qHS1/ToZP1E3feuh5P1bNgWIdiLXI4wMm8pEb8+uQTctskmH9NnroWGuiYjL59y40CHbN/oIPinZnMJDclw==}
 
   '@tybys/wasm-util@0.10.3':
     resolution: {integrity: sha512-F3fo1MYrRJYL3zER0OUOmkutjr1Vp23m7OsSgp7nq4SP6OqX6C/56XFIPAl5bt3zaBRjmW7SGz3u/6LwFpYcOg==}
@@ -3548,6 +3579,29 @@ snapshots:
 
   '@turbo/windows-arm64@2.10.5':
     optional: true
+
+  '@tursodatabase/database-common@0.7.0': {}
+
+  '@tursodatabase/database-darwin-arm64@0.7.0':
+    optional: true
+
+  '@tursodatabase/database-linux-arm64-gnu@0.7.0':
+    optional: true
+
+  '@tursodatabase/database-linux-x64-gnu@0.7.0':
+    optional: true
+
+  '@tursodatabase/database-win32-x64-msvc@0.7.0':
+    optional: true
+
+  '@tursodatabase/database@0.7.0':
+    dependencies:
+      '@tursodatabase/database-common': 0.7.0
+    optionalDependencies:
+      '@tursodatabase/database-darwin-arm64': 0.7.0
+      '@tursodatabase/database-linux-arm64-gnu': 0.7.0
+      '@tursodatabase/database-linux-x64-gnu': 0.7.0
+      '@tursodatabase/database-win32-x64-msvc': 0.7.0
 
   '@tybys/wasm-util@0.10.3':
     dependencies:

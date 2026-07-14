@@ -35,7 +35,7 @@
     "node": ">=22"
   },
   "peerDependencies": {
-    "@tursodatabase/database": "^0.0.4"
+    "@tursodatabase/database": "^0.7.0"
   },
   "peerDependenciesMeta": {
     "@tursodatabase/database": {

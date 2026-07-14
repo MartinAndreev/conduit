@@ -21,9 +21,9 @@ export class StorageError extends Error {
 }
 
 const SECRET_PATTERNS: readonly RegExp[] = [
-  /[A-Za-z0-9_\-]*api[_-]?key[A-Za-z0-9_\-]*\s*[:=]\s*[^\s,;]+/gi,
-  /[A-Za-z0-9_\-]*token[A-Za-z0-9_\-]*\s*[:=]\s*[^\s,;]+/gi,
-  /[A-Za-z0-9_\-]*password[A-Za-z0-9_\-]*\s*[:=]\s*[^\s,;]+/gi,
+  /[A-Za-z0-9_-]*api[_-]?key[A-Za-z0-9_-]*\s*[:=]\s*[^\s,;]+/gi,
+  /[A-Za-z0-9_-]*token[A-Za-z0-9_-]*\s*[:=]\s*[^\s,;]+/gi,
+  /[A-Za-z0-9_-]*password[A-Za-z0-9_-]*\s*[:=]\s*[^\s,;]+/gi,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
 ];
 
