@@ -26,8 +26,15 @@ describe("terminal submit key", () => {
     expect(event && isSubmitKey(event)).toBe(true);
   });
 
+  test("accepts Alt+Enter when an IDE intercepts function keys", () => {
+    const event = parseKeypress("\u001b\r", { useKittyKeyboard: false });
+
+    expect(event).not.toBeNull();
+    expect(event && isSubmitKey(event)).toBe(true);
+  });
+
   test("advertises Ctrl+Enter only after capability detection", () => {
-    expect(getSubmitKeyLabel(false)).toBe("F10");
+    expect(getSubmitKeyLabel(false)).toBe("Alt+Enter");
     expect(getSubmitKeyLabel(true)).toBe("Ctrl+Enter");
   });
 });

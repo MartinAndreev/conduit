@@ -1,6 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -39,6 +39,23 @@ test("persistence-foundation project lock writes sanitized ownership metadata", 
   const contents = await readFile(lock.lockPath, "utf8");
   assert.match(contents, new RegExp(String(process.pid)));
   await lock.release();
+});
+
+test("persistence-foundation replaces a lock owned by a dead process", async () => {
+  const root = await mkdtemp(join(tmpdir(), "conduit-stale-lock-"));
+  const stateDirectory = join(root, ".conduit");
+  const lockPath = join(stateDirectory, "state.db.lock");
+  await mkdir(stateDirectory, { recursive: true });
+  await writeFile(lockPath, "999999999\n2026-01-01T00:00:00.000Z\n");
+
+  try {
+    const lock = await new FileProjectLockFactory().acquire(root);
+    const ownership = await readFile(lock.lockPath, "utf8");
+    assert.match(ownership, new RegExp(`^${process.pid}\\n`));
+    await lock.release();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("persistence-foundation redacts credential-like diagnostics", () => {

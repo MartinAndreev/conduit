@@ -45,6 +45,7 @@ export function RefinementTextarea({
         wrapMode: "word",
         keyBindings: [
           { name: "return", ctrl: true, action: "submit" },
+          { name: "return", meta: true, action: "submit" },
           { name: "f10", action: "submit" },
         ],
         onContentChange: () => onChangeRef.current(textarea.plainText),

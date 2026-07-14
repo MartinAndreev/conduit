@@ -4,7 +4,10 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProjectDatabaseFactory } from "../src/system/storage/factories/database-factories.js";
+import type { DatabaseFactory } from "../src/system/storage/interfaces/factory.js";
 import { DefaultDatabaseLifecycle } from "../src/system/storage/repositories/database-lifecycle.js";
+import { LazyDatabaseConnection } from "../src/system/storage/repositories/lazy-database-connection.js";
+import { resolveProjectDatabasePaths } from "../src/system/storage/factories/path-resolution.js";
 import type {
   DatabaseConnection,
   DatabaseStatement,
@@ -66,6 +69,41 @@ test("close finalizes statements, checkpoints, and releases project ownership", 
     await reopened.finalize();
     await second.close();
   } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("quit waits for an in-flight lazy open before releasing project ownership", async () => {
+  const projectRoot = await mkdtemp(join(tmpdir(), "conduit-lazy-shutdown-"));
+  let finishOpening: (() => void) | undefined;
+  const openingGate = new Promise<void>((resolve) => {
+    finishOpening = resolve;
+  });
+  const factory = new ProjectDatabaseFactory(projectRoot);
+  const delayedFactory: DatabaseFactory = {
+    async open() {
+      const connection = await factory.open();
+      await openingGate;
+      return connection;
+    },
+  };
+  const lazyConnection = new LazyDatabaseConnection(
+    delayedFactory,
+    resolveProjectDatabasePaths(projectRoot).databasePath,
+  );
+
+  try {
+    const query = lazyConnection.execute("SELECT 1 AS ready");
+    const shutdown = lazyConnection.close();
+    finishOpening?.();
+    await query;
+    await shutdown;
+
+    const reopened = await new ProjectDatabaseFactory(projectRoot).open();
+    await reopened.close();
+  } finally {
+    finishOpening?.();
+    await lazyConnection.close();
     await rm(projectRoot, { recursive: true, force: true });
   }
 });

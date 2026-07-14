@@ -40,7 +40,7 @@ export function RoleRunSelectionScreen({
       setSelected([]);
     });
   }, [queryBus]);
-  useKeyboard((event: { name: string; ctrl: boolean }) => {
+  useKeyboard((event: { name: string; ctrl: boolean; meta: boolean }) => {
     if (event.name === "escape" || event.name === "q") return onExit();
     if (event.name === "up")
       return setCursor((value) => Math.max(0, value - 1));
