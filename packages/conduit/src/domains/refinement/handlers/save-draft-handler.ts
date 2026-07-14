@@ -10,12 +10,16 @@ export function createSaveDraftHandler(
 ): CommandHandler<SaveDraftCommand, SaveDraftResult> {
   return async (command) => {
     try {
+      const existing = await draftRepository.load(command.featureId);
       const draft = {
         featureId: command.featureId,
         story: command.story,
         testCases: command.testCases,
-        createdAt: new Date().toISOString(),
+        createdAt: existing?.createdAt ?? new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        ...((command.expectedVersion ?? existing?.version)
+          ? { version: command.expectedVersion ?? existing?.version }
+          : {}),
       };
 
       const draftPath = await draftRepository.save(draft);

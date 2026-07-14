@@ -36,7 +36,7 @@ test("architect clarification and packet review keep an auditable revision histo
         await writeFile(logFile, "analysis\narchitect pass complete\n");
         if (asksQuestions)
           await writeFile(
-            path.join(feature.directory, "questions.md"),
+            path.join(path.dirname(logFile), "questions.md"),
             "# Architect questions\n\n## Q-001\n\nWhich retention period should apply?\n\n### Options\n\n- 30 days\n- 90 days\n",
           );
         return { logFile };

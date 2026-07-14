@@ -1,4 +1,5 @@
 import type { DatabaseScope } from "../types/database.js";
+import { redactSecrets } from "../security/secret-redaction.js";
 
 export class StorageError extends Error {
   readonly scope: DatabaseScope;
@@ -20,19 +21,9 @@ export class StorageError extends Error {
   }
 }
 
-const SECRET_PATTERNS: readonly RegExp[] = [
-  /[A-Za-z0-9_-]*api[_-]?key[A-Za-z0-9_-]*\s*[:=]\s*[^\s,;]+/gi,
-  /[A-Za-z0-9_-]*token[A-Za-z0-9_-]*\s*[:=]\s*[^\s,;]+/gi,
-  /[A-Za-z0-9_-]*password[A-Za-z0-9_-]*\s*[:=]\s*[^\s,;]+/gi,
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
-];
-
 export function redactStorageDiagnostic(value: unknown): string {
-  let text = value instanceof Error ? value.message : String(value);
-  for (const pattern of SECRET_PATTERNS) {
-    text = text.replace(pattern, "[REDACTED]");
-  }
-  return text;
+  const text = value instanceof Error ? value.message : String(value);
+  return redactSecrets(text);
 }
 
 export function toStorageError(input: {
@@ -46,6 +37,6 @@ export function toStorageError(input: {
     operation: input.operation,
     message: `${input.operation} failed for ${input.scope} database: ${redactStorageDiagnostic(input.cause)}`,
     remediation: input.remediation,
-    cause: input.cause,
+    cause: new Error(redactStorageDiagnostic(input.cause)),
   });
 }

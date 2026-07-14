@@ -6,6 +6,11 @@
 
 Conduit turns an approved feature specification into bounded, parallel agent work. It keeps the decisions that matter in Git, gives each worker a clear ownership boundary, and makes the noisy parts of agent execution inspectable without overwhelming the terminal.
 
+Maintainers and coding agents extending persistence should use the
+[Conduit database API guide](packages/conduit/docs/database-api.md). It covers
+connection ownership, Kysely repositories, migrations, bootstrap services,
+legacy import, security, recovery, and standalone bindings.
+
 ## What it does
 
 ```text

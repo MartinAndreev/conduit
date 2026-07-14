@@ -17,7 +17,7 @@ src/
   tui/
     components/  sections/  screens/
   system/
-    bootstrap/  buses/  database/  runners/
+    bootstrap/  bus/  storage/  runners/
   helpers/
     file/  formatting/  string/
 ```
@@ -26,9 +26,9 @@ Each domain owns its commands, queries, handlers, types, interfaces, enums, erro
 
 ## Repository and database boundary
 
-Only repository implementations access SQLite. A repository receives a database executor/connection through its constructor and exposes a domain-specific interface; command and query handlers receive repository instances through application dependency injection. Screens, components, helpers, and domain types must never access SQLite directly.
+Only repository implementations access embedded Turso through Kysely. A repository receives a database connection through its constructor and exposes a domain-specific interface; command and query handlers receive repository instances through application dependency injection. Screens, components, helpers, and domain types must never access the database directly. See the [database API guide](../packages/conduit/docs/database-api.md) for the complete storage contract.
 
-`src/system/bootstrap` is the composition root: it opens the database, constructs repositories, registers handlers on the command/query buses, and passes the resulting application services to the CLI and TUI.
+`src/system/bootstrap/application.ts` is the small composition root. Repository and lifecycle construction is isolated in `createBootstrapComposition`; logical `ApplicationBootstrapService` implementations register core, configuration, feature, role, refinement, and run handlers on the command/query buses. New domains extend the bootstrap contract instead of adding registrations directly to `application.ts`.
 
 | Layer         | Responsibility                                                                        | May depend on                        |
 | ------------- | ------------------------------------------------------------------------------------- | ------------------------------------ |

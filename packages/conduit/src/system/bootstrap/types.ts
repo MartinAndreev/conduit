@@ -2,7 +2,7 @@ import type {
   Config,
   RoleConfig,
 } from "../../domains/configuration/types/config.js";
-import type { ConfigurationRepository } from "../../domains/configuration/repositories/configuration-repository.js";
+import type { ConfigurationRepository } from "../../domains/configuration/interfaces/configuration-repository.js";
 import type { CredentialStore } from "../../domains/credentials/interfaces/credential-store.js";
 import type { FeatureProvider } from "../../domains/features/interfaces/feature-provider.js";
 import type { Feature } from "../../domains/features/types/feature.js";
@@ -34,6 +34,7 @@ export interface ApplicationDependencies {
     feature: Feature,
     story: string,
     additionalContext?: string,
+    questionsPath?: string,
   ) => string;
   collectRefinement: () => Promise<{ story: string; testCases: string }>;
   collectArchitectAnswers: (questions: string) => Promise<string>;
@@ -92,6 +93,8 @@ export interface ApplicationDependencies {
     onProgress?: (message: string) => void;
     onChange?: (params: { summary: string; preview: string }) => void;
     signal?: AbortSignal;
+    eventRepository?: import("../../domains/runs/interfaces/run-event-repository.js").RunEventRepository;
+    processRegistry?: import("../../domains/runs/repositories/run-process-registry.js").RunProcessRegistry;
   }) => Promise<RunResult[]>;
   latestRuns: (projectRoot: string, config: Config) => Promise<Run[]>;
   readRunRoleLog: (

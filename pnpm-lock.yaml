@@ -68,15 +68,34 @@ importers:
       '@tursodatabase/database':
         specifier: ^0.7.0
         version: 0.7.0
+      '@tursodatabase/database-common':
+        specifier: ^0.7.0
+        version: 0.7.0
       commander:
         specifier: ^14.0.0
         version: 14.0.3
+      kysely:
+        specifier: ^0.29.3
+        version: 0.29.3
       ora:
         specifier: ^9.3.0
         version: 9.4.1
       react:
         specifier: ^19.2.7
         version: 19.2.7
+    optionalDependencies:
+      '@tursodatabase/database-darwin-arm64':
+        specifier: 0.7.0
+        version: 0.7.0
+      '@tursodatabase/database-linux-arm64-gnu':
+        specifier: 0.7.0
+        version: 0.7.0
+      '@tursodatabase/database-linux-x64-gnu':
+        specifier: 0.7.0
+        version: 0.7.0
+      '@tursodatabase/database-win32-x64-msvc':
+        specifier: 0.7.0
+        version: 0.7.0
 
   packages/website:
     devDependencies:
@@ -1833,6 +1852,10 @@ packages:
   kleur@4.1.5:
     resolution: {integrity: sha512-o+NO+8WrRiQEE4/7nwRJhN1HWpVmJm511pBHUxPLtp0BUISzlBplORYSmTclCnJvQq2tKu/sgl3xVpkc7ZWuQQ==}
     engines: {node: '>=6'}
+
+  kysely@0.29.3:
+    resolution: {integrity: sha512-VHtBdW6XB/pgoTSqraM3UAa2rYoYdNXqnNPpX+8XXP+cwYbVEFuAp3HyPt1vpNfU9l7Y2kpUrA9QDPsy8uUqOQ==}
+    engines: {node: '>=22.0.0'}
 
   levn@0.4.1:
     resolution: {integrity: sha512-+bT2uH4E5LGE7h/n3evcS/sQlJXCpIp6ym8OWJ5eV6+67Dsql/LaaT7qJBAt2rzfoa/5QBGBhxDix1dMt2kQKQ==}
@@ -4502,6 +4525,8 @@ snapshots:
       json-buffer: 3.0.1
 
   kleur@4.1.5: {}
+
+  kysely@0.29.3: {}
 
   levn@0.4.1:
     dependencies:

@@ -10,6 +10,9 @@ import type {
 import type { CommandHandler } from "@system/bus/command-bus.js";
 import type { RunEventRepository } from "@domains/runs/interfaces/run-event-repository.js";
 import type { RunProcessRegistry } from "@domains/runs/repositories/run-process-registry.js";
+import type { ResearchReportRepository } from "@domains/refinement/interfaces/research-report-repository.js";
+import { redactSecrets } from "@system/storage/security/secret-redaction.js";
+import type { RunRecoveryRepository } from "@domains/runs/interfaces/run-recovery-repository.js";
 
 const activeResearch = new Map<string, AbortController>();
 
@@ -47,6 +50,8 @@ export interface StartResearchRefinementDependencies {
   }) => Promise<RunResult[]>;
   readonly eventRepository: RunEventRepository;
   readonly processRegistry: RunProcessRegistry;
+  readonly reportRepository: ResearchReportRepository;
+  readonly recoveryRepository: RunRecoveryRepository;
 }
 
 export function createStartResearchRefinementHandler(
@@ -74,13 +79,9 @@ export function createStartResearchRefinementHandler(
       });
       const researcher = run.roles[0];
       if (!researcher) throw new Error("Could not prepare the researcher run.");
-      researcher.prompt += `\n\n# Refinement research assignment (authoritative)\n\nInvestigate the repository context needed to refine this feature. Do not edit source code, specification files, contracts, or the feature packet.\n\n## Feature request\n\n${command.story}\n\nReturn a concise Markdown report with: relevant files and call paths; confirmed facts; constraints and risks; existing tests and conventions; assumptions that require validation; and product or technical questions that should inform the architect. Cite paths for every repository claim. Do not propose a prompt, implementation plan, or production-code patch.`;
+      researcher.prompt += `\n\n# Refinement research assignment (authoritative)\n\nInvestigate the repository context needed to refine this feature. Do not edit source code, specification files, contracts, or the feature packet.\n\n## Feature request\n\n${redactSecrets(command.story)}\n\nReturn a concise Markdown report with: relevant files and call paths; confirmed facts; constraints and risks; existing tests and conventions; assumptions that require validation; and product or technical questions that should inform the architect. Cite paths for every repository claim. Do not propose a prompt, implementation plan, or production-code patch.`;
       await writeFile(researcher.promptFile, researcher.prompt);
-      await writeFile(
-        path.join(runDir, "run.json"),
-        JSON.stringify(run, null, 2) + "\n",
-      );
-      const reportFile = path.join(feature.directory, "research.md");
+      const reportFile = `conduit://research/${encodeURIComponent(feature.id)}`;
       const runnerReportFile = path.join(runDir, "researcher-output.md");
       researcher.prompt += `
 
@@ -90,6 +91,7 @@ Write the final Markdown report to \`${runnerReportFile}\`. This is the only fil
       await writeFile(researcher.promptFile, researcher.prompt);
       const controller = new AbortController();
       activeResearch.set(feature.id, controller);
+      await deps.recoveryRepository.saveSnapshot(run);
       void deps
         .executeRun({
           projectRoot: deps.projectRoot,
@@ -119,11 +121,29 @@ Write the final Markdown report to \`${runnerReportFile}\`. This is the only fil
                 recoverable: true,
               },
             });
+            await deps.recoveryRepository.markInterrupted(
+              run.id,
+              "Researcher completed without a report artifact.",
+            );
             return;
           }
-          await writeFile(reportFile, `# Research context\n\n${report}\n`);
+          const sanitizedReport = redactSecrets(report);
+          await writeFile(runnerReportFile, sanitizedReport);
+          await deps.reportRepository.save(
+            feature.id,
+            `# Research context\n\n${sanitizedReport}\n`,
+          );
+          await deps.recoveryRepository.saveSnapshot(run, 1);
         })
-        .catch(() => {})
+        .catch(async (error) => {
+          if (controller.signal.aborted)
+            await deps.recoveryRepository.markCancelled(run.id);
+          else
+            await deps.recoveryRepository.markInterrupted(
+              run.id,
+              error instanceof Error ? error.message : String(error),
+            );
+        })
         .finally(() => activeResearch.delete(feature.id));
       return { success: true, data: { runId: run.id, reportFile } };
     } catch (error) {

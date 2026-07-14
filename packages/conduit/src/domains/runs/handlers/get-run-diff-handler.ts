@@ -4,34 +4,19 @@ import type {
   GetRunDiffReadModel,
 } from "../interfaces/queries/get-run-diff.js";
 import type { DiffReader } from "../repositories/worktree-diff-reader.js";
-import type { Run } from "../types/run.js";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
+import type { RunRecoveryRepository } from "../interfaces/run-recovery-repository.js";
 
 export function createGetRunDiffHandler(
   diffReader: DiffReader,
-  loadConfig: (projectRoot: string) => Promise<{ stateDir: string }>,
+  recoveryRepository: RunRecoveryRepository,
 ): QueryHandler<GetRunDiffQuery, GetRunDiffReadModel> {
   return async (query) => {
     try {
-      // Resolve worktree from persisted run data, not from the query
-      const config = await loadConfig(query.projectRoot);
-      const runFile = path.join(
-        query.projectRoot,
-        config.stateDir,
-        "runs",
-        query.runId,
-        "run.json",
+      const snapshot = await recoveryRepository.loadSnapshot(query.runId);
+      const role = snapshot?.run.roles.find(
+        (item) => item.name === query.roleId,
       );
-      let worktree = "";
-      try {
-        const raw = await readFile(runFile, "utf8");
-        const run: Run = JSON.parse(raw);
-        const role = run.roles.find((r) => r.name === query.roleId);
-        worktree = role?.worktree ?? "";
-      } catch {
-        // Run file doesn't exist
-      }
+      const worktree = role?.worktree ?? "";
 
       if (!worktree) {
         return {

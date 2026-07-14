@@ -25,8 +25,22 @@ export interface ProjectSettings {
 
 export interface ResolvedSettings {
   readonly global: GlobalSettings;
+  readonly globalProfile: GlobalProfile | undefined;
   readonly project: ProjectSettings | undefined;
   readonly effective: EffectiveSettings;
+  readonly roles: Readonly<Record<string, ResolvedRoleSettings>>;
+  readonly provenance: Readonly<Record<string, ConfigurationSource>>;
+}
+
+export interface ResolvedRoleSettings {
+  readonly runner: string;
+  readonly model?: string;
+  readonly effort?: RoleReasoningEffort;
+  readonly mode: string;
+  readonly readOnly: boolean;
+  readonly owns: readonly string[];
+  readonly skillSource: string;
+  readonly guidance?: string;
 }
 
 export interface EffectiveSettings {
@@ -50,3 +64,8 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   stateDir: ".conduit",
   providerOptions: {},
 };
+import type { RoleReasoningEffort } from "./config.js";
+import type { GlobalProfile } from "./global-profile.js";
+
+export type ConfigurationSource =
+  "builtin" | "global-profile" | "project" | "role-guidance" | "cli";

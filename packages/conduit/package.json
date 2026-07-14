@@ -6,6 +6,7 @@
   "type": "module",
   "files": [
     "dist",
+    "docs",
     "skills",
     "README.md"
   ],
@@ -27,19 +28,20 @@
   "dependencies": {
     "@opentui/core": "^0.4.3",
     "@opentui/react": "^0.4.3",
+    "@tursodatabase/database": "^0.7.0",
+    "@tursodatabase/database-common": "^0.7.0",
     "commander": "^14.0.0",
+    "kysely": "^0.29.3",
     "ora": "^9.3.0",
     "react": "^19.2.7"
   },
   "engines": {
     "node": ">=22"
   },
-  "peerDependencies": {
-    "@tursodatabase/database": "^0.7.0"
-  },
-  "peerDependenciesMeta": {
-    "@tursodatabase/database": {
-      "optional": true
-    }
+  "optionalDependencies": {
+    "@tursodatabase/database-darwin-arm64": "0.7.0",
+    "@tursodatabase/database-linux-arm64-gnu": "0.7.0",
+    "@tursodatabase/database-linux-x64-gnu": "0.7.0",
+    "@tursodatabase/database-win32-x64-msvc": "0.7.0"
   }
 }

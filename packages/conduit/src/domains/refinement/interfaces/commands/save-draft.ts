@@ -5,6 +5,7 @@ export interface SaveDraftCommand extends Command {
   readonly featureId: string;
   readonly story: string;
   readonly testCases: string;
+  readonly expectedVersion?: number;
 }
 
 export interface SaveDraftResult {

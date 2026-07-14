@@ -6,6 +6,12 @@ export type {
   ShutdownHook,
 } from "./interfaces/database.js";
 export type { DatabaseFactory } from "./interfaces/factory.js";
+export type { DatabaseLifecycle } from "./interfaces/database-lifecycle.js";
+export type {
+  MigrationRegistry,
+  MigrationRunner,
+  MigrationHistoryRepository,
+} from "./interfaces/migration.js";
 export type {
   ProjectLock,
   ProjectLockFactory,
@@ -18,6 +24,12 @@ export type {
   QueryResultRow,
   DatabasePathSet,
 } from "./types/database.js";
+export type {
+  MigrationDefinition,
+  MigrationStatus,
+  AppliedMigration,
+  MigrationResult,
+} from "./types/migration.js";
 export {
   StorageError,
   redactStorageDiagnostic,
@@ -40,8 +52,15 @@ export {
   DatabaseTransactionRunner,
   BoundedBatchWriter,
 } from "./repositories/transaction-runner.js";
+export { DefaultDatabaseLifecycle } from "./repositories/database-lifecycle.js";
 export {
   EmbeddedTursoConnection,
   EmbeddedTursoStatement,
   openEmbeddedTursoConnection,
 } from "./adapters/embedded-turso.js";
+export { OrderedMigrationRegistry } from "./migrations/migration-registry.js";
+export {
+  DefaultMigrationRunner,
+  migrationChecksum,
+} from "./migrations/migration-runner.js";
+export { createDefaultMigrationRegistry } from "./migrations/default-registry.js";

@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { chmod, mkdir } from "node:fs/promises";
 import type { DatabaseConnection } from "../interfaces/database.js";
 import type { DatabaseFactory } from "../interfaces/factory.js";
 import type {
@@ -12,6 +12,8 @@ import {
   resolveGlobalDatabasePaths,
   resolveProjectDatabasePaths,
 } from "./path-resolution.js";
+import { createDefaultMigrationRegistry } from "../migrations/default-registry.js";
+import { DefaultMigrationRunner } from "../migrations/migration-runner.js";
 
 export class ProjectDatabaseFactory implements DatabaseFactory {
   constructor(
@@ -21,18 +23,34 @@ export class ProjectDatabaseFactory implements DatabaseFactory {
   ) {}
 
   async open(): Promise<DatabaseConnection> {
+    return this.openOwned(true);
+  }
+
+  async openWithoutMigrations(): Promise<DatabaseConnection> {
+    return this.openOwned(false);
+  }
+
+  private async openOwned(runMigrations: boolean): Promise<DatabaseConnection> {
     const paths = resolveProjectDatabasePaths(
       this.projectRoot,
       this.stateDirectory,
     );
-    await ensureConduitStateGitIgnored(this.projectRoot);
-    const lock = await this.lockFactory.acquire(this.projectRoot);
+    await ensureConduitStateGitIgnored(paths.directory);
+    const lock = await this.lockFactory.acquire(
+      this.projectRoot,
+      paths.directory,
+    );
     try {
-      await mkdir(paths.directory, { recursive: true });
+      await mkdir(paths.directory, { recursive: true, mode: 0o700 });
       const connection = await openEmbeddedTursoConnection(
         "project",
         paths.databasePath,
       );
+      if (runMigrations)
+        await new DefaultMigrationRunner(
+          createDefaultMigrationRegistry(),
+        ).migrate(connection, "project");
+      await chmod(paths.databasePath, 0o600);
       return new LockedProjectDatabaseConnection(connection, lock);
     } catch (error) {
       await lock.release();
@@ -55,6 +73,10 @@ class LockedProjectDatabaseConnection implements DatabaseConnection {
     this.connection.execute(sql, parameters);
   prepare: DatabaseConnection["prepare"] = (sql) =>
     this.connection.prepare(sql);
+  backup: DatabaseConnection["backup"] = (destinationPath) =>
+    this.connection.backup(destinationPath);
+  checkpoint: DatabaseConnection["checkpoint"] = () =>
+    this.connection.checkpoint();
 
   async close(): Promise<void> {
     try {
@@ -66,9 +88,34 @@ class LockedProjectDatabaseConnection implements DatabaseConnection {
 }
 
 export class GlobalDatabaseFactory implements DatabaseFactory {
+  constructor(private readonly environment: NodeJS.ProcessEnv = process.env) {}
+
   async open(): Promise<DatabaseConnection> {
-    const paths = resolveGlobalDatabasePaths();
+    return this.openOwned(true);
+  }
+
+  async openWithoutMigrations(): Promise<DatabaseConnection> {
+    return this.openOwned(false);
+  }
+
+  private async openOwned(runMigrations: boolean): Promise<DatabaseConnection> {
+    const paths = resolveGlobalDatabasePaths(this.environment);
     await mkdir(paths.directory, { recursive: true, mode: 0o700 });
-    return openEmbeddedTursoConnection("global", paths.databasePath);
+    await chmod(paths.directory, 0o700);
+    const connection = await openEmbeddedTursoConnection(
+      "global",
+      paths.databasePath,
+    );
+    try {
+      if (runMigrations)
+        await new DefaultMigrationRunner(
+          createDefaultMigrationRegistry(),
+        ).migrate(connection, "global");
+      await chmod(paths.databasePath, 0o600);
+      return connection;
+    } catch (error) {
+      await connection.close();
+      throw error;
+    }
   }
 }

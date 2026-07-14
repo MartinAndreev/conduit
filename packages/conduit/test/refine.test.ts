@@ -134,13 +134,15 @@ test("architect questions pause refinement, collect an answer, and resume", asyn
           assert.match(questions, /Which audience/);
           return "Operators first.";
         },
-        runArchitect: async () => {
+        runArchitect: async ({ logFile }) => {
           calls += 1;
-          if (calls === 1)
+          if (calls === 1) {
+            await mkdir(path.dirname(logFile), { recursive: true });
             await writeFile(
-              path.join(feature.directory, "questions.md"),
+              path.join(path.dirname(logFile), "questions.md"),
               "# Questions\n\n- Q1: Which audience?",
             );
+          }
           return { logFile: "architect.log" };
         },
       },

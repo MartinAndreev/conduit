@@ -19,28 +19,26 @@ type TursoQueryResult = Readonly<{
 }>;
 
 type TursoStatementLike = {
-  execute?: (
+  readonly reader?: boolean;
+  run: (
     parameters?: SqlParameters,
   ) => Promise<TursoQueryResult> | TursoQueryResult;
-  all?: (
+  all: (
     parameters?: SqlParameters,
   ) =>
     | Promise<readonly QueryResultRow[] | TursoQueryResult>
     | readonly QueryResultRow[]
     | TursoQueryResult;
-  get?: (
+  get: (
     parameters?: SqlParameters,
   ) => Promise<QueryResultRow | undefined> | QueryResultRow | undefined;
-  finalize?: () => Promise<void> | void;
+  close: () => Promise<void> | void;
 };
 
 type TursoDatabaseLike = {
-  execute?: (
-    sql: string,
-    parameters?: SqlParameters,
-  ) => Promise<TursoQueryResult> | TursoQueryResult;
-  prepare?: (sql: string) => Promise<TursoStatementLike> | TursoStatementLike;
-  close?: () => Promise<void> | void;
+  exec: (sql: string) => Promise<void> | void;
+  prepare: (sql: string) => Promise<TursoStatementLike> | TursoStatementLike;
+  close: () => Promise<void> | void;
 };
 
 function isRowArray(
@@ -66,52 +64,86 @@ function normalizeResult(
 }
 
 export class EmbeddedTursoStatement implements DatabaseStatement {
-  constructor(private readonly statement: TursoStatementLike) {}
+  private finalized = false;
+
+  constructor(
+    private readonly statement: TursoStatementLike,
+    private readonly onFinalize: () => void = () => {},
+  ) {}
 
   async execute(parameters?: SqlParameters): Promise<QueryResult> {
-    if (this.statement.execute)
-      return normalizeResult(await this.statement.execute(parameters));
-    if (this.statement.all)
+    if (this.statement.reader)
       return normalizeResult(await this.statement.all(parameters));
-    throw new Error("Turso statement does not support execute");
+    return normalizeResult(await this.statement.run(parameters));
   }
 
   async all(parameters?: SqlParameters): Promise<QueryResult> {
-    if (this.statement.all)
-      return normalizeResult(await this.statement.all(parameters));
-    return this.execute(parameters);
+    return normalizeResult(await this.statement.all(parameters));
   }
 
   async get(parameters?: SqlParameters): Promise<QueryResultRow | undefined> {
-    if (this.statement.get) return this.statement.get(parameters);
-    return (await this.all(parameters)).rows[0];
+    return this.statement.get(parameters);
   }
 
   async finalize(): Promise<void> {
-    await this.statement.finalize?.();
+    if (this.finalized) return;
+    this.finalized = true;
+    try {
+      await this.statement.close();
+    } finally {
+      this.onFinalize();
+    }
   }
 }
 
 export class EmbeddedTursoConnection implements DatabaseConnection {
+  private readonly statements = new Set<EmbeddedTursoStatement>();
+
   constructor(
     readonly databasePath: string,
     private readonly database: TursoDatabaseLike,
   ) {}
 
   async execute(sql: string, parameters?: SqlParameters): Promise<QueryResult> {
-    if (!this.database.execute)
-      throw new Error("Turso database does not support execute");
-    return normalizeResult(await this.database.execute(sql, parameters));
+    if (parameters) {
+      const statement = await this.prepare(sql);
+      try {
+        return await statement.execute(parameters);
+      } finally {
+        await statement.finalize();
+      }
+    }
+    await this.database.exec(sql);
+    return { rows: [], rowsAffected: 0 };
   }
 
   async prepare(sql: string): Promise<DatabaseStatement> {
-    if (!this.database.prepare)
-      throw new Error("Turso database does not support prepare");
-    return new EmbeddedTursoStatement(await this.database.prepare(sql));
+    const statement = new EmbeddedTursoStatement(
+      await this.database.prepare(sql),
+      () => this.statements.delete(statement),
+    );
+    this.statements.add(statement);
+    return statement;
+  }
+
+  async backup(destinationPath: string): Promise<void> {
+    const escaped = destinationPath.replaceAll("'", "''");
+    await this.database.exec(`VACUUM INTO '${escaped}'`);
+  }
+
+  async checkpoint(): Promise<void> {
+    await this.database.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   }
 
   async close(): Promise<void> {
-    await this.database.close?.();
+    try {
+      await Promise.all(
+        [...this.statements].map((statement) => statement.finalize()),
+      );
+      await this.checkpoint();
+    } finally {
+      await this.database.close();
+    }
   }
 }
 
@@ -121,26 +153,24 @@ export async function openEmbeddedTursoConnection(
 ): Promise<DatabaseConnection> {
   try {
     const module = await import("@tursodatabase/database");
-    const loaded = module as unknown as {
-      connect?: (path: string) => unknown | Promise<unknown>;
-      open?: (path: string) => unknown | Promise<unknown>;
-      Database: new (path: string) => unknown;
-    };
-    const factory = loaded.connect ?? loaded.open;
-    const database = factory
-      ? await factory(databasePath)
-      : new loaded.Database(databasePath);
+    const database = await module.connect(databasePath);
     return new EmbeddedTursoConnection(
       databasePath,
       database as TursoDatabaseLike,
     );
   } catch (error) {
+    const diagnostic = error instanceof Error ? error.message : String(error);
+    const storageDamage =
+      /(?:not a database|malformed|corrupt|short read|I\/O error)/i.test(
+        diagnostic,
+      );
     throw toStorageError({
       scope,
       operation: "open embedded Turso database",
       cause: error,
-      remediation:
-        "Install @tursodatabase/database and verify the native binding supports this platform.",
+      remediation: storageDamage
+        ? "Stop Conduit, preserve the damaged file, and restore the newest validated backup before retrying."
+        : "Install @tursodatabase/database and verify the native binding supports this platform.",
     });
   }
 }

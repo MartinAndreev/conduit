@@ -4,5 +4,5 @@ export interface ProjectLock {
 }
 
 export interface ProjectLockFactory {
-  acquire(projectRoot: string): Promise<ProjectLock>;
+  acquire(projectRoot: string, stateDirectory?: string): Promise<ProjectLock>;
 }

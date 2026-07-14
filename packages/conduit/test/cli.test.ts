@@ -9,6 +9,7 @@ test("Commander exposes Conduit commands", () => {
   assert.deepEqual(commands, [
     "init",
     "version",
+    "storage-doctor",
     "feature",
     "refine",
     "roles",

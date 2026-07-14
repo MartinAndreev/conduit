@@ -13,6 +13,8 @@ export interface DatabaseConnection {
   readonly databasePath: string;
   execute(sql: string, parameters?: SqlParameters): Promise<QueryResult>;
   prepare(sql: string): Promise<DatabaseStatement>;
+  backup(destinationPath: string): Promise<void>;
+  checkpoint(): Promise<void>;
   close(): Promise<void>;
 }
 

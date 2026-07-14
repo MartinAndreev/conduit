@@ -1,12 +1,15 @@
 import { homedir, platform } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import type { DatabasePathSet } from "../types/database.js";
 
 export function resolveProjectDatabasePaths(
   projectRoot: string,
   stateDirectory?: string,
 ): DatabasePathSet {
-  const directory = stateDirectory ?? join(projectRoot, ".conduit");
+  const configured = stateDirectory ?? ".conduit";
+  const directory = isAbsolute(configured)
+    ? configured
+    : resolve(projectRoot, configured);
   return { directory, databasePath: join(directory, "state.db") };
 }
 

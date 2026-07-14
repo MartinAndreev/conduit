@@ -8,8 +8,8 @@ export function localSpecKitRefinementPrompt(
   feature: Feature,
   story: string,
   additionalContext = `${architectExecutionContract(DEFAULT_ARCHITECT_PREFERENCES)}\n\n${localSpecKitArchitectContract()}`,
+  questionsPath = path.join(feature.directory, "questions.md"),
 ): string {
-  const questionsFile = path.join(feature.directory, "questions.md");
   const clarificationsFile = path.join(feature.directory, "clarifications.md");
   return `Turn the feature request into a compact, implementation-ready Local Spec Kit packet. Update packet artifacts themselves; never write an architect prompt, mandate, role description, instructions for a future architect, or meta commentary into feature files.
 
@@ -23,5 +23,5 @@ Read repository evidence and ${clarificationsFile} when it exists; recorded answ
 
 Write concrete artifacts: observable acceptance criteria, necessary contracts, tasks assigned to configured role ownership, and QA cases. Prefer tables and short bullets; omit repeated boilerplate and narrative. Use pseudocode or signatures only when they remove implementation ambiguity.
 
-Never invent repository facts, APIs, or product decisions. If a material decision remains unclear after investigation, stop and write only ${questionsFile}: ID, why it matters, viable options, and the smallest unblocker. Do not update the handoff until answered. Remove a stale questions file when no material question remains.`;
+Never invent repository facts, APIs, or product decisions. If a material decision remains unclear after investigation, stop and write only ${questionsPath}: ID, why it matters, viable options, and the smallest unblocker. Do not update the handoff until answered. Remove a stale questions file when no material question remains.`;
 }

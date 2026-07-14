@@ -16,7 +16,6 @@ import { localSpecKitRefinementPrompt } from "./domains/features/providers/local
 import {
   planRun,
   executeRun,
-  latestRuns,
 } from "./domains/runs/repositories/run-orchestrator.js";
 import {
   readRunRoleLog,
@@ -55,14 +54,77 @@ import { OSVaultStore } from "./domains/credentials/repositories/os-vault-store.
 import { LocalSpecKitProvider } from "./domains/features/providers/local-spec-kit-provider.js";
 import { createPortraitRegistry } from "./domains/roles/repositories/portrait-registry.js";
 import { createApplication } from "./system/bootstrap/application.js";
+import {
+  GlobalDatabaseFactory,
+  ProjectDatabaseFactory,
+} from "./system/storage/factories/database-factories.js";
+import { TursoGlobalProfileRepository } from "./domains/configuration/repositories/turso-global-profile-repository.js";
+import { DefaultStartupMigrationRunner } from "./system/storage/migrations/startup-migration-runner.js";
+import { LegacyFileImporter } from "./system/storage/import/legacy-file-importer.js";
+import { runMigrationScreen } from "./tui/migration.js";
 import { isGitRepository } from "./system/cli/command-support.js";
 import { defaultPrompt, confirmYesNo } from "./helpers/prompt.js";
 import type { PromptFn } from "./helpers/prompt.js";
+import { verifyStorageRuntime } from "./system/storage/diagnostics/storage-doctor.js";
+import { TursoRunRecoveryRepository } from "./domains/runs/repositories/turso-run-recovery-repository.js";
+import { TursoRunEventRepository } from "./domains/runs/repositories/turso-run-event-repository.js";
+import { createRunProcessRegistry } from "./domains/runs/repositories/run-process-registry.js";
+import type { DatabaseConnection } from "./system/storage/interfaces/database.js";
+import type { Config } from "./domains/configuration/types/config.js";
+import { DefaultDatabaseLifecycle } from "./system/storage/repositories/database-lifecycle.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-async function buildDependencies() {
-  const configurationRepository = createConfigurationRepository();
+async function migrateProjectStorage(projectRoot: string): Promise<void> {
+  await runMigrationScreen(async (onProgress) => {
+    const config = await loadConfig(projectRoot);
+    const stateDirectory = path.resolve(projectRoot, config.stateDir);
+    const specsDirectory = path.resolve(projectRoot, config.specsDir);
+    const importer = new LegacyFileImporter(
+      projectRoot,
+      stateDirectory,
+      specsDirectory,
+    );
+    const runner = new DefaultStartupMigrationRunner(
+      projectRoot,
+      config.stateDir,
+      importer,
+    );
+    await runner.run(onProgress);
+  });
+}
+
+async function withProjectStorage<T>(
+  projectRoot: string,
+  work: (connection: DatabaseConnection, config: Config) => Promise<T>,
+): Promise<T> {
+  await migrateProjectStorage(projectRoot);
+  const config = await loadConfig(projectRoot);
+  const factory = new ProjectDatabaseFactory(
+    projectRoot,
+    undefined,
+    config.stateDir,
+  );
+  const connection = await factory.open();
+  const lifecycle = new DefaultDatabaseLifecycle();
+  lifecycle.registerConnection(connection);
+  try {
+    return await work(connection, config);
+  } finally {
+    await lifecycle.shutdown();
+  }
+}
+
+async function buildDependencies(
+  projectRoot?: string,
+  startupMigration: (root: string) => Promise<void> = migrateProjectStorage,
+  environment: NodeJS.ProcessEnv = process.env,
+) {
+  if (projectRoot) await startupMigration(projectRoot);
+  const globalProfiles = new TursoGlobalProfileRepository(
+    new GlobalDatabaseFactory(environment),
+  );
+  const configurationRepository = createConfigurationRepository(globalProfiles);
   const globalConfigDir = configurationRepository.getGlobalConfigDir();
 
   const osVault = new OSVaultStore();
@@ -102,7 +164,7 @@ const dependencies = {
   startRefinement,
   planRun,
   executeRun,
-  latestRuns,
+  latestRuns: async () => [],
   readRunRoleLog,
   readRunRolePatch,
   resolveSkill,
@@ -142,6 +204,22 @@ export function createProgram(
     .action(() => console.log(conduitVersion));
   withProject(
     program
+      .command("storage-doctor")
+      .description("verify local database migrations and native runtime"),
+  ).action(async (options: Record<string, unknown>) => {
+    const projectRoot = (options.project as string) || process.cwd();
+    await migrateProjectStorage(projectRoot);
+    const config = await loadConfig(projectRoot);
+    console.log(
+      JSON.stringify(
+        await verifyStorageRuntime(projectRoot, config.stateDir),
+        null,
+        2,
+      ),
+    );
+  });
+  withProject(
+    program
       .command("feature <title>")
       .description("create a committed specification and contract packet"),
   ).action((title: string, options: Record<string, unknown>) => {
@@ -176,7 +254,7 @@ export function createProgram(
         const isInteractive = options.interactive !== false && !options.compact;
         if (isInteractive) {
           const projectRoot = (options.project as string) || process.cwd();
-          const settingsResult = await buildDependencies();
+          const settingsResult = await buildDependencies(projectRoot);
           const resolvedSettings =
             await settingsResult.configurationRepository.resolveSettings(
               projectRoot,
@@ -194,12 +272,13 @@ export function createProgram(
             findFeature,
             planRun,
             executeRun,
-            latestRuns,
+            latestRuns: async () => [],
             configurationRepository: settingsResult.configurationRepository,
             credentialStore: settingsResult.credentialStore,
             featureProvider,
             portraitRegistry: settingsResult.portraitRegistry,
             projectRoot,
+            stateDirectory: resolvedSettings.effective.stateDir,
             refinementPrompt: localSpecKitRefinementPrompt,
             runArchitect,
             cancelArchitect: cancelArchitectForFeature,
@@ -207,24 +286,34 @@ export function createProgram(
             resolveRoleGuidance: handlers.resolveSkill as typeof resolveSkill,
           });
 
-          await refineCommandReact(
-            {
-              featureId,
-              story,
-              testCases: options.testCases as string,
-              architect: options.architect as boolean,
-              compact: options.compact as boolean,
-              interactive: options.interactive as boolean,
-            },
-            {
-              commandBus: app.commandBus,
-              queryBus: app.queryBus,
-              startRefinementScreen: handlers.startRefinement,
-              output: console.log,
-            },
-          );
+          try {
+            await refineCommandReact(
+              {
+                featureId,
+                story,
+                testCases: options.testCases as string,
+                architect: options.architect as boolean,
+                compact: options.compact as boolean,
+                interactive: options.interactive as boolean,
+              },
+              {
+                commandBus: app.commandBus,
+                queryBus: app.queryBus,
+                startRefinementScreen: handlers.startRefinement,
+                output: console.log,
+              },
+            );
+          } finally {
+            await app.close();
+          }
         } else {
-          void refineCommand(featureId, story, options, handlers);
+          const projectRoot = (options.project as string) || process.cwd();
+          await withProjectStorage(projectRoot, async (connection) => {
+            await refineCommand(featureId, story, options, {
+              ...handlers,
+              runRecoveryRepository: new TursoRunRecoveryRepository(connection),
+            });
+          });
         }
       },
     );
@@ -261,8 +350,16 @@ export function createProgram(
         "use a compact spinner instead of the live worker dashboard",
       )
       .option("--fetch-skills", "fetch verified remote skills when needed"),
-  ).action((featureId: string, options: Record<string, unknown>) => {
-    void runCommand(featureId, options, handlers);
+  ).action(async (featureId: string, options: Record<string, unknown>) => {
+    const projectRoot = (options.project as string) || process.cwd();
+    await withProjectStorage(projectRoot, async (connection) => {
+      await runCommand(featureId, options, {
+        ...handlers,
+        runRecoveryRepository: new TursoRunRecoveryRepository(connection),
+        runEventRepository: new TursoRunEventRepository(connection),
+        runProcessRegistry: createRunProcessRegistry(),
+      });
+    });
   });
   withProject(
     program
@@ -272,8 +369,16 @@ export function createProgram(
         "--tui",
         "open an interactive dashboard with collapsed agent output",
       ),
-  ).action((options: Record<string, unknown>) => {
-    void statusCommand(options, handlers);
+  ).action(async (options: Record<string, unknown>) => {
+    const projectRoot = (options.project as string) || process.cwd();
+    await withProjectStorage(projectRoot, async (connection) => {
+      const recoveryRepository = new TursoRunRecoveryRepository(connection);
+      await statusCommand(options, {
+        ...handlers,
+        latestRuns: async () =>
+          (await recoveryRepository.listSnapshots()).map(({ run }) => run),
+      });
+    });
   });
   return program;
 }
@@ -288,6 +393,8 @@ export async function handleBareConduit(
       queryBus: ReturnType<typeof createApplication>["queryBus"];
     }) => Promise<void>;
     setExitCode?: (code: number) => void;
+    startupMigration?: (projectRoot: string) => Promise<void>;
+    environment?: NodeJS.ProcessEnv;
   },
 ): Promise<void> {
   const prompt = deps?.prompt ?? defaultPrompt;
@@ -326,7 +433,11 @@ export async function handleBareConduit(
     output(`Conduit initialized in ${projectRoot}`);
   }
 
-  const settingsResult = await buildDependencies();
+  const settingsResult = await buildDependencies(
+    projectRoot,
+    deps?.startupMigration,
+    deps?.environment,
+  );
   const resolvedSettings =
     await settingsResult.configurationRepository.resolveSettings(projectRoot);
   const specsDir = path.resolve(
@@ -342,7 +453,7 @@ export async function handleBareConduit(
     findFeature,
     planRun,
     executeRun,
-    latestRuns,
+    latestRuns: async () => [],
     configurationRepository: settingsResult.configurationRepository,
     credentialStore: settingsResult.credentialStore,
     featureProvider,
@@ -352,14 +463,19 @@ export async function handleBareConduit(
     cancelArchitect: cancelArchitectForFeature,
     builtinRoleRoot: path.join(root, "skills", "roles"),
     projectRoot,
+    stateDirectory: resolvedSettings.effective.stateDir,
   });
 
   const homeFn = deps?.startHome ?? (await import("./tui/home.js")).startHome;
-  await homeFn({
-    commandBus: app.commandBus,
-    queryBus: app.queryBus,
-    projectRoot,
-  });
+  try {
+    await homeFn({
+      commandBus: app.commandBus,
+      queryBus: app.queryBus,
+      projectRoot,
+    });
+  } finally {
+    await app.close();
+  }
 }
 
 export async function main(args: string[]): Promise<void> {

@@ -10,11 +10,10 @@ const REQUIRED_PATTERNS = [
 ] as const;
 
 export async function ensureConduitStateGitIgnored(
-  projectRoot: string,
+  stateDirectory: string,
 ): Promise<void> {
-  const directory = join(projectRoot, ".conduit");
-  const ignorePath = join(directory, ".gitignore");
-  await mkdir(directory, { recursive: true });
+  const ignorePath = join(stateDirectory, ".gitignore");
+  await mkdir(stateDirectory, { recursive: true });
   let existing = "";
   try {
     existing = await readFile(ignorePath, "utf8");

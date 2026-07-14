@@ -2,6 +2,7 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { createApplication } from "../../src/system/bootstrap/application.js";
 import type { BootstrapDependencies } from "../../src/system/bootstrap/application.js";
+import type { ApplicationBootstrapService } from "../../src/system/bootstrap/application.js";
 import { InMemoryCredentialStore } from "../../src/domains/credentials/repositories/in-memory-store.js";
 import { LocalSpecKitProvider } from "../../src/domains/features/providers/local-spec-kit-provider.js";
 import { createPortraitRegistry } from "../../src/domains/roles/repositories/portrait-registry.js";
@@ -70,6 +71,23 @@ test("createApplication returns commandBus and queryBus", () => {
   const app = createApplication(stubDeps());
   assert.ok(app.commandBus);
   assert.ok(app.queryBus);
+});
+
+test("createApplication composes registrations through the bootstrap contract", async () => {
+  const service: ApplicationBootstrapService = {
+    register({ queryBus, repositories }) {
+      assert.ok(repositories.runEvents);
+      queryBus.register("bootstrapContractProbe", async () => ({
+        success: true,
+        data: { registered: true },
+      }));
+    },
+  };
+  const app = createApplication(stubDeps(), [service]);
+  const result = await app.queryBus.execute({ type: "bootstrapContractProbe" });
+  assert.equal(result.success, true);
+  if (result.success)
+    assert.equal((result.data as { registered: boolean }).registered, true);
 });
 
 test("initializeProject command dispatches to dependency", async () => {

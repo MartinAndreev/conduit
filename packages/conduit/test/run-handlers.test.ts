@@ -13,6 +13,28 @@ import { CommandBus } from "../src/system/bus/command-bus.js";
 import type { LifecyclePayload } from "../src/domains/runs/types/runner-events.js";
 import type { RunEventRepository } from "../src/domains/runs/interfaces/run-event-repository.js";
 import type { DiffReader } from "../src/domains/runs/repositories/worktree-diff-reader.js";
+import type { RunRecoveryRepository } from "../src/domains/runs/interfaces/run-recovery-repository.js";
+import type { Run } from "../src/domains/runs/types/run.js";
+
+function recoveryRepository(run?: Run): RunRecoveryRepository {
+  return {
+    saveSnapshot: async () => {
+      throw new Error("not used");
+    },
+    loadSnapshot: async () =>
+      run
+        ? {
+            run,
+            state: "running",
+            version: 1,
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          }
+        : undefined,
+    listSnapshots: async () => [],
+    markInterrupted: async () => {},
+    markCancelled: async () => {},
+  };
+}
 
 // createCancelRunHandler
 
@@ -203,9 +225,31 @@ test("createGetRunDiffHandler resolves worktree from persisted run data", async 
       };
     },
   };
-  const mockLoadConfig = async () => ({ stateDir: ".conduit" });
-  const handler = createGetRunDiffHandler(mockReader, mockLoadConfig);
-  // Without a persisted run file, worktree will be empty and diff will be undefined
+  const handler = createGetRunDiffHandler(
+    mockReader,
+    recoveryRepository({
+      id: "r1",
+      featureId: "002",
+      status: "running",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      roles: [
+        {
+          name: "be",
+          runner: "codex",
+          readOnly: false,
+          owns: [],
+          dependsOn: [],
+          promptFile: "prompt.md",
+          prompt: "prompt",
+          command: "codex",
+          args: [],
+          skillSource: "builtin",
+          status: "running",
+          worktree: "/worktree",
+        },
+      ],
+    }),
+  );
   const result = await handler({
     type: "getRunDiff",
     projectRoot: "/p",
@@ -218,9 +262,8 @@ test("createGetRunDiffHandler resolves worktree from persisted run data", async 
       diff: string | undefined;
       changedFiles: unknown[];
     };
-    // No persisted run file, so worktree is empty and diff is undefined
-    assert.equal(data.diff, undefined);
-    assert.equal(data.changedFiles.length, 0);
+    assert.equal(data.diff, "diff");
+    assert.equal(data.changedFiles.length, 1);
   }
 });
 
@@ -235,8 +278,7 @@ test("createGetRunDiffHandler returns empty diff when no worktree in run", async
       };
     },
   };
-  const mockLoadConfig = async () => ({ stateDir: ".conduit" });
-  const handler = createGetRunDiffHandler(mockReader, mockLoadConfig);
+  const handler = createGetRunDiffHandler(mockReader, recoveryRepository());
   const result = await handler({
     type: "getRunDiff",
     projectRoot: "/p",

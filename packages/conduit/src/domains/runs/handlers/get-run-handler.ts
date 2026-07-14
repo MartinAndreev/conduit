@@ -4,24 +4,15 @@ import type {
   GetRunReadModel,
 } from "../interfaces/queries/get-run.js";
 import type { Run } from "../types/run.js";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
+import type { RunRecoveryRepository } from "../interfaces/run-recovery-repository.js";
 
 export function createGetRunHandler(
-  loadConfig: (projectRoot: string) => Promise<{ stateDir: string }>,
+  repository: RunRecoveryRepository,
 ): QueryHandler<GetRunQuery, GetRunReadModel> {
   return async (query) => {
     try {
-      const config = await loadConfig(query.projectRoot);
-      const runFile = path.join(
-        query.projectRoot,
-        config.stateDir,
-        "runs",
-        query.runId,
-        "run.json",
-      );
-      const raw = await readFile(runFile, "utf8");
-      const run: Run = JSON.parse(raw);
+      const run: Run | undefined = (await repository.loadSnapshot(query.runId))
+        ?.run;
       return { success: true, data: { run } };
     } catch {
       return { success: true, data: { run: undefined } };

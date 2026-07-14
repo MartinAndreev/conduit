@@ -4,9 +4,17 @@ import type {
 } from "../interfaces/database.js";
 
 export class DatabaseTransactionRunner implements TransactionRunner {
+  private pending = Promise.resolve();
+
   constructor(private readonly connection: DatabaseConnection) {}
 
   async transaction<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.pending;
+    let release: (() => void) | undefined;
+    this.pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
     await this.connection.execute("BEGIN IMMEDIATE");
     try {
       const result = await operation();
@@ -15,6 +23,8 @@ export class DatabaseTransactionRunner implements TransactionRunner {
     } catch (error) {
       await this.connection.execute("ROLLBACK");
       throw error;
+    } finally {
+      release?.();
     }
   }
 }
