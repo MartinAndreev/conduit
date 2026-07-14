@@ -1,0 +1,80 @@
+---
+import { getCollection, render, type CollectionEntry } from "astro:content";
+import SiteLayout from "../../layouts/SiteLayout.astro";
+import {
+  formatReleaseDate,
+  getPublishedReleases,
+} from "../../lib/releases.js";
+
+export async function getStaticPaths() {
+  const entries = getPublishedReleases(await getCollection("releases"));
+  return entries.map((entry) => ({
+    params: { slug: entry.id },
+    props: { entry },
+  }));
+}
+
+interface Props {
+  readonly entry: CollectionEntry<"releases">;
+}
+
+const { entry } = Astro.props;
+const { Content } = await render(entry);
+const base = import.meta.env.BASE_URL;
+const coverUrl = entry.data.cover
+  ? `${base}${entry.data.cover.src.replace(/^\//u, "")}`
+  : undefined;
+---
+
+<SiteLayout
+  title={`${entry.data.title} — Conduit`}
+  description={entry.data.description}
+  image={coverUrl}
+  type="article"
+>
+  <main class="release-entry-page" id="top">
+    <article>
+      <header class="release-entry-header">
+        <a class="back-link" href={`${base}releases/`}>
+          <span aria-hidden="true">←</span> All releases
+        </a>
+        <p class="eyebrow">
+          <span></span>{entry.data.type === "announcement" ? "Major announcement" : "Release notes"}
+        </p>
+        <h1>{entry.data.title}</h1>
+        <p class="release-entry-dek">{entry.data.description}</p>
+        <div class="release-entry-byline">
+          {entry.data.version && <span>{entry.data.version}</span>}
+          <time datetime={entry.data.publishedAt.toISOString()}>
+            {formatReleaseDate(entry.data.publishedAt)}
+          </time>
+          {
+            entry.data.githubReleaseUrl && (
+              <a href={entry.data.githubReleaseUrl} rel="noreferrer">
+                GitHub release <span aria-hidden="true">↗</span>
+              </a>
+            )
+          }
+        </div>
+      </header>
+
+      {
+        entry.data.cover && coverUrl && (
+          <figure class="release-cover">
+            <img src={coverUrl} alt={entry.data.cover.alt} />
+          </figure>
+        )
+      }
+
+      <div class="release-prose">
+        <Content />
+      </div>
+
+      <footer class="release-entry-footer">
+        <p>Keep following the work.</p>
+        <a href={`${base}roadmap/`}>Explore the roadmap <span aria-hidden="true">→</span></a>
+      </footer>
+    </article>
+  </main>
+</SiteLayout>
+

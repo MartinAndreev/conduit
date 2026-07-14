@@ -8,7 +8,7 @@
     "dev": "cross-env ASTRO_TELEMETRY_DISABLED=1 astro dev",
     "lint": "cross-env ASTRO_TELEMETRY_DISABLED=1 astro check",
     "preview": "cross-env ASTRO_TELEMETRY_DISABLED=1 astro preview",
-    "test": "cross-env ASTRO_TELEMETRY_DISABLED=1 astro check",
+    "test": "cross-env ASTRO_TELEMETRY_DISABLED=1 astro check && pnpm build && node --test tests/*.test.mjs",
     "typecheck": "cross-env ASTRO_TELEMETRY_DISABLED=1 astro check"
   },
   "devDependencies": {

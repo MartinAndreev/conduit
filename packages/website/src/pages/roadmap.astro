@@ -1,0 +1,150 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+import {
+  getRoadmapItemsForPhase,
+  roadmapItems,
+  roadmapPhaseDefinitions,
+} from "../data/roadmap.js";
+---
+
+<SiteLayout
+  title="Roadmap — Conduit"
+  description="An interactive view of the features Conduit is developing and researching next."
+>
+  <main class="roadmap-page" id="top">
+    <header class="page-intro roadmap-intro">
+      <p class="eyebrow"><span></span>Product roadmap</p>
+      <h1>The next routes forward.</h1>
+      <p>
+        A living view of approved development and the integrations we are
+        researching. Priority expresses sequence, not a promised date.
+      </p>
+      <div class="roadmap-summary" aria-label="Roadmap summary">
+        <div><strong>{roadmapItems.length}</strong><span>Planned features</span></div>
+        <div><strong>{getRoadmapItemsForPhase("development").length}</strong><span>In development</span></div>
+        <div><strong>{getRoadmapItemsForPhase("research").length}</strong><span>In research</span></div>
+      </div>
+    </header>
+
+    <section class="roadmap-workspace" aria-labelledby="roadmap-board-heading">
+      <div class="roadmap-toolbar">
+        <div>
+          <p class="eyebrow"><span></span>Planning chart</p>
+          <h2 id="roadmap-board-heading">Feature pipeline</h2>
+        </div>
+        <div class="roadmap-controls" aria-label="Filter roadmap items" data-roadmap-controls>
+          <div class="roadmap-control-group" role="group" aria-label="Filter by phase">
+            <span>Phase</span>
+            <button type="button" data-filter-kind="phase" data-filter-value="all" aria-pressed="true">All</button>
+            <button type="button" data-filter-kind="phase" data-filter-value="development" aria-pressed="false">Development</button>
+            <button type="button" data-filter-kind="phase" data-filter-value="research" aria-pressed="false">Research</button>
+          </div>
+          <div class="roadmap-control-group" role="group" aria-label="Filter by priority">
+            <span>Priority</span>
+            <button type="button" data-filter-kind="priority" data-filter-value="all" aria-pressed="true">All</button>
+            <button type="button" data-filter-kind="priority" data-filter-value="high" aria-pressed="false">High</button>
+            <button type="button" data-filter-kind="priority" data-filter-value="normal" aria-pressed="false">Normal</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="roadmap-board" aria-label="Roadmap phases" data-roadmap-board>
+        {
+          roadmapPhaseDefinitions.map((phase, phaseIndex) => {
+            const items = getRoadmapItemsForPhase(phase.id);
+            return (
+              <section class="roadmap-column" data-roadmap-column={phase.id} aria-labelledby={`phase-${phase.id}`}>
+                <header>
+                  <div>
+                    <span class="roadmap-phase-number">{String(phaseIndex + 1).padStart(2, "0")}</span>
+                    <h3 id={`phase-${phase.id}`}>{phase.label}</h3>
+                  </div>
+                  <span class="roadmap-count" data-roadmap-count>{items.length}</span>
+                  <p>{phase.description}</p>
+                </header>
+                <ol>
+                  {items.map((item) => (
+                    <li data-roadmap-item data-phase={item.phase} data-priority={item.priority}>
+                      <article class:list={["roadmap-card", `priority-${item.priority}`]}>
+                        <div class="roadmap-card-topline">
+                          <span class="roadmap-priority">
+                            <span aria-hidden="true" />{item.priority === "high" ? "High priority" : "Normal priority"}
+                          </span>
+                          <span class="roadmap-order">{String(item.order).padStart(2, "0")}</span>
+                        </div>
+                        <h4>{item.title}</h4>
+                        <p>{item.outcome}</p>
+                        <details>
+                          <summary>View plan <span aria-hidden="true">+</span></summary>
+                          <div class="roadmap-details">
+                            <p>{item.details}</p>
+                            {item.dependencies && (
+                              <p class="roadmap-dependency">
+                                <strong>Depends on</strong>
+                                {item.dependencies.join(", ")}
+                              </p>
+                            )}
+                          </div>
+                        </details>
+                      </article>
+                    </li>
+                  ))}
+                </ol>
+                <p class="roadmap-empty-column" data-roadmap-empty hidden>No items match these filters.</p>
+              </section>
+            );
+          })
+        }
+      </div>
+      <p class="roadmap-disclaimer">
+        Roadmap order and scope may change as research develops. Phases describe
+        the current planning state and do not commit to delivery dates.
+      </p>
+    </section>
+  </main>
+</SiteLayout>
+
+<script>
+  document.documentElement.classList.add("has-js");
+
+  const controls = document.querySelector<HTMLElement>("[data-roadmap-controls]");
+  const items = Array.from(document.querySelectorAll<HTMLElement>("[data-roadmap-item]"));
+  const columns = Array.from(document.querySelectorAll<HTMLElement>("[data-roadmap-column]"));
+
+  if (controls) {
+    const filters = { phase: "all", priority: "all" };
+    const buttons = Array.from(controls.querySelectorAll<HTMLButtonElement>("button[data-filter-kind]"));
+
+    const applyFilters = () => {
+      items.forEach((item) => {
+        const matchesPhase = filters.phase === "all" || item.dataset.phase === filters.phase;
+        const matchesPriority = filters.priority === "all" || item.dataset.priority === filters.priority;
+        item.hidden = !(matchesPhase && matchesPriority);
+      });
+
+      columns.forEach((column) => {
+        const visibleCount = column.querySelectorAll<HTMLElement>("[data-roadmap-item]:not([hidden])").length;
+        const count = column.querySelector<HTMLElement>("[data-roadmap-count]");
+        const empty = column.querySelector<HTMLElement>("[data-roadmap-empty]");
+        if (count) count.textContent = String(visibleCount);
+        if (empty) empty.hidden = visibleCount !== 0;
+      });
+    };
+
+    buttons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const kind = button.dataset.filterKind;
+        const value = button.dataset.filterValue;
+        if ((kind !== "phase" && kind !== "priority") || !value) return;
+        filters[kind] = value;
+        buttons
+          .filter((candidate) => candidate.dataset.filterKind === kind)
+          .forEach((candidate) =>
+            candidate.setAttribute("aria-pressed", String(candidate === button)),
+          );
+        applyFilters();
+      });
+    });
+  }
+</script>
+
