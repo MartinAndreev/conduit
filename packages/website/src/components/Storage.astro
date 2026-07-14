@@ -1,0 +1,160 @@
+<section class="storage-section" id="storage" aria-labelledby="storage-title">
+  <div class="storage-heading">
+    <p class="eyebrow"><span></span>Embedded Turso persistence</p>
+    <h2 id="storage-title">Local state, deliberately contained.</h2>
+    <p>
+      Conduit now persists runtime state through domain repositories backed by
+      Kysely and embedded Turso—without exposing the database to coding agents
+      or committing intermediate work.
+    </p>
+  </div>
+
+  <div class="storage-explorer" data-storage-explorer>
+    <div class="storage-controls" aria-label="Database interaction">
+      <button type="button" aria-pressed="true" data-storage-step="startup">
+        <span>01</span>
+        <strong>Start safely</strong>
+        <small>Migrate before queries</small>
+      </button>
+      <button type="button" aria-pressed="false" data-storage-step="write">
+        <span>02</span>
+        <strong>Persist state</strong>
+        <small>Repository → Kysely → Turso</small>
+      </button>
+      <button type="button" aria-pressed="false" data-storage-step="recover">
+        <span>03</span>
+        <strong>Recover safely</strong>
+        <small>Checkpoint and backup</small>
+      </button>
+      <button type="button" aria-pressed="false" data-storage-step="reopen">
+        <span>04</span>
+        <strong>Reopen intact</strong>
+        <small>One owned connection</small>
+      </button>
+    </div>
+
+    <div class="storage-stage" aria-live="polite">
+      <div class="storage-stage-bar">
+        <span><i></i> project/.conduit/state.db</span>
+        <span data-storage-status>migration · running</span>
+      </div>
+
+      <div class="storage-route" aria-hidden="true">
+        <div class="storage-node storage-node-source">
+          <span data-storage-source-label>STARTUP</span>
+          <strong data-storage-source>Migration screen</strong>
+        </div>
+        <div class="storage-line"><i></i></div>
+        <div class="storage-node storage-node-repository">
+          <span data-storage-middle-label>ORDERED</span>
+          <strong data-storage-middle>Global → project</strong>
+        </div>
+        <div class="storage-line"><i></i></div>
+        <div class="storage-database">
+          <span>TURSO</span>
+          <strong data-storage-database>Schema ready</strong>
+        </div>
+      </div>
+
+      <div class="storage-output">
+        <div>
+          <span>EVENT</span>
+          <code data-storage-event>0001 system → 0006 source · checksums verified</code>
+        </div>
+        <p data-storage-description>
+          The blocking migration screen completes global migrations, project
+          migrations, and legacy import before the application can query state.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="storage-facts" aria-label="Storage guarantees">
+    <p><span>01</span>Project and global databases stay separate.</p>
+    <p><span>02</span>Credentials never enter database rows or backups.</p>
+    <p><span>03</span>Approved packets remain ordinary Git-visible files.</p>
+  </div>
+</section>
+
+<script>
+  const storageSteps = {
+    startup: {
+      status: "migration · running",
+      sourceLabel: "STARTUP",
+      source: "Migration screen",
+      middleLabel: "ORDERED",
+      middle: "Global → project",
+      database: "Schema ready",
+      event: "0001 system → 0006 source · checksums verified",
+      description:
+        "The blocking migration screen completes global migrations, project migrations, and legacy import before the application can query state.",
+    },
+    write: {
+      status: "transaction · committed",
+      sourceLabel: "COMMAND",
+      source: "Save draft",
+      middleLabel: "TYPED",
+      middle: "Repository + Kysely",
+      database: "Draft v12",
+      event: "optimistic version 11 → 12 · 1 row updated",
+      description:
+        "Handlers depend on domain repository contracts. Typed Kysely queries cross the Turso dialect, while credentials and secret-like values are rejected or redacted.",
+    },
+    recover: {
+      status: "recovery · protected",
+      sourceLabel: "CHECKPOINT",
+      source: "Flush WAL",
+      middleLabel: "VERIFY",
+      middle: "Redacted backup",
+      database: "Retry ready",
+      event: "backup created · secret scan passed · recovery recorded",
+      description:
+        "Before pending migrations, Conduit checkpoints the database and creates a scanned backup. Incomplete migration records provide a deterministic recovery path.",
+    },
+    reopen: {
+      status: "lifecycle · healthy",
+      sourceLabel: "SHUTDOWN",
+      source: "Close cleanly",
+      middleLabel: "LAZY OPEN",
+      middle: "Shared connection",
+      database: "State restored",
+      event: "checkpoint → close → reopen · persisted state verified",
+      description:
+        "The application owns one lazy project connection, shares it across repositories, and closes it on shutdown. Coding-agent processes never receive database access.",
+    },
+  };
+
+  document.querySelectorAll<HTMLElement>("[data-storage-explorer]").forEach((explorer) => {
+    const buttons = Array.from(
+      explorer.querySelectorAll<HTMLButtonElement>("[data-storage-step]"),
+    );
+    const stage = explorer.querySelector<HTMLElement>(".storage-stage");
+
+    const update = (button: HTMLButtonElement) => {
+      const key = button.dataset.storageStep as keyof typeof storageSteps;
+      const step = storageSteps[key];
+      if (!step || !stage) return;
+
+      buttons.forEach((candidate) =>
+        candidate.setAttribute("aria-pressed", String(candidate === button)),
+      );
+      stage.dataset.activeStep = key;
+
+      const setText = (selector: string, value: string) => {
+        const element = stage.querySelector<HTMLElement>(selector);
+        if (element) element.textContent = value;
+      };
+
+      setText("[data-storage-status]", step.status);
+      setText("[data-storage-source-label]", step.sourceLabel);
+      setText("[data-storage-source]", step.source);
+      setText("[data-storage-middle-label]", step.middleLabel);
+      setText("[data-storage-middle]", step.middle);
+      setText("[data-storage-database]", step.database);
+      setText("[data-storage-event]", step.event);
+      setText("[data-storage-description]", step.description);
+    };
+
+    buttons.forEach((button) => button.addEventListener("click", () => update(button)));
+  });
+</script>

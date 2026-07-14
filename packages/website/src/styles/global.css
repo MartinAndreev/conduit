@@ -19,6 +19,7 @@
 }
 
 html {
+  max-width: 100%;
   scroll-behavior: smooth;
 }
 
@@ -29,6 +30,7 @@ html {
 body {
   margin: 0;
   min-width: 320px;
+  max-width: 100%;
   overflow-x: hidden;
   background: var(--surface);
 }
@@ -67,7 +69,7 @@ a {
   height: auto;
 }
 
-nav {
+.primary-nav {
   display: flex;
   gap: clamp(1.25rem, 3vw, 2.5rem);
   color: var(--muted);
@@ -76,21 +78,29 @@ nav {
   letter-spacing: 0.04em;
 }
 
-nav a,
+.primary-nav a,
+.mobile-menu a,
 .github-link {
   transition: color 180ms ease;
 }
 
-nav a:hover,
+.primary-nav a:hover,
+.mobile-menu a:hover,
 .github-link:hover {
   color: var(--signal);
+}
+
+.header-actions {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-self: end;
 }
 
 .github-link {
   display: flex;
   gap: 0.55rem;
   align-items: center;
-  justify-self: end;
   font-size: 0.76rem;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -98,6 +108,70 @@ nav a:hover,
 
 .github-link svg {
   width: 1.1rem;
+}
+
+.mobile-menu {
+  position: relative;
+  display: none;
+}
+
+.mobile-menu summary {
+  display: grid;
+  gap: 0.25rem;
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0.7rem 0.55rem;
+  border: 1px solid var(--line);
+  cursor: pointer;
+  list-style: none;
+}
+
+.mobile-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.mobile-menu summary span {
+  display: block;
+  height: 1px;
+  background: currentColor;
+  transition:
+    transform 180ms ease,
+    opacity 180ms ease;
+}
+
+.mobile-menu[open] summary span:first-child {
+  transform: translateY(0.32rem) rotate(45deg);
+}
+
+.mobile-menu[open] summary span:nth-child(2) {
+  opacity: 0;
+}
+
+.mobile-menu[open] summary span:last-child {
+  transform: translateY(-0.32rem) rotate(-45deg);
+}
+
+.mobile-menu nav {
+  position: absolute;
+  top: calc(100% + 0.75rem);
+  right: 0;
+  display: grid;
+  width: min(18rem, calc(100vw - 2rem));
+  border: 1px solid var(--line);
+  background: rgba(23, 28, 25, 0.98);
+  box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.4);
+}
+
+.mobile-menu nav a {
+  padding: 0.95rem 1rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.mobile-menu nav a:last-child {
+  border-bottom: 0;
 }
 
 .hero {
@@ -1094,6 +1168,273 @@ h1 {
   margin-bottom: clamp(3rem, 6vw, 5rem);
 }
 
+.storage-section {
+  width: min(100% - 3rem, 82rem);
+  margin: 0 auto;
+  padding: clamp(6rem, 11vw, 10rem) 0;
+  border-top: 1px solid var(--line);
+}
+
+.storage-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(18rem, 0.85fr);
+  gap: clamp(2rem, 6vw, 6rem);
+  align-items: end;
+  margin-bottom: clamp(3rem, 6vw, 5rem);
+}
+
+.storage-heading .eyebrow {
+  grid-column: 1 / -1;
+}
+
+.storage-heading h2 {
+  max-width: 13ch;
+}
+
+.storage-heading > p:last-child {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.75;
+}
+
+.storage-explorer {
+  display: grid;
+  grid-template-columns: minmax(14rem, 0.32fr) minmax(0, 1fr);
+  min-width: 0;
+  border: 1px solid var(--line);
+  background: var(--surface-raised);
+}
+
+.storage-controls {
+  display: grid;
+  align-content: start;
+  border-right: 1px solid var(--line);
+}
+
+.storage-controls button {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: 0.2rem 0.8rem;
+  width: 100%;
+  padding: 1.2rem;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 180ms ease,
+    color 180ms ease;
+}
+
+.storage-controls button:hover,
+.storage-controls button[aria-pressed="true"] {
+  background: rgba(143, 182, 160, 0.08);
+  color: var(--ink);
+}
+
+.storage-controls button[aria-pressed="true"] {
+  box-shadow: inset 2px 0 var(--signal);
+}
+
+.storage-controls button > span {
+  grid-row: 1 / 3;
+  color: var(--sage);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.67rem;
+}
+
+.storage-controls strong {
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.storage-controls small {
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-stage {
+  min-width: 0;
+  padding: clamp(1.25rem, 4vw, 3rem);
+}
+
+.storage-stage-bar {
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--faint);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.66rem;
+}
+
+.storage-stage-bar span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-stage-bar i {
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-right: 0.5rem;
+  border-radius: 50%;
+  background: var(--signal);
+  box-shadow: 0 0 0.8rem rgba(184, 239, 134, 0.5);
+}
+
+.storage-stage-bar span:last-child {
+  flex: 0 0 auto;
+  color: var(--sage);
+}
+
+.storage-route {
+  display: grid;
+  grid-template-columns:
+    minmax(7rem, 1fr) minmax(2.5rem, 0.45fr) minmax(7rem, 1fr)
+    minmax(2.5rem, 0.45fr) minmax(7rem, 1fr);
+  align-items: center;
+  min-height: 18rem;
+}
+
+.storage-node,
+.storage-database {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 7rem;
+  padding: 1rem;
+  border: 1px solid rgba(147, 189, 159, 0.25);
+  background: #111513;
+  text-align: center;
+}
+
+.storage-node span,
+.storage-database span {
+  margin-bottom: 0.65rem;
+  color: var(--sage);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.61rem;
+  letter-spacing: 0.1em;
+}
+
+.storage-node strong,
+.storage-database strong {
+  font-size: clamp(0.76rem, 1.2vw, 0.9rem);
+  font-weight: 500;
+}
+
+.storage-database {
+  border-color: rgba(213, 191, 134, 0.36);
+  border-radius: 50% / 13%;
+  background: #202820;
+  box-shadow: inset 0 0.75rem rgba(213, 191, 134, 0.05);
+}
+
+.storage-database span {
+  color: var(--sand);
+}
+
+.storage-line {
+  position: relative;
+  height: 1px;
+  overflow: hidden;
+  background: rgba(147, 189, 159, 0.35);
+}
+
+.storage-line i {
+  position: absolute;
+  top: -0.2rem;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--signal);
+  box-shadow: 0 0 0.8rem rgba(184, 239, 134, 0.75);
+  animation: storage-signal 2.4s linear infinite;
+}
+
+.storage-line:nth-of-type(4) i {
+  animation-delay: -1.2s;
+}
+
+.storage-output {
+  display: grid;
+  grid-template-columns: minmax(13rem, 0.8fr) minmax(0, 1.2fr);
+  gap: clamp(1.5rem, 4vw, 4rem);
+  padding-top: 1.4rem;
+  border-top: 1px solid var(--line);
+}
+
+.storage-output > div {
+  min-width: 0;
+}
+
+.storage-output span {
+  display: block;
+  margin-bottom: 0.55rem;
+  color: var(--sage);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.61rem;
+  letter-spacing: 0.1em;
+}
+
+.storage-output code {
+  display: block;
+  overflow-wrap: anywhere;
+  color: #d8d5c8;
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.7rem;
+  line-height: 1.7;
+}
+
+.storage-output p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.75;
+}
+
+.storage-stage[data-active-step] .storage-node,
+.storage-stage[data-active-step] .storage-database,
+.storage-stage[data-active-step] .storage-output {
+  animation: storage-stage-in 260ms ease both;
+}
+
+.storage-facts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line);
+}
+
+.storage-facts p {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.8rem;
+  margin: 0;
+  padding: 1.2rem;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.6;
+}
+
+.storage-facts span {
+  color: var(--sage);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.64rem;
+}
+
 .install-heading .eyebrow {
   grid-column: 1 / -1;
 }
@@ -1102,12 +1443,14 @@ h1 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1px;
+  min-width: 0;
   background: var(--line);
 }
 
 .install-card {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   min-height: 31rem;
   padding: clamp(1.5rem, 4vw, 3rem);
   background: var(--surface-raised);
@@ -1139,6 +1482,8 @@ h1 {
 }
 
 .install-card pre {
+  width: 100%;
+  max-width: 100%;
   margin: auto 0 2rem;
   padding: 1.2rem;
   overflow-x: auto;
@@ -1303,6 +1648,17 @@ h1 {
   padding: 0.12rem 0.35rem;
   background: rgba(143, 182, 160, 0.1);
   color: #c8dfce;
+}
+
+.docs-inline-link {
+  color: var(--signal);
+  text-decoration: underline;
+  text-decoration-color: rgba(184, 239, 134, 0.45);
+  text-underline-offset: 0.2em;
+}
+
+.docs-inline-link:hover {
+  text-decoration-color: currentColor;
 }
 
 .docs-content pre {
@@ -1580,6 +1936,28 @@ h3 {
   }
 }
 
+@keyframes storage-signal {
+  from {
+    left: -0.4rem;
+  }
+
+  to {
+    left: 100%;
+  }
+}
+
+@keyframes storage-stage-in {
+  from {
+    opacity: 0.45;
+    transform: translateY(0.2rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (max-width: 64rem) {
   .demo-step,
   .demo-step:nth-child(even),
@@ -1627,6 +2005,15 @@ h3 {
   .why-story {
     grid-template-columns: 1fr;
   }
+
+  .storage-heading {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+
+  .storage-heading .eyebrow {
+    grid-column: auto;
+  }
 }
 
 @media (max-width: 48rem) {
@@ -1636,8 +2023,12 @@ h3 {
     min-height: 5.5rem;
   }
 
-  nav {
+  .primary-nav {
     display: none;
+  }
+
+  .mobile-menu {
+    display: block;
   }
 
   .github-link span {
@@ -1689,6 +2080,7 @@ h3 {
   .demo-section,
   .cli-section,
   .install-section,
+  .storage-section,
   .why-section,
   .docs-page {
     width: min(100% - 2rem, 82rem);
@@ -1735,12 +2127,70 @@ h3 {
   .section-heading,
   .principles,
   .install-heading,
+  .storage-explorer,
   .install-options {
     grid-template-columns: 1fr;
   }
 
   .install-heading .eyebrow {
     grid-column: auto;
+  }
+
+  .storage-controls {
+    grid-template-columns: 1fr 1fr;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .storage-controls button:nth-last-child(-n + 2) {
+    border-bottom: 0;
+  }
+
+  .storage-controls button:nth-child(odd) {
+    border-right: 1px solid var(--line);
+  }
+
+  .storage-stage {
+    padding: 1.25rem;
+  }
+
+  .storage-stage-bar {
+    align-items: flex-start;
+  }
+
+  .storage-stage-bar span:first-child {
+    max-width: 58%;
+  }
+
+  .storage-route {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+    padding: 2rem 0;
+  }
+
+  .storage-node,
+  .storage-database {
+    width: min(15rem, 100%);
+    min-height: 5.5rem;
+    margin: 0 auto;
+  }
+
+  .storage-line {
+    width: 1px;
+    height: 2rem;
+    margin: 0 auto;
+    overflow: visible;
+  }
+
+  .storage-line i {
+    top: 0.8rem;
+    left: -0.18rem;
+    animation: tui-pulse 1.4s ease-in-out infinite;
+  }
+
+  .storage-output,
+  .storage-facts {
+    grid-template-columns: 1fr;
   }
 
   .docs-compare {
@@ -1753,6 +2203,11 @@ h3 {
 
   .install-card {
     min-height: 28rem;
+    padding: 1.4rem;
+  }
+
+  .install-card pre {
+    padding: 1rem;
   }
 
   .model-routing {
@@ -1825,6 +2280,10 @@ h3 {
   .tui-spinner,
   .tui-progress i,
   .routing-conduit i,
+  .storage-line i,
+  .storage-stage[data-active-step] .storage-node,
+  .storage-stage[data-active-step] .storage-database,
+  .storage-stage[data-active-step] .storage-output,
   .cli-beat {
     animation: none;
   }
