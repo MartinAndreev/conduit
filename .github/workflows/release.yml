@@ -32,7 +32,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:standalone -- ${{ matrix.target }}
-      - run: pnpm test -- standalone-persistence
+      - run: pnpm --filter conduit-orchestrator test -- standalone-persistence
       - uses: actions/upload-artifact@v4
         with:
           name: conduit-${{ matrix.target }}
