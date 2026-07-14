@@ -49,6 +49,7 @@ export async function textarea({
       cursorColor: "#D8C28B",
       keyBindings: [
         { name: "return", ctrl: true, action: "submit" },
+        { name: "return", meta: true, action: "submit" },
         { name: "f10", action: "submit" },
       ],
       onSubmit: () => finishResolve(textareaEl.plainText.trim()),
