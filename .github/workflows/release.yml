@@ -46,9 +46,11 @@ jobs:
         with:
           path: packages/conduit/dist/release
           merge-multiple: true
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: pnpm
       - run: |
           cp install.sh packages/conduit/dist/release/install.sh
           sed "s|__CONDUIT_REPOSITORY__|${{ github.repository }}|g" install.ps1 > packages/conduit/dist/release/install.ps1
