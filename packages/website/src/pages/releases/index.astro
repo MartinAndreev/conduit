@@ -1,0 +1,101 @@
+---
+import { getCollection } from "astro:content";
+import SiteLayout from "../../layouts/SiteLayout.astro";
+import {
+  formatReleaseDate,
+  getPublishedReleases,
+} from "../../lib/releases.js";
+
+const base = import.meta.env.BASE_URL;
+const releases = getPublishedReleases(await getCollection("releases"));
+const featured = releases.find((entry) => entry.data.featured) ?? releases[0];
+const archive = releases.filter((entry) => entry.id !== featured?.id).slice(0, 24);
+---
+
+<SiteLayout
+  title="Releases — Conduit"
+  description="Release notes and major announcements from Conduit."
+>
+  <main class="release-page" id="top">
+    <header class="page-intro release-intro">
+      <p class="eyebrow"><span></span>Release journal</p>
+      <h1>What we are shipping.</h1>
+      <p>
+        Major announcements, release notes, and the engineering decisions behind
+        each meaningful step forward.
+      </p>
+    </header>
+
+    {
+      featured ? (
+        <section class="featured-release" aria-labelledby="featured-release-heading">
+          <div class="featured-release-label">
+            <span>Featured</span>
+            <span>{featured.data.type === "announcement" ? "Major announcement" : "Release notes"}</span>
+          </div>
+          <div class="featured-release-content">
+            <div>
+              <p class="release-meta">
+                {featured.data.version && <span>{featured.data.version}</span>}
+                <time datetime={featured.data.publishedAt.toISOString()}>
+                  {formatReleaseDate(featured.data.publishedAt)}
+                </time>
+              </p>
+              <h2 id="featured-release-heading">{featured.data.title}</h2>
+              <p>{featured.data.description}</p>
+            </div>
+            <a class="release-read-link" href={`${base}releases/${featured.id}/`}>
+              Read announcement <span aria-hidden="true">↗</span>
+            </a>
+          </div>
+        </section>
+      ) : (
+        <section class="release-empty">
+          <p class="eyebrow"><span />Archive</p>
+          <h2>The first release story is being prepared.</h2>
+          <p>Check back for product announcements and detailed release notes.</p>
+        </section>
+      )
+    }
+
+    {
+      archive.length > 0 && (
+        <section class="release-archive" aria-labelledby="release-archive-heading">
+          <div class="section-heading-row">
+            <div>
+              <p class="eyebrow"><span />Archive</p>
+              <h2 id="release-archive-heading">Previous releases</h2>
+            </div>
+            <p>{archive.length} {archive.length === 1 ? "entry" : "entries"}</p>
+          </div>
+          <ol class="release-list">
+            {archive.map((entry) => (
+              <li>
+                <article class="release-card">
+                  <div class="release-card-number" aria-hidden="true">
+                    {String(releases.indexOf(entry) + 1).padStart(2, "0")}
+                  </div>
+                  <div>
+                    <p class="release-meta">
+                      <span>{entry.data.type === "announcement" ? "Announcement" : "Release"}</span>
+                      {entry.data.version && <span>{entry.data.version}</span>}
+                      <time datetime={entry.data.publishedAt.toISOString()}>
+                        {formatReleaseDate(entry.data.publishedAt)}
+                      </time>
+                    </p>
+                    <h3><a href={`${base}releases/${entry.id}/`}>{entry.data.title}</a></h3>
+                    <p>{entry.data.description}</p>
+                  </div>
+                  <a class="release-card-arrow" href={`${base}releases/${entry.id}/`} aria-label={`Read ${entry.data.title}`}>
+                    ↗
+                  </a>
+                </article>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )
+    }
+  </main>
+</SiteLayout>
+

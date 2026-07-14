@@ -1,0 +1,57 @@
+---
+import Header from "../components/Header.astro";
+import "../styles/global.css";
+
+interface Props {
+  readonly title: string;
+  readonly description: string;
+  readonly image?: string;
+  readonly type?: "website" | "article";
+}
+
+const {
+  title,
+  description,
+  image,
+  type = "website",
+} = Astro.props;
+const base = import.meta.env.BASE_URL;
+const canonicalUrl = Astro.site
+  ? new URL(Astro.url.pathname, Astro.site).toString()
+  : undefined;
+const socialImage = image
+  ? Astro.site
+    ? new URL(image, Astro.site).toString()
+    : image
+  : undefined;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content={description} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content={type} />
+    {canonicalUrl && <meta property="og:url" content={canonicalUrl} />}
+    {socialImage && <meta property="og:image" content={socialImage} />}
+    {canonicalUrl && <link rel="canonical" href={canonicalUrl} />}
+    <link rel="icon" href={`${base}favicon.svg`} />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <title>{title}</title>
+  </head>
+  <body>
+    <Header
+      base={base}
+      currentPath={Astro.url.pathname.slice(base.length - 1)}
+    />
+    <slot />
+  </body>
+</html>

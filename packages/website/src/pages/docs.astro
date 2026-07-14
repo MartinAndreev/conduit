@@ -1,34 +1,15 @@
 ---
-import Header from "../components/Header.astro";
-import "../styles/global.css";
+import SiteLayout from "../layouts/SiteLayout.astro";
+import { repositoryUrl } from "../data/navigation.js";
 
-const base = import.meta.env.BASE_URL;
-const repositoryUrl = "https://github.com/MartinAndreev/conduit";
 const databaseApiUrl = `${repositoryUrl}/blob/main/packages/conduit/docs/database-api.md`;
 ---
 
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width" />
-    <meta
-      name="description"
-      content="Install, configure, and run Conduit with local Turso persistence, project roles, and repository-backed feature packets."
-    />
-    <link rel="icon" href={`${base}favicon.svg`} />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
-    <title>Documentation — Conduit</title>
-  </head>
-  <body>
-    <Header base={base} repositoryUrl={repositoryUrl} />
-
-    <main class="docs-page" id="top">
+<SiteLayout
+  title="Documentation — Conduit"
+  description="Install, configure, and run Conduit with local Turso persistence, project roles, and repository-backed feature packets."
+>
+  <main class="docs-page" id="top">
       <header class="docs-hero">
         <p class="eyebrow"><span></span>Documentation</p>
         <h1>Set up Conduit.</h1>
@@ -496,7 +477,7 @@ conduit run 001 --roles frontend,backend --compact</code></pre>
           </section>
         </article>
       </div>
-    </main>
+  </main>
 
     <script>
       const sections = Array.from(document.querySelectorAll<HTMLElement>(".docs-content section[id]"));
@@ -532,6 +513,5 @@ conduit run 001 --roles frontend,backend --compact</code></pre>
       window.addEventListener("resize", requestUpdate);
       window.addEventListener("hashchange", requestUpdate);
       updateActiveSection();
-    </script>
-  </body>
-</html>
+  </script>
+</SiteLayout>
