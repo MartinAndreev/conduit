@@ -1,8 +1,10 @@
 export type DatabaseScope = "project" | "global";
 
-export type SqlParameter = string | number | bigint | boolean | null | Uint8Array;
+export type SqlParameter =
+  string | number | bigint | boolean | null | Uint8Array;
 
-export type SqlParameters = readonly SqlParameter[] | Readonly<Record<string, SqlParameter>>;
+export type SqlParameters =
+  readonly SqlParameter[] | Readonly<Record<string, SqlParameter>>;
 
 export type QueryResultRow = Readonly<Record<string, unknown>>;
 

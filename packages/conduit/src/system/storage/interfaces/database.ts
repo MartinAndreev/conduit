@@ -3,7 +3,9 @@ import type { QueryResult, SqlParameters } from "../types/database.js";
 export interface DatabaseStatement {
   execute(parameters?: SqlParameters): Promise<QueryResult>;
   all(parameters?: SqlParameters): Promise<QueryResult>;
-  get(parameters?: SqlParameters): Promise<Readonly<Record<string, unknown>> | undefined>;
+  get(
+    parameters?: SqlParameters,
+  ): Promise<Readonly<Record<string, unknown>> | undefined>;
   finalize(): Promise<void>;
 }
 

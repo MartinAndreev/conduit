@@ -1,5 +1,12 @@
-import type { DatabaseConnection, DatabaseStatement } from "../interfaces/database.js";
-import type { QueryResult, QueryResultRow, SqlParameters } from "../types/database.js";
+import type {
+  DatabaseConnection,
+  DatabaseStatement,
+} from "../interfaces/database.js";
+import type {
+  QueryResult,
+  QueryResultRow,
+  SqlParameters,
+} from "../types/database.js";
 import { toStorageError } from "../errors/storage-error.js";
 import type { DatabaseScope } from "../types/database.js";
 
@@ -12,30 +19,49 @@ type TursoQueryResult = Readonly<{
 }>;
 
 type TursoStatementLike = {
-  execute?: (parameters?: SqlParameters) => Promise<TursoQueryResult> | TursoQueryResult;
-  all?: (parameters?: SqlParameters) => Promise<readonly QueryResultRow[] | TursoQueryResult> | readonly QueryResultRow[] | TursoQueryResult;
-  get?: (parameters?: SqlParameters) => Promise<QueryResultRow | undefined> | QueryResultRow | undefined;
+  execute?: (
+    parameters?: SqlParameters,
+  ) => Promise<TursoQueryResult> | TursoQueryResult;
+  all?: (
+    parameters?: SqlParameters,
+  ) =>
+    | Promise<readonly QueryResultRow[] | TursoQueryResult>
+    | readonly QueryResultRow[]
+    | TursoQueryResult;
+  get?: (
+    parameters?: SqlParameters,
+  ) => Promise<QueryResultRow | undefined> | QueryResultRow | undefined;
   finalize?: () => Promise<void> | void;
 };
 
 type TursoDatabaseLike = {
-  execute?: (sql: string, parameters?: SqlParameters) => Promise<TursoQueryResult> | TursoQueryResult;
+  execute?: (
+    sql: string,
+    parameters?: SqlParameters,
+  ) => Promise<TursoQueryResult> | TursoQueryResult;
   prepare?: (sql: string) => Promise<TursoStatementLike> | TursoStatementLike;
   close?: () => Promise<void> | void;
 };
 
-function isRowArray(value: TursoQueryResult | readonly QueryResultRow[] | undefined): value is readonly QueryResultRow[] {
+function isRowArray(
+  value: TursoQueryResult | readonly QueryResultRow[] | undefined,
+): value is readonly QueryResultRow[] {
   return Array.isArray(value);
 }
 
-function normalizeResult(value: TursoQueryResult | readonly QueryResultRow[] | undefined): QueryResult {
+function normalizeResult(
+  value: TursoQueryResult | readonly QueryResultRow[] | undefined,
+): QueryResult {
   if (isRowArray(value)) {
     return { rows: value, rowsAffected: 0 };
   }
   return {
     rows: value?.rows ?? [],
     rowsAffected: value?.rowsAffected ?? value?.changes ?? 0,
-    lastInsertRowid: typeof value?.lastInsertRowid === "number" ? BigInt(value.lastInsertRowid) : value?.lastInsertRowid,
+    lastInsertRowid:
+      typeof value?.lastInsertRowid === "number"
+        ? BigInt(value.lastInsertRowid)
+        : value?.lastInsertRowid,
   };
 }
 
@@ -43,13 +69,16 @@ export class EmbeddedTursoStatement implements DatabaseStatement {
   constructor(private readonly statement: TursoStatementLike) {}
 
   async execute(parameters?: SqlParameters): Promise<QueryResult> {
-    if (this.statement.execute) return normalizeResult(await this.statement.execute(parameters));
-    if (this.statement.all) return normalizeResult(await this.statement.all(parameters));
+    if (this.statement.execute)
+      return normalizeResult(await this.statement.execute(parameters));
+    if (this.statement.all)
+      return normalizeResult(await this.statement.all(parameters));
     throw new Error("Turso statement does not support execute");
   }
 
   async all(parameters?: SqlParameters): Promise<QueryResult> {
-    if (this.statement.all) return normalizeResult(await this.statement.all(parameters));
+    if (this.statement.all)
+      return normalizeResult(await this.statement.all(parameters));
     return this.execute(parameters);
   }
 
@@ -64,15 +93,20 @@ export class EmbeddedTursoStatement implements DatabaseStatement {
 }
 
 export class EmbeddedTursoConnection implements DatabaseConnection {
-  constructor(readonly databasePath: string, private readonly database: TursoDatabaseLike) {}
+  constructor(
+    readonly databasePath: string,
+    private readonly database: TursoDatabaseLike,
+  ) {}
 
   async execute(sql: string, parameters?: SqlParameters): Promise<QueryResult> {
-    if (!this.database.execute) throw new Error("Turso database does not support execute");
+    if (!this.database.execute)
+      throw new Error("Turso database does not support execute");
     return normalizeResult(await this.database.execute(sql, parameters));
   }
 
   async prepare(sql: string): Promise<DatabaseStatement> {
-    if (!this.database.prepare) throw new Error("Turso database does not support prepare");
+    if (!this.database.prepare)
+      throw new Error("Turso database does not support prepare");
     return new EmbeddedTursoStatement(await this.database.prepare(sql));
   }
 
@@ -81,7 +115,10 @@ export class EmbeddedTursoConnection implements DatabaseConnection {
   }
 }
 
-export async function openEmbeddedTursoConnection(scope: DatabaseScope, databasePath: string): Promise<DatabaseConnection> {
+export async function openEmbeddedTursoConnection(
+  scope: DatabaseScope,
+  databasePath: string,
+): Promise<DatabaseConnection> {
   try {
     const module = await import("@tursodatabase/database");
     const loaded = module as unknown as {
@@ -90,14 +127,20 @@ export async function openEmbeddedTursoConnection(scope: DatabaseScope, database
       Database: new (path: string) => unknown;
     };
     const factory = loaded.connect ?? loaded.open;
-    const database = factory ? await factory(databasePath) : new loaded.Database(databasePath);
-    return new EmbeddedTursoConnection(databasePath, database as TursoDatabaseLike);
+    const database = factory
+      ? await factory(databasePath)
+      : new loaded.Database(databasePath);
+    return new EmbeddedTursoConnection(
+      databasePath,
+      database as TursoDatabaseLike,
+    );
   } catch (error) {
     throw toStorageError({
       scope,
       operation: "open embedded Turso database",
       cause: error,
-      remediation: "Install @tursodatabase/database and verify the native binding supports this platform.",
+      remediation:
+        "Install @tursodatabase/database and verify the native binding supports this platform.",
     });
   }
 }

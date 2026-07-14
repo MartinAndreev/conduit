@@ -1,6 +1,9 @@
 import { mkdir, open, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { ProjectLock, ProjectLockFactory } from "../interfaces/project-lock.js";
+import type {
+  ProjectLock,
+  ProjectLockFactory,
+} from "../interfaces/project-lock.js";
 import { StorageError } from "../errors/storage-error.js";
 
 export class FileProjectLock implements ProjectLock {
@@ -17,7 +20,10 @@ export class FileProjectLockFactory implements ProjectLockFactory {
     await mkdir(dirname(lockPath), { recursive: true });
     try {
       const handle = await open(lockPath, "wx");
-      await handle.writeFile(`${process.pid}\n${new Date().toISOString()}\n`, "utf8");
+      await handle.writeFile(
+        `${process.pid}\n${new Date().toISOString()}\n`,
+        "utf8",
+      );
       await handle.close();
       return new FileProjectLock(lockPath);
     } catch (error) {

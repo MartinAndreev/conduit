@@ -1,4 +1,7 @@
-import type { DatabaseConnection, TransactionRunner } from "../interfaces/database.js";
+import type {
+  DatabaseConnection,
+  TransactionRunner,
+} from "../interfaces/database.js";
 
 export class DatabaseTransactionRunner implements TransactionRunner {
   constructor(private readonly connection: DatabaseConnection) {}
@@ -24,7 +27,9 @@ export class BoundedBatchWriter<T> {
 
   async writeBatch(items: readonly T[]): Promise<void> {
     if (items.length > this.maxBatchSize) {
-      throw new Error(`batch size ${items.length} exceeds limit ${this.maxBatchSize}`);
+      throw new Error(
+        `batch size ${items.length} exceeds limit ${this.maxBatchSize}`,
+      );
     }
     for (const item of items) await this.writeOne(item);
   }

@@ -1,9 +1,17 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-const REQUIRED_PATTERNS = ["state.db", "state.db-wal", "state.db-shm", "backups/", "*.db"] as const;
+const REQUIRED_PATTERNS = [
+  "state.db",
+  "state.db-wal",
+  "state.db-shm",
+  "backups/",
+  "*.db",
+] as const;
 
-export async function ensureConduitStateGitIgnored(projectRoot: string): Promise<void> {
+export async function ensureConduitStateGitIgnored(
+  projectRoot: string,
+): Promise<void> {
   const directory = join(projectRoot, ".conduit");
   const ignorePath = join(directory, ".gitignore");
   await mkdir(directory, { recursive: true });
@@ -13,7 +21,9 @@ export async function ensureConduitStateGitIgnored(projectRoot: string): Promise
   } catch {
     existing = "";
   }
-  const missing = REQUIRED_PATTERNS.filter((pattern) => !existing.split(/\r?\n/).includes(pattern));
+  const missing = REQUIRED_PATTERNS.filter(
+    (pattern) => !existing.split(/\r?\n/).includes(pattern),
+  );
   if (missing.length > 0) {
     const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
     await appendFile(ignorePath, `${prefix}${missing.join("\n")}\n`, "utf8");

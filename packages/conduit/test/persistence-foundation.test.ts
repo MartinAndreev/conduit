@@ -42,7 +42,9 @@ test("persistence-foundation project lock writes sanitized ownership metadata", 
 });
 
 test("persistence-foundation redacts credential-like diagnostics", () => {
-  const diagnostic = redactStorageDiagnostic("token=secret-value password:super-secret api_key=abc123");
+  const diagnostic = redactStorageDiagnostic(
+    "token=secret-value password:super-secret api_key=abc123",
+  );
   assert.equal(diagnostic.includes("secret-value"), false);
   assert.equal(diagnostic.includes("super-secret"), false);
   assert.equal(diagnostic.includes("abc123"), false);
