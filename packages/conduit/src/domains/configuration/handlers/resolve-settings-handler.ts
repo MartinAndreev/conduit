@@ -1,5 +1,5 @@
 import type { QueryHandler } from "../../../system/bus/query-bus.js";
-import type { ConfigurationRepository } from "../repositories/configuration-repository.js";
+import type { ConfigurationRepository } from "../interfaces/configuration-repository.js";
 import type {
   ResolveSettingsQuery,
   ResolveSettingsReadModel,

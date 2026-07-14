@@ -9,6 +9,12 @@ import type {
   ResolvedSettings,
   EffectiveSettings,
 } from "../types/settings.js";
+import type { ConfigurationRepository } from "../interfaces/configuration-repository.js";
+import type { GlobalProfileRepository } from "../interfaces/global-profile-repository.js";
+import {
+  containsSecret,
+  redactSecrets,
+} from "@system/storage/security/secret-redaction.js";
 import {
   DEFAULT_GLOBAL_SETTINGS,
   DEFAULT_PROJECT_SETTINGS,
@@ -135,18 +141,22 @@ function parseProjectSettings(config: Config): ProjectSettings {
   };
 }
 
-export interface ConfigurationRepository {
-  loadGlobalSettings(): Promise<GlobalSettings>;
-  saveGlobalSettings(settings: GlobalSettings): Promise<void>;
-  loadProjectConfig(projectRoot: string): Promise<Config>;
-  resolveSettings(
-    projectRoot: string,
-    cliOptions?: Record<string, unknown>,
-  ): Promise<ResolvedSettings>;
-  getGlobalConfigDir(): string;
+async function loadRoleGuidance(
+  projectRoot: string,
+  source: string,
+): Promise<string | undefined> {
+  if (!source.startsWith("file:")) return undefined;
+  const sourcePath = source.slice("file:".length);
+  const absolutePath = path.isAbsolute(sourcePath)
+    ? sourcePath
+    : path.resolve(projectRoot, sourcePath);
+  const content = await readFile(absolutePath, "utf8").catch(() => undefined);
+  return content ? redactSecrets(content) : undefined;
 }
 
-export function createConfigurationRepository(): ConfigurationRepository {
+export function createConfigurationRepository(
+  globalProfiles?: GlobalProfileRepository,
+): ConfigurationRepository {
   const gDir = globalConfigDir();
 
   return {
@@ -168,6 +178,10 @@ export function createConfigurationRepository(): ConfigurationRepository {
     },
 
     async saveGlobalSettings(settings: GlobalSettings): Promise<void> {
+      if (containsSecret(JSON.stringify(settings)))
+        throw new Error(
+          "Global settings cannot persist credentials or secret-like values.",
+        );
       await mkdir(gDir, { recursive: true });
       const settingsPath = path.join(gDir, GLOBAL_SETTINGS_FILE);
       await writeFile(settingsPath, serializeGlobalSettings(settings), {
@@ -185,10 +199,12 @@ export function createConfigurationRepository(): ConfigurationRepository {
       cliOptions?: Record<string, unknown>,
     ): Promise<ResolvedSettings> {
       const global = await this.loadGlobalSettings();
+      const globalProfile = await globalProfiles?.load("default");
       let project: ProjectSettings | undefined;
+      let config: Config | undefined;
 
       try {
-        const config = await this.loadProjectConfig(projectRoot);
+        config = await this.loadProjectConfig(projectRoot);
         project = parseProjectSettings(config);
       } catch {
         // No project config
@@ -218,7 +234,73 @@ export function createConfigurationRepository(): ConfigurationRepository {
         },
       };
 
-      return { global, project, effective };
+      const provenance: Record<
+        string,
+        import("../types/settings.js").ConfigurationSource
+      > = {
+        provider: project ? "project" : "global-profile",
+        specsDir: project ? "project" : "builtin",
+        stateDir: project ? "project" : "builtin",
+      };
+      if (cliOptions?.provider !== undefined) provenance.provider = "cli";
+      if (cliOptions?.specsDir !== undefined) provenance.specsDir = "cli";
+      if (cliOptions?.stateDir !== undefined) provenance.stateDir = "cli";
+
+      const roles: Record<
+        string,
+        import("../types/settings.js").ResolvedRoleSettings
+      > = {};
+      for (const [name, role] of Object.entries(config?.roles ?? {})) {
+        const projectSkillSource = role.skill.source || undefined;
+        const model = role.model || globalProfile?.model;
+        const effort = role.effort || globalProfile?.effort;
+        const guidance = await loadRoleGuidance(
+          projectRoot,
+          projectSkillSource ?? globalProfile?.skillSource ?? "",
+        );
+        roles[name] = {
+          runner: role.runner || globalProfile?.runner || "opencode",
+          ...(model ? { model } : {}),
+          ...(effort ? { effort } : {}),
+          mode: role.mode || globalProfile?.mode || "subagent",
+          readOnly: role.readOnly ?? globalProfile?.readOnly ?? false,
+          owns: role.owns ?? globalProfile?.owns ?? [],
+          skillSource: projectSkillSource ?? globalProfile?.skillSource ?? "",
+          ...(guidance ? { guidance } : {}),
+        };
+        for (const field of [
+          "runner",
+          "model",
+          "effort",
+          "mode",
+          "readOnly",
+          "owns",
+          "skillSource",
+        ]) {
+          const roleValue =
+            field === "skillSource"
+              ? projectSkillSource
+              : role[field as keyof typeof role];
+          provenance[`roles.${name}.${field}`] =
+            roleValue !== undefined && roleValue !== ""
+              ? "project"
+              : globalProfile
+                ? "global-profile"
+                : "builtin";
+        }
+        if (guidance) provenance[`roles.${name}.guidance`] = "role-guidance";
+      }
+
+      return {
+        global,
+        globalProfile,
+        project,
+        effective,
+        roles,
+        provenance,
+      };
     },
   };
 }
+
+export type { ConfigurationRepository } from "../interfaces/configuration-repository.js";

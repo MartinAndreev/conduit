@@ -1,9 +1,10 @@
 ---
 interface Props {
+  readonly base: string;
   readonly repositoryUrl: string;
 }
 
-const { repositoryUrl } = Astro.props;
+const { base, repositoryUrl } = Astro.props;
 ---
 
 <section class="install-section" id="install" aria-labelledby="install-title">
@@ -35,7 +36,7 @@ const { repositoryUrl } = Astro.props;
       <pre><code><span>$</span> pnpm add -D conduit-orchestrator
 <span>$</span> pnpm exec conduit init .
 <span>$</span> pnpm exec conduit</code></pre>
-      <a href={repositoryUrl}>Read the documentation <span>→</span></a>
+      <a href={`${base}docs/`}>Read the documentation <span>→</span></a>
     </article>
   </div>
 </section>

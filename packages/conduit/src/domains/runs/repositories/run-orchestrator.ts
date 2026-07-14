@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, readdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcess, SpawnSyncReturns } from "node:child_process";
@@ -9,6 +9,7 @@ import type { RunnerEvent } from "../types/runner-events.js";
 import type { RunEventRepository } from "../interfaces/run-event-repository.js";
 import type { RunProcessRegistry } from "./run-process-registry.js";
 import { localSpecKitRoleContract } from "@domains/features/providers/local-spec-kit-role-contract.js";
+import { redactSecrets } from "@system/storage/security/secret-redaction.js";
 
 interface RunnerAdapter {
   command: string;
@@ -22,6 +23,19 @@ const runnerAdapters: Record<string, RunnerAdapter> = {
   pi: { command: "pi", beforeModel: [], afterModel: ["-p"] },
   kilo: { command: "kilo", beforeModel: ["run"], afterModel: [] },
 };
+
+const databaseEnvironmentKey =
+  /^(?:TURSO_|LIBSQL_|DATABASE_(?:URL|TOKEN)$|CONDUIT_DB)/i;
+
+export function agentProcessEnvironment(
+  environment: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(environment).filter(
+      ([key]) => !databaseEnvironmentKey.test(key),
+    ),
+  );
+}
 
 export function commandForRole(
   role: {
@@ -103,7 +117,9 @@ export async function planRun({
     }));
     const promptFile = path.join(runDir, `${name}.md`);
     const roleDependencies = role.dependsOn ?? [];
-    const prompt = `${localSpecKitRoleContract(name, role.effort)}\n\n# Project role guidance (advisory)\n\n${skill.content}\n\n# Assignment (authoritative)\n\nFeature: ${featureId}\nRead the approved files in specs/${featureId}-*/ before changing code.\nOwned paths: ${(role.owns ?? ["none defined"]).join(", ")}\nRun dependencies: ${roleDependencies.length ? roleDependencies.join(", ") : "none"}\nDo not modify contracts or paths outside your ownership.\nReport tests run and unresolved integration risks.\n\nThe system role contract and assignment take precedence over project role guidance.`;
+    const prompt = redactSecrets(
+      `${localSpecKitRoleContract(name, role.effort)}\n\n# Project role guidance (advisory)\n\n${skill.content}\n\n# Assignment (authoritative)\n\nFeature: ${featureId}\nRead the approved files in specs/${featureId}-*/ before changing code.\nOwned paths: ${(role.owns ?? ["none defined"]).join(", ")}\nRun dependencies: ${roleDependencies.length ? roleDependencies.join(", ") : "none"}\nDo not modify contracts or paths outside your ownership.\nReport tests run and unresolved integration risks.\n\nThe system role contract and assignment take precedence over project role guidance.`,
+    );
     await writeFile(promptFile, prompt);
     const [command, args] = commandForRole(role, promptFile);
     roles.push({
@@ -130,7 +146,6 @@ export async function planRun({
     createdAt: new Date().toISOString(),
     roles,
   };
-  await persistRunSnapshot(runDir, run);
   return { run, runDir };
 }
 
@@ -185,10 +200,6 @@ async function writeWorktreePrompt(
   role.command = command;
   role.args = args;
   role.worktreePromptFile = promptFile;
-}
-
-async function persistRunSnapshot(runDir: string, run: Run): Promise<void> {
-  await writeFile(path.join(runDir, "run.json"), JSON.stringify(run, null, 2));
 }
 
 function terminate(child: ChildProcess): void {
@@ -303,6 +314,7 @@ function runProcess(
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32",
+      env: agentProcessEnvironment(),
     });
     let output = "";
     let cancelled = false;
@@ -384,8 +396,9 @@ function runProcess(
     }, 800);
     changeWatcher.unref();
     child.stdout?.on("data", (chunk: Buffer | string) => {
-      output += chunk;
-      const transcript = String(chunk).trim();
+      const sanitizedChunk = redactSecrets(String(chunk));
+      const transcript = sanitizedChunk.trim();
+      output += sanitizedChunk;
       onProgress(
         transcript
           ? `${role.name}: ${transcript.replace(/\s+/g, " ").slice(0, 100)}`
@@ -405,8 +418,9 @@ function runProcess(
       });
     });
     child.stderr?.on("data", (chunk: Buffer | string) => {
-      output += chunk;
-      const transcript = String(chunk).trim();
+      const sanitizedChunk = redactSecrets(String(chunk));
+      const transcript = sanitizedChunk.trim();
+      output += sanitizedChunk;
       onProgress(
         transcript
           ? `${role.name}: ${transcript.replace(/\s+/g, " ").slice(0, 100)}`
@@ -434,7 +448,7 @@ function runProcess(
         payload: {
           kind: "error",
           code: "PROCESS_ERROR",
-          message: error.message,
+          message: redactSecrets(error.message),
           recoverable: false,
         },
       });
@@ -442,7 +456,7 @@ function runProcess(
       resolve({
         role: role.name,
         status: "failed",
-        error: error.message,
+        error: redactSecrets(error.message),
         output,
       });
     });
@@ -602,7 +616,6 @@ export async function executeRun({
       : addWorktree(projectRoot, run, role);
     role.worktree = role.readOnly || cwd === projectRoot ? undefined : cwd;
     if (!role.readOnly) await writeWorktreePrompt(cwd, run, role);
-    await persistRunSnapshot(runDir, run);
     return runProcess(
       role,
       run.id,
@@ -619,7 +632,9 @@ export async function executeRun({
     try {
       return await launchRole(role);
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause);
+      const message = redactSecrets(
+        cause instanceof Error ? cause.message : String(cause),
+      );
       await eventRepository?.append({
         type: "error",
         runId: run.id,
@@ -698,12 +713,6 @@ export async function executeRun({
     role.status =
       (results.find((result) => result.role === role.name)
         ?.status as RunRole["status"]) ?? "failed";
-  await persistRunSnapshot(runDir, run);
-  await writeFile(
-    path.join(runDir, "results.json"),
-    JSON.stringify(results, null, 2),
-  );
-
   const successfulRun = run.status === "completed";
   const completionMessage = successfulRun
     ? reviewerSelected
@@ -744,23 +753,4 @@ export async function executeRun({
   }
 
   return results;
-}
-
-export async function latestRuns(
-  projectRoot: string,
-  config: Config,
-): Promise<Run[]> {
-  const dir = path.join(projectRoot, config.stateDir, "runs");
-  const entries = await readdir(dir, { withFileTypes: true }).catch(
-    () => [] as import("node:fs").Dirent[],
-  );
-  const runs: Run[] = [];
-  for (const entry of entries.filter((item) => item.isDirectory())) {
-    runs.push(
-      JSON.parse(
-        await readFile(path.join(dir, entry.name, "run.json"), "utf8"),
-      ),
-    );
-  }
-  return runs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }

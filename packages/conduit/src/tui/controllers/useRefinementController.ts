@@ -268,16 +268,27 @@ export function useRefinementController(
   const saveDraft = useCallback(async () => {
     try {
       const story = buildStory(values);
-      await commandBus.dispatch({
+      const result = await commandBus.dispatch({
         type: "saveDraft",
         featureId,
         story,
         testCases: values.testCases ?? "",
+        ...(draft?.version === undefined
+          ? {}
+          : { expectedVersion: draft.version }),
       });
+      if (result.success) {
+        const refreshed = await queryBus.execute({
+          type: "getDraft",
+          featureId,
+        });
+        if (refreshed.success)
+          setDraft((refreshed.data as { draft: RefinementDraft | null }).draft);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [commandBus, featureId, values, buildStory]);
+  }, [commandBus, queryBus, featureId, values, buildStory, draft?.version]);
 
   const submitForm = useCallback((formValues: Record<string, string>) => {
     setValues(formValues);

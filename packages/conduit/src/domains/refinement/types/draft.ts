@@ -4,6 +4,7 @@ export interface RefinementDraft {
   readonly testCases: string;
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly version?: number;
 }
 
 export interface DraftField {

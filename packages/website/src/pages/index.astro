@@ -4,6 +4,7 @@ import Hero from "../components/Hero.astro";
 import CliFlow from "../components/CliFlow.astro";
 import Install from "../components/Install.astro";
 import Principles from "../components/Principles.astro";
+import Storage from "../components/Storage.astro";
 import TerminalDemo from "../components/TerminalDemo.astro";
 import WhyBuilt from "../components/WhyBuilt.astro";
 import "../styles/global.css";
@@ -37,7 +38,8 @@ const repositoryUrl = "https://github.com/MartinAndreev/conduit";
       <TerminalDemo />
       <WhyBuilt />
       <CliFlow />
-      <Install repositoryUrl={repositoryUrl} />
+      <Storage />
+      <Install base={base} repositoryUrl={repositoryUrl} />
       <Principles />
     </main>
   </body>

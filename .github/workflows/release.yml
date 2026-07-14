@@ -15,8 +15,8 @@ jobs:
         include:
           - runner: ubuntu-latest
             target: linux-x64
-          - runner: macos-15-intel
-            target: darwin-x64
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64
           - runner: macos-15
             target: darwin-arm64
           - runner: windows-latest
@@ -32,6 +32,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:standalone -- ${{ matrix.target }}
+      - run: pnpm test -- standalone-persistence
       - uses: actions/upload-artifact@v4
         with:
           name: conduit-${{ matrix.target }}

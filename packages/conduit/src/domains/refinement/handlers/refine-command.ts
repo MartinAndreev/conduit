@@ -12,6 +12,9 @@ import type { ApplicationDependencies } from "../../../system/bootstrap/types.js
 import { textarea } from "../../../tui/textarea.js";
 import type { CommandRuntimeDependencies } from "../../../system/cli/command-support.js";
 import { formatRefinementBrief } from "@helpers/formatting/refinement-brief.js";
+import { redactSecrets } from "@system/storage/security/secret-redaction.js";
+import type { RunRecoveryRepository } from "../../runs/interfaces/run-recovery-repository.js";
+import { agentProcessEnvironment } from "../../runs/repositories/run-orchestrator.js";
 
 const activeArchitectProcesses = new Map<string, ChildProcess>();
 
@@ -40,7 +43,9 @@ type RefinementCommandDependencies = Pick<
   | "readRunRoleLog"
   | "readRunRolePatch"
 > &
-  Partial<CommandRuntimeDependencies>;
+  Partial<CommandRuntimeDependencies> & {
+    runRecoveryRepository?: RunRecoveryRepository;
+  };
 
 export async function collectRefinement(): Promise<{
   story: string;
@@ -111,16 +116,17 @@ export async function runArchitect({
   return new Promise((resolve, reject) => {
     const child: ChildProcess = spawn(
       "codex",
-      ["exec", "--sandbox", "workspace-write", prompt],
+      ["exec", "--sandbox", "workspace-write", redactSecrets(prompt)],
       {
         cwd: projectRoot,
         stdio: ["ignore", "pipe", "pipe"],
+        env: agentProcessEnvironment(),
       },
     );
     activeArchitectProcesses.set(logFile, child);
     let transcript = "";
     const capture = (chunk: Buffer | string) => {
-      transcript += String(chunk);
+      transcript += redactSecrets(String(chunk));
       void writeFile(logFile, transcript);
       onProgress(architectProgressMessage(transcript));
       onTranscript(transcript);
@@ -225,7 +231,6 @@ export async function refineCommand(
     `refine-${feature.id}-${Date.now()}`,
     "architect.log",
   );
-  const runFile = path.join(path.dirname(logFile), "run.json");
   const architectRun: Run = {
     id: path.basename(path.dirname(logFile)),
     featureId: feature.id,
@@ -247,8 +252,9 @@ export async function refineCommand(
       },
     ],
   };
-  await mkdir(path.dirname(runFile), { recursive: true });
-  await writeFile(runFile, JSON.stringify(architectRun, null, 2));
+  await mkdir(path.dirname(logFile), { recursive: true });
+  let snapshot =
+    await dependencies.runRecoveryRepository?.saveSnapshot(architectRun);
   const useTui =
     !options.compact && process.stdin.isTTY && process.stdout.isTTY;
   let liveView:
@@ -273,9 +279,14 @@ export async function refineCommand(
       );
     }
   };
-  const questionsFile = path.join(feature.directory, "questions.md");
+  const questionsFile = path.join(path.dirname(logFile), "questions.md");
   const clarificationsFile = path.join(feature.directory, "clarifications.md");
-  const prompt = refinementPrompt(feature, refinement.story);
+  const prompt = refinementPrompt(
+    feature,
+    refinement.story,
+    undefined,
+    questionsFile,
+  );
   let architect: { logFile: string } | undefined;
   let pass = 0;
   try {
@@ -306,7 +317,10 @@ export async function refineCommand(
       if (!questions) break;
       architectRun.status = "awaiting-input";
       architectRun.roles[0].status = "awaiting-input";
-      await writeFile(runFile, JSON.stringify(architectRun, null, 2));
+      snapshot = await dependencies.runRecoveryRepository?.saveSnapshot(
+        architectRun,
+        snapshot?.version,
+      );
       liveView?.close();
       liveView = undefined;
       output(
@@ -332,8 +346,25 @@ export async function refineCommand(
       );
     architectRun.status = "completed";
     architectRun.roles[0].status = "completed";
-    await writeFile(runFile, JSON.stringify(architectRun, null, 2));
+    snapshot = await dependencies.runRecoveryRepository?.saveSnapshot(
+      architectRun,
+      snapshot?.version,
+    );
     liveView?.close();
+  } catch (error) {
+    if (architectRun.status !== "awaiting-input") {
+      architectRun.status = "failed";
+      architectRun.roles[0].status = "failed";
+      await dependencies.runRecoveryRepository?.saveSnapshot(
+        architectRun,
+        snapshot?.version,
+      );
+      await dependencies.runRecoveryRepository?.markInterrupted(
+        architectRun.id,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    throw error;
   } finally {
     liveView?.close();
   }

@@ -4,6 +4,7 @@ import "../styles/global.css";
 
 const base = import.meta.env.BASE_URL;
 const repositoryUrl = "https://github.com/MartinAndreev/conduit";
+const databaseApiUrl = `${repositoryUrl}/blob/main/packages/conduit/docs/database-api.md`;
 ---
 
 <!doctype html>
@@ -13,7 +14,7 @@ const repositoryUrl = "https://github.com/MartinAndreev/conduit";
     <meta name="viewport" content="width=device-width" />
     <meta
       name="description"
-      content="Install, configure, and run Conduit with project roles and repository-backed feature packets."
+      content="Install, configure, and run Conduit with local Turso persistence, project roles, and repository-backed feature packets."
     />
     <link rel="icon" href={`${base}favicon.svg`} />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -32,8 +33,8 @@ const repositoryUrl = "https://github.com/MartinAndreev/conduit";
         <p class="eyebrow"><span></span>Documentation</p>
         <h1>Set up Conduit.</h1>
         <p>
-          Configure repository-backed feature packets, assign bounded agent
-          roles, and run the workflow from the TUI or command line.
+          Configure repository-backed feature packets, local database storage,
+          bounded agent roles, and the workflow from the TUI or command line.
         </p>
       </header>
 
@@ -45,6 +46,7 @@ const repositoryUrl = "https://github.com/MartinAndreev/conduit";
             <a href="#quick-start">Quick start</a>
             <a href="#project-config">Project configuration</a>
             <a href="#global-config">Global configuration</a>
+            <a href="#storage">Storage and migrations</a>
             <a href="#roles">Roles and runners</a>
             <a href="#skills">Role skills</a>
             <a href="#refinement">Refinement</a>
@@ -64,6 +66,12 @@ const repositoryUrl = "https://github.com/MartinAndreev/conduit";
               against <code>SHA256SUMS</code>, and place it on your{" "}
               <code>PATH</code>.
             </p>
+
+            <div class="docs-note">
+              Standalone persistence is supported on Linux x64 glibc, Linux
+              ARM64 glibc, macOS ARM64, and Windows x64. Alpine/musl and Intel
+              macOS are not currently supported standalone targets.
+            </div>
 
             <div class="docs-code-label"><span>Linux and macOS installer</span><span>shell</span></div>
             <pre><code>curl -fsSL https://github.com/MartinAndreev/conduit/releases/latest/download/install.sh | sh</code></pre>
@@ -92,8 +100,8 @@ conduit</code></pre>
 specs/               # committed feature packets</code></pre>
             <p>
               It also adds local run data, caches, worktrees, assignments, and
-              the local state database beneath <code>.conduit/</code> to{" "}
-              <code>.gitignore</code>.
+              the local <code>.conduit/state.db</code> database, its WAL files,
+              and migration backups to <code>.gitignore</code>.
             </p>
             <div class="docs-note">
               Run from another directory with <code>--project &lt;path&gt;</code>.
@@ -149,23 +157,32 @@ roles:
             <p class="docs-kicker">Machine settings</p>
             <h2>Global configuration</h2>
             <p>
-              Global settings store machine-wide provider defaults and named
-              credential-profile references. Project configuration supplies
-              project-specific paths and roles. Effective settings resolve in
-              this order: CLI option, project configuration, global setting,
-              then built-in default.
+              Conduit has two machine-wide configuration stores. The existing
+              <code>settings.yml</code> stores provider defaults and named
+              credential-profile references. The new <code>global.db</code>
+              stores reusable role-profile defaults such as runner, model,
+              effort, mode, ownership, and skill source.
             </p>
 
             <div class="docs-table-wrap">
               <table>
-                <thead><tr><th>Platform</th><th>Global settings file</th></tr></thead>
+                <thead><tr><th>Platform</th><th>Settings file</th><th>Profile database</th></tr></thead>
                 <tbody>
-                  <tr><td>Linux</td><td><code>~/.config/conduit/settings.yml</code></td></tr>
-                  <tr><td>macOS</td><td><code>~/Library/Application Support/conduit/settings.yml</code></td></tr>
-                  <tr><td>Windows</td><td><code>%APPDATA%\conduit\settings.yml</code></td></tr>
+                  <tr><td>Linux</td><td><code>~/.config/conduit/settings.yml</code></td><td><code>$XDG_DATA_HOME/conduit/global.db</code> or <code>~/.local/share/conduit/global.db</code></td></tr>
+                  <tr><td>macOS</td><td><code>~/Library/Application Support/conduit/settings.yml</code></td><td><code>~/Library/Application Support/conduit/global.db</code></td></tr>
+                  <tr><td>Windows</td><td><code>%APPDATA%\conduit\settings.yml</code></td><td><code>%APPDATA%\conduit\global.db</code></td></tr>
                 </tbody>
               </table>
             </div>
+
+            <p>
+              Role settings resolve from built-in defaults, then the default
+              global profile, then project <code>conduit.yml</code> values.
+              Project role guidance is loaded last as advisory content. CLI
+              options can override project paths and provider selection for the
+              current invocation. Conduit records provenance for resolved
+              fields so callers can tell which layer supplied each value.
+            </p>
 
             <pre><code>version: 1
 defaultProvider: local-spec-kit
@@ -189,6 +206,65 @@ providerSettings:
               the global configuration directory. Settings may reference named
               profiles, but never contain plaintext credentials.
             </div>
+          </section>
+
+          <section id="storage">
+            <p class="docs-kicker">Local persistence</p>
+            <h2>Storage and migrations</h2>
+            <p>
+              Conduit uses embedded Turso for runtime state. The project
+              database defaults to <code>.conduit/state.db</code>; the
+              user-global database is stored in the platform application-data
+              directory shown above. Approved feature packets remain ordinary
+              files under <code>specs/</code> and stay the Git-visible source
+              of truth.
+            </p>
+
+            <div class="docs-compare">
+              <article>
+                <span>Project database</span>
+                <h3>Local runtime state</h3>
+                <p>Drafts, refinement revisions, research and architect events, run events, reviews, recovery records, and source-version metadata.</p>
+              </article>
+              <article>
+                <span>Global database</span>
+                <h3>Reusable machine defaults</h3>
+                <p>Role-profile defaults and metadata shared on this machine. Provider credentials remain in the OS vault or encrypted fallback.</p>
+              </article>
+            </div>
+
+            <h3>What happens on startup</h3>
+            <ol>
+              <li>Conduit opens a blocking migration screen before application queries run.</li>
+              <li>It applies checksummed global and project migrations in order.</li>
+              <li>Before pending migrations, it checkpoints and creates a redaction-checked backup.</li>
+              <li>It imports compatible legacy drafts and run artifacts idempotently without deleting their source files.</li>
+              <li>The application then opens one shared project connection and closes it during shutdown.</li>
+            </ol>
+
+            <div class="docs-note">
+              A checksum mismatch or unsafe migration failure stops startup
+              with remediation guidance. Conduit does not continue into normal
+              commands against a partially migrated schema.
+            </div>
+
+            <h3>Check local storage</h3>
+            <p>
+              Run the storage doctor to verify migrations, the embedded native
+              binding, prepared queries, transactions, and close/reopen
+              persistence for the current project.
+            </p>
+            <pre><code>conduit storage-doctor
+conduit storage-doctor --project /path/to/repository</code></pre>
+
+            <p>
+              Repository implementations, migrations, transaction behavior,
+              lifecycle ownership, and extension rules are documented in the
+              <a class="docs-inline-link" href={databaseApiUrl}>database API developer guide</a>.
+              Spawned coding agents never receive a database path, handle, or
+              storage helper; all access stays inside the owning Conduit
+              process and its domain repositories.
+            </p>
           </section>
 
           <section id="roles">
@@ -406,6 +482,8 @@ conduit run 001 --roles frontend,backend --compact</code></pre>
                 <tbody>
                   <tr><td><code>conduit</code></td><td>Open the interactive Home workspace.</td></tr>
                   <tr><td><code>conduit init [path]</code></td><td>Initialize an existing Git repository.</td></tr>
+                  <tr><td><code>conduit version</code></td><td>Print the installed Conduit version.</td></tr>
+                  <tr><td><code>conduit storage-doctor</code></td><td>Verify migrations, persistence, and the native database runtime.</td></tr>
                   <tr><td><code>conduit feature &lt;title&gt;</code></td><td>Create a new feature packet.</td></tr>
                   <tr><td><code>conduit refine &lt;id&gt; [story]</code></td><td>Open refinement or provide a non-interactive story.</td></tr>
                   <tr><td><code>conduit roles</code></td><td>List configured specialist roles.</td></tr>

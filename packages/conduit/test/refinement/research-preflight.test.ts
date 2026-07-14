@@ -15,6 +15,7 @@ test("research preflight saves a visible report before architect refinement", as
   await mkdir(featureDirectory, { recursive: true });
   await mkdir(runDir, { recursive: true });
   try {
+    let savedReport: string | undefined;
     const handler = createStartResearchRefinementHandler({
       projectRoot,
       builtinRoleRoot: "/roles",
@@ -83,6 +84,30 @@ test("research preflight saves a visible report before architect refinement", as
         cancel: () => false,
         remove: () => {},
       },
+      reportRepository: {
+        save: async (featureId, report) => {
+          savedReport = report;
+          return {
+            featureId,
+            report,
+            updatedAt: new Date().toISOString(),
+            version: 1,
+          };
+        },
+        load: async () => undefined,
+      },
+      recoveryRepository: {
+        saveSnapshot: async (run) => ({
+          run,
+          state: run.status === "completed" ? "complete" : "planned",
+          version: 1,
+          updatedAt: new Date().toISOString(),
+        }),
+        loadSnapshot: async () => undefined,
+        listSnapshots: async () => [],
+        markInterrupted: async () => {},
+        markCancelled: async () => {},
+      },
     });
 
     const result = await handler({
@@ -95,9 +120,8 @@ test("research preflight saves a visible report before architect refinement", as
     if (result.success) {
       assert.equal(result.data.runId, "research");
       await new Promise((resolve) => setTimeout(resolve, 15));
-      const report = await readFile(result.data.reportFile, "utf8");
-      assert.match(report, /Confirmed facts/);
-      assert.equal(await readFile(result.data.reportFile, "utf8"), report);
+      assert.equal(result.data.reportFile, "conduit://research/001");
+      assert.match(savedReport ?? "", /Confirmed facts/);
     }
     assert.match(await readFile(promptFile, "utf8"), /research assignment/i);
     assert.match(

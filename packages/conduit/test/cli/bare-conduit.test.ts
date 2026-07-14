@@ -27,6 +27,8 @@ test("bare conduit in uninitialized repo offers initialization and accepts", asy
       startHome: async () => {
         homeStarted = true;
       },
+      startupMigration: async () => {},
+      environment: { XDG_DATA_HOME: tempDir },
     });
 
     assert.ok(
@@ -63,6 +65,8 @@ test("bare conduit in uninitialized repo rejects and exits without writes", asyn
       startHome: async () => {
         homeStarted = true;
       },
+      startupMigration: async () => {},
+      environment: { XDG_DATA_HOME: tempDir },
     });
 
     assert.equal(exitCode, 1);
@@ -95,6 +99,8 @@ test("bare conduit in non-git directory prints error", async () => {
       startHome: async () => {
         homeStarted = true;
       },
+      startupMigration: async () => {},
+      environment: { XDG_DATA_HOME: tempDir },
     });
 
     assert.equal(exitCode, 1);
@@ -129,6 +135,8 @@ test("bare conduit in initialized repo enters Home directly", async () => {
       startHome: async () => {
         homeStarted = true;
       },
+      startupMigration: async () => {},
+      environment: { XDG_DATA_HOME: tempDir },
     });
 
     assert.ok(homeStarted, "Home should have started");
@@ -136,6 +144,40 @@ test("bare conduit in initialized repo enters Home directly", async () => {
       !messages.some((m) => m.includes("Initialize now")),
       "Should not prompt for initialization",
     );
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("bare conduit completes startup migration before opening Home", async () => {
+  const tempDir = await setupGitRepo();
+  try {
+    const { initializeProject } =
+      await import("../../src/domains/configuration/repositories/project-config.js");
+    const { roleTemplates } =
+      await import("../../src/domains/roles/assets/role-templates.js");
+    const root = path.resolve(
+      path.dirname(new URL(import.meta.url).pathname),
+      "../..",
+    );
+    await initializeProject(tempDir, path.join(root, "skills"), roleTemplates);
+    const order: string[] = [];
+    await handleBareConduit(tempDir, {
+      startupMigration: async () => {
+        order.push("migration-start");
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        order.push("migration-complete");
+      },
+      startHome: async () => {
+        order.push("home-query");
+      },
+      environment: { XDG_DATA_HOME: tempDir },
+    });
+    assert.deepEqual(order, [
+      "migration-start",
+      "migration-complete",
+      "home-query",
+    ]);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

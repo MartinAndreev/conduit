@@ -6,10 +6,12 @@ import type {
 import type { RunEventRepository } from "../interfaces/run-event-repository.js";
 import type { RunProcessRegistry } from "../repositories/run-process-registry.js";
 import type { RunnerEvent } from "../types/runner-events.js";
+import type { RunRecoveryRepository } from "../interfaces/run-recovery-repository.js";
 
 export function createCancelRunHandler(
   eventRepository: RunEventRepository,
   processRegistry: RunProcessRegistry,
+  recoveryRepository?: RunRecoveryRepository,
 ): CommandHandler<CancelRunCommand, CancelRunResult> {
   return async (command) => {
     try {
@@ -50,6 +52,7 @@ export function createCancelRunHandler(
         }
       }
 
+      await recoveryRepository?.markCancelled(command.runId);
       return {
         success: true,
         data: {

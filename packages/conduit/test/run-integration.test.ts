@@ -366,7 +366,7 @@ test("WorktreeDiffReader reports untracked agent-created files", async () => {
 test("executeRun persists role worktrees before agent completion and emits flow completion", async () => {
   const { executeRun } =
     await import("../src/domains/runs/repositories/run-orchestrator.js");
-  const { readFile, mkdir } = await import("node:fs/promises");
+  const { mkdir } = await import("node:fs/promises");
   const { execFileSync } = await import("node:child_process");
   const projectRoot = await mkdtemp(path.join(tmpdir(), "conduit-run-"));
   const previousPath = process.env.PATH;
@@ -449,12 +449,7 @@ test("executeRun persists role worktrees before agent completion and emits flow 
     let persistedWorktree = "";
     for (let attempt = 0; attempt < 20; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 25));
-      const raw = await readFile(path.join(runDir, "run.json"), "utf8").catch(
-        () => "",
-      );
-      if (!raw) continue;
-      const persisted = JSON.parse(raw) as typeof run;
-      persistedWorktree = persisted.roles[0]?.worktree ?? "";
+      persistedWorktree = run.roles[0]?.worktree ?? "";
       if (persistedWorktree) break;
     }
     const results = await executing;

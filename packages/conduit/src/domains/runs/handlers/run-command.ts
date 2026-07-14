@@ -5,6 +5,9 @@ import {
 import type { RunResult } from "../types/run.js";
 import type { ApplicationDependencies } from "../../../system/bootstrap/types.js";
 import type { CommandRuntimeDependencies } from "../../../system/cli/command-support.js";
+import type { RunRecoveryRepository } from "../interfaces/run-recovery-repository.js";
+import type { RunEventRepository } from "../interfaces/run-event-repository.js";
+import type { RunProcessRegistry } from "../repositories/run-process-registry.js";
 
 type RunCommandDependencies = Pick<
   ApplicationDependencies,
@@ -17,7 +20,11 @@ type RunCommandDependencies = Pick<
   | "readRunRoleLog"
   | "readRunRolePatch"
 > &
-  Partial<CommandRuntimeDependencies>;
+  Partial<CommandRuntimeDependencies> & {
+    runRecoveryRepository?: RunRecoveryRepository;
+    runEventRepository?: RunEventRepository;
+    runProcessRegistry?: RunProcessRegistry;
+  };
 
 export async function runCommand(
   featureId: string,
@@ -52,6 +59,7 @@ export async function runCommand(
       fetchSkills: options.fetchSkills as boolean | undefined,
     }),
   );
+  const snapshot = await dependencies.runRecoveryRepository?.saveSnapshot(run);
   const dryRun = Boolean(options.dryRun);
   const controller = new AbortController();
   const onInterrupt = () => controller.abort();
@@ -90,6 +98,8 @@ export async function runCommand(
       runDir,
       dryRun,
       signal: controller.signal,
+      eventRepository: dependencies.runEventRepository,
+      processRegistry: dependencies.runProcessRegistry,
       onProgress: (message: string) => {
         setText(`Agents · ${message}`);
         liveView?.updateStatus(message);
@@ -105,6 +115,18 @@ export async function runCommand(
           dryRun ? "Rendering dry-run plan" : "Launching agent runs",
           execute,
         );
+    await dependencies.runRecoveryRepository?.saveSnapshot(
+      run,
+      snapshot?.version,
+    );
+    if (run.status === "cancelled")
+      await dependencies.runRecoveryRepository?.markCancelled(run.id);
+  } catch (error) {
+    await dependencies.runRecoveryRepository?.markInterrupted(
+      run.id,
+      error instanceof Error ? error.message : String(error),
+    );
+    throw error;
   } finally {
     liveView?.close();
   }

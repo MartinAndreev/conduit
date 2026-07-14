@@ -8,12 +8,14 @@ export type RevisionStatus =
   | "failed";
 
 export interface RefinementRevision {
+  readonly featureId?: string;
   readonly id: string;
   readonly status: RevisionStatus;
   readonly directory: string;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly feedback?: string;
+  readonly version?: number;
 }
 
 export interface ClarificationQuestion {

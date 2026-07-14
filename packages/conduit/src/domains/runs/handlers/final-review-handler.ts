@@ -4,6 +4,7 @@ import type {
   FinalReviewResult,
 } from "../interfaces/commands/final-review.js";
 import type { ReviewResultRepository } from "../interfaces/review-result-repository.js";
+import type { RunRecoveryRepository } from "../interfaces/run-recovery-repository.js";
 import type { Config } from "../../configuration/types/config.js";
 import type { Feature } from "../../features/types/feature.js";
 import type { Run } from "../types/run.js";
@@ -12,7 +13,11 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { coreRoleContract } from "../../roles/assets/core-role-contract.js";
-import { commandForRole } from "../repositories/run-orchestrator.js";
+import {
+  agentProcessEnvironment,
+  commandForRole,
+} from "../repositories/run-orchestrator.js";
+import { redactSecrets } from "@system/storage/security/secret-redaction.js";
 
 export interface FinalReviewDependencies {
   loadConfig: (projectRoot: string) => Promise<Config>;
@@ -148,24 +153,14 @@ function parseReviewOutput(output: string): {
 export function createFinalReviewHandler(
   deps: FinalReviewDependencies,
   reviewRepository: ReviewResultRepository,
+  recoveryRepository: RunRecoveryRepository,
 ): CommandHandler<FinalReviewCommand, FinalReviewResult> {
   return async (command) => {
     try {
       const config = await deps.loadConfig(command.projectRoot);
 
-      // Load run data
-      const runFile = path.join(
-        command.projectRoot,
-        config.stateDir,
-        "runs",
-        command.runId,
-        "run.json",
-      );
-      let run: Run;
-      try {
-        const raw = await readFile(runFile, "utf8");
-        run = JSON.parse(raw);
-      } catch {
+      const snapshot = await recoveryRepository.loadSnapshot(command.runId);
+      if (!snapshot) {
         return {
           success: false,
           error: {
@@ -174,6 +169,7 @@ export function createFinalReviewHandler(
           },
         };
       }
+      const run: Run = snapshot.run;
 
       // Load feature packet
       const feature = await deps.findFeature({
@@ -223,7 +219,9 @@ export function createFinalReviewHandler(
         command.runId,
         "review-prompt.md",
       );
-      await (await import("node:fs/promises")).writeFile(promptFile, prompt);
+      await (
+        await import("node:fs/promises")
+      ).writeFile(promptFile, redactSecrets(prompt));
 
       const reviewer = config.roles.reviewer;
       if (!reviewer)
@@ -233,6 +231,7 @@ export function createFinalReviewHandler(
         cwd: command.projectRoot,
         encoding: "utf8",
         timeout: 120_000,
+        env: agentProcessEnvironment(),
       });
 
       const output = reviewResult.stdout ?? "";
