@@ -7,7 +7,9 @@ import { RolesBootstrapService } from "./roles-bootstrap-service.js";
 import { RunsBootstrapService } from "./runs-bootstrap-service.js";
 import { UpdatesBootstrapService } from "../../../domains/updates/services/updates-bootstrap-service.js";
 
-export function createDefaultBootstrapServices(): readonly ApplicationBootstrapService[] {
+export function createDefaultBootstrapServices(
+  updatesService: ApplicationBootstrapService = new UpdatesBootstrapService(),
+): readonly ApplicationBootstrapService[] {
   return [
     new CoreBootstrapService(),
     new ConfigurationBootstrapService(),
@@ -15,6 +17,6 @@ export function createDefaultBootstrapServices(): readonly ApplicationBootstrapS
     new RolesBootstrapService(),
     new RefinementBootstrapService(),
     new RunsBootstrapService(),
-    new UpdatesBootstrapService(),
+    updatesService,
   ];
 }

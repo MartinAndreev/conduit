@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createCheckForUpdateHandler } from "../../src/domains/updates/handlers/check-for-update-handler.js";
 import { UpdateDiscoveryError } from "../../src/domains/updates/errors/update-errors.js";
 import { UpdateStatus } from "../../src/domains/updates/enums/update-status.js";
+import { InstallationKind } from "../../src/domains/updates/enums/installation-kind.js";
 import type { ReleaseDiscovery } from "../../src/domains/updates/interfaces/release-discovery.js";
 
 test("check handler maps newer, current, and unavailable results to versioned read models", async () => {
@@ -19,12 +20,21 @@ test("check handler maps newer, current, and unavailable results to versioned re
   const available = await createCheckForUpdateHandler(
     availableDiscovery,
     "1.0.0",
+    {
+      detect: async () => ({
+        kind: InstallationKind.Unknown,
+        automatic: false,
+        label: "Manual update",
+        manualUrl: "https://github.com/MartinAndreev/conduit/releases/latest",
+      }),
+    },
   )({ type: "checkForUpdate" });
   assert.equal(available.success, true);
   if (available.success) {
     assert.equal(available.data.schemaVersion, 1);
     assert.equal(available.data.status, UpdateStatus.Available);
     assert.equal(available.data.targetVersion, "2.0.0");
+    assert.equal(available.data.installation?.label, "Manual update");
   }
 
   const current = await createCheckForUpdateHandler(

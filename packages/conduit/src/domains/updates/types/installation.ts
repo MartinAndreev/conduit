@@ -7,5 +7,6 @@ export interface InstallationStrategy {
   readonly executablePath?: string;
   readonly packageManager?: "npm" | "pnpm" | "bun";
   readonly manualCommand?: string;
+  readonly manualUrl?: string;
   readonly reason?: string;
 }

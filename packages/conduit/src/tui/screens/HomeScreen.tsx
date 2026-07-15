@@ -6,6 +6,9 @@ import { useTheme } from "@tui/components/ThemeProvider.js";
 import { useHomeController } from "@tui/controllers/useHomeController.js";
 import { FeatureActions } from "@tui/sections/FeatureActions.js";
 import { Sidebar } from "@tui/sections/Sidebar.js";
+import { HomeVersionStatus } from "@tui/components/HomeVersionStatus.js";
+import { UpdateConfirmation } from "@tui/components/UpdateConfirmation.js";
+import { UpdateStatus } from "@domains/updates/enums/update-status.js";
 
 interface HomeScreenProps {
   commandBus: CommandBus;
@@ -16,6 +19,7 @@ interface HomeScreenProps {
   onView: (featureId: string) => void;
   onRun: (feature: FeatureReadModel) => void;
   onStatus: (feature: FeatureReadModel) => void;
+  updateChecksEnabled: boolean;
 }
 
 export function HomeScreen({
@@ -27,6 +31,7 @@ export function HomeScreen({
   onView,
   onRun,
   onStatus,
+  updateChecksEnabled,
 }: HomeScreenProps) {
   const theme = useTheme();
   const [state, actions] = useHomeController(
@@ -38,6 +43,7 @@ export function HomeScreen({
     onView,
     onRun,
     onStatus,
+    updateChecksEnabled,
   );
 
   return (
@@ -47,6 +53,7 @@ export function HomeScreen({
       flexDirection="column"
       backgroundColor={theme.surface.base}
     >
+      <HomeVersionStatus status={state.updateStatus} theme={theme} />
       <box width="100%" height="100%" flexDirection="row">
         <Sidebar
           features={state.filteredFeatures}
@@ -54,21 +61,36 @@ export function HomeScreen({
           searchQuery={state.searchQuery}
           theme={theme}
         />
-        <FeatureActions
-          feature={state.filteredFeatures[state.selectedIndex]}
-          theme={theme}
-          actionModalOpen={state.actionModalOpen}
-          selectedAction={state.selectedAction}
-          tip={state.tip}
-          creating={state.creating}
-          featureTitle={state.featureTitle}
-          setFeatureTitle={actions.setFeatureTitle}
-          submitFeature={actions.submitFeature}
-        />
+        {state.updateConfirmationOpen &&
+        state.updateStatus.status === UpdateStatus.Available ? (
+          <UpdateConfirmation
+            status={state.updateStatus}
+            selectedAction={state.selectedUpdateAction}
+            theme={theme}
+          />
+        ) : (
+          <FeatureActions
+            feature={state.filteredFeatures[state.selectedIndex]}
+            theme={theme}
+            actionModalOpen={state.actionModalOpen}
+            selectedAction={state.selectedAction}
+            tip={state.tip}
+            creating={state.creating}
+            featureTitle={state.featureTitle}
+            setFeatureTitle={actions.setFeatureTitle}
+            submitFeature={actions.submitFeature}
+          />
+        )}
       </box>
       <HomeFooter
         searching={state.searching}
         actionModalOpen={state.actionModalOpen}
+        creating={state.creating}
+        updateConfirmationOpen={state.updateConfirmationOpen}
+        updateAvailable={
+          state.updateStatus.status === UpdateStatus.Available &&
+          Boolean(state.updateStatus.installation)
+        }
         theme={theme}
       />
     </box>

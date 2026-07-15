@@ -5,6 +5,8 @@ import type { ReleaseDiscovery } from "../interfaces/release-discovery.js";
 import type { UpdateInstaller } from "../interfaces/update-installer.js";
 import { GitHubReleaseDiscovery } from "../repositories/github-release-discovery.js";
 import { UnavailableUpdateInstaller } from "../repositories/unavailable-update-installer.js";
+import { UnknownInstallationDetector } from "../repositories/unknown-installation-detector.js";
+import type { InstallationDetector } from "../interfaces/installation-detector.js";
 import type { CommandHandler } from "../../../system/bus/command-bus.js";
 import type { QueryHandler } from "../../../system/bus/query-bus.js";
 import type {
@@ -17,6 +19,7 @@ export class UpdatesBootstrapService implements ApplicationBootstrapService {
     private readonly discovery: ReleaseDiscovery = new GitHubReleaseDiscovery(),
     private readonly installer: UpdateInstaller = new UnavailableUpdateInstaller(),
     private readonly currentVersion: string = conduitVersion,
+    private readonly installationDetector: InstallationDetector = new UnknownInstallationDetector(),
   ) {}
 
   register(context: ApplicationBootstrapContext): void {
@@ -25,6 +28,7 @@ export class UpdatesBootstrapService implements ApplicationBootstrapService {
       createCheckForUpdateHandler(
         this.discovery,
         this.currentVersion,
+        this.installationDetector,
       ) as QueryHandler,
     );
     context.commandBus.register(

@@ -54,6 +54,9 @@ import { OSVaultStore } from "./domains/credentials/repositories/os-vault-store.
 import { LocalSpecKitProvider } from "./domains/features/providers/local-spec-kit-provider.js";
 import { createPortraitRegistry } from "./domains/roles/repositories/portrait-registry.js";
 import { createApplication } from "./system/bootstrap/application.js";
+import type { ApplicationBootstrapService } from "./system/bootstrap/application.js";
+import { createDefaultBootstrapServices } from "./system/bootstrap/services/default-bootstrap-services.js";
+import { UpdatesBootstrapService } from "./domains/updates/services/updates-bootstrap-service.js";
 import {
   GlobalDatabaseFactory,
   ProjectDatabaseFactory,
@@ -401,10 +404,13 @@ export async function handleBareConduit(
     startHome?: (params: {
       commandBus: ReturnType<typeof createApplication>["commandBus"];
       queryBus: ReturnType<typeof createApplication>["queryBus"];
+      updateChecksEnabled: boolean;
     }) => Promise<void>;
     setExitCode?: (code: number) => void;
     startupMigration?: (projectRoot: string) => Promise<void>;
     environment?: NodeJS.ProcessEnv;
+    updatesBootstrapService?: ApplicationBootstrapService;
+    checkForUpdates?: boolean;
   },
 ): Promise<void> {
   const prompt = deps?.prompt ?? defaultPrompt;
@@ -456,32 +462,40 @@ export async function handleBareConduit(
   );
   const featureProvider = settingsResult.createProvider(specsDir);
 
-  const app = createApplication({
-    loadConfig,
-    initializeProject,
-    createFeature,
-    findFeature,
-    planRun,
-    executeRun,
-    latestRuns: async () => [],
-    configurationRepository: settingsResult.configurationRepository,
-    credentialStore: settingsResult.credentialStore,
-    featureProvider,
-    portraitRegistry: settingsResult.portraitRegistry,
-    refinementPrompt: localSpecKitRefinementPrompt,
-    runArchitect,
-    cancelArchitect: cancelArchitectForFeature,
-    builtinRoleRoot: path.join(root, "skills", "roles"),
-    projectRoot,
-    stateDirectory: resolvedSettings.effective.stateDir,
-  });
+  const app = createApplication(
+    {
+      loadConfig,
+      initializeProject,
+      createFeature,
+      findFeature,
+      planRun,
+      executeRun,
+      latestRuns: async () => [],
+      configurationRepository: settingsResult.configurationRepository,
+      credentialStore: settingsResult.credentialStore,
+      featureProvider,
+      portraitRegistry: settingsResult.portraitRegistry,
+      refinementPrompt: localSpecKitRefinementPrompt,
+      runArchitect,
+      cancelArchitect: cancelArchitectForFeature,
+      builtinRoleRoot: path.join(root, "skills", "roles"),
+      projectRoot,
+      stateDirectory: resolvedSettings.effective.stateDir,
+    },
+    createDefaultBootstrapServices(
+      deps?.updatesBootstrapService ?? new UpdatesBootstrapService(),
+    ),
+  );
 
   const homeFn = deps?.startHome ?? (await import("./tui/home.js")).startHome;
   try {
+    if (deps?.checkForUpdates !== false)
+      void app.queryBus.execute({ type: "checkForUpdate" });
     await homeFn({
       commandBus: app.commandBus,
       queryBus: app.queryBus,
       projectRoot,
+      updateChecksEnabled: deps?.checkForUpdates !== false,
     });
   } finally {
     await app.close();
@@ -492,7 +506,10 @@ export async function main(args: string[]): Promise<void> {
   if (shouldShowBanner(args)) process.stdout.write(`${conduitBanner}\n`);
 
   if (args.length === 0) {
-    await handleBareConduit(process.cwd());
+    const interactive = Boolean(
+      process.stdin.isTTY && process.stdout.isTTY && !process.env.CI,
+    );
+    await handleBareConduit(process.cwd(), { checkForUpdates: interactive });
     return;
   }
 

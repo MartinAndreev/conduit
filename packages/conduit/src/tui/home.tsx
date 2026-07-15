@@ -17,6 +17,7 @@ function HomeApplication({
   queryBus,
   onExit,
   projectRoot,
+  updateChecksEnabled = true,
 }: StartHomeParams & { onExit: () => void; projectRoot?: string }) {
   const [refiningFeatureId, setRefiningFeatureId] = useState<string | null>(
     null,
@@ -90,6 +91,7 @@ function HomeApplication({
       onView={setViewingFeatureId}
       onRun={setRunFeature}
       onStatus={setStatusFeature}
+      updateChecksEnabled={updateChecksEnabled}
     />
   );
 }
@@ -98,10 +100,16 @@ export interface StartHomeParams {
   commandBus: CommandBus;
   queryBus: QueryBus;
   projectRoot?: string;
+  updateChecksEnabled?: boolean;
 }
 
 export async function startHome(params: StartHomeParams): Promise<void> {
-  const { commandBus, queryBus, projectRoot = process.cwd() } = params;
+  const {
+    commandBus,
+    queryBus,
+    projectRoot = process.cwd(),
+    updateChecksEnabled = true,
+  } = params;
 
   const renderer = await createCliRenderer({
     exitOnCtrlC: false,
@@ -121,6 +129,7 @@ export async function startHome(params: StartHomeParams): Promise<void> {
         commandBus={commandBus}
         queryBus={queryBus}
         projectRoot={projectRoot}
+        updateChecksEnabled={updateChecksEnabled}
         onExit={handleExit}
       />
     </ThemeProvider>,
