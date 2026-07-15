@@ -1,6 +1,6 @@
 {
   "name": "conduit-orchestrator",
-  "version": "0.5.4",
+  "version": "0.6.0",
   "description": "Spec-driven, local-first orchestration for coding agents.",
   "license": "MIT",
   "type": "module",
@@ -14,6 +14,13 @@
     "conduit": "./dist/conduit.js"
   },
   "scripts": {
+    "generate:version": "node scripts/generate-version.js",
+    "prebuild": "pnpm generate:version",
+    "prebuild:standalone": "pnpm generate:version",
+    "prelint": "pnpm generate:version",
+    "prestart": "pnpm generate:version",
+    "pretest": "pnpm generate:version",
+    "pretypecheck": "pnpm generate:version",
     "build": "bun scripts/build.js",
     "build:standalone": "bun scripts/build-standalone.js",
     "generate:role-templates": "bun scripts/generate-role-templates.js",

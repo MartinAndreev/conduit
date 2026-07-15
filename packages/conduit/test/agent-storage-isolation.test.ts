@@ -59,6 +59,7 @@ test("spawned agents receive neither database environment nor database context",
     });
     const role = run.roles[0];
     assert.ok(role);
+    assert.deepEqual(role.assignment?.forbiddenPaths, [".git", ".conduit"]);
     const suppliedContext = [
       role.prompt,
       await readFile(role.promptFile, "utf8"),

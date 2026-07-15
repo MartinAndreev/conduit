@@ -11,12 +11,14 @@ import { RunScreen } from "./screens/RunScreen.js";
 import { FeatureStatusScreen } from "./screens/FeatureStatusScreen.js";
 import { RoleRunSelectionScreen } from "./screens/RoleRunSelectionScreen.js";
 import type { FeatureReadModel } from "@domains/features/types/feature.js";
+import { UpdateScreen } from "./screens/UpdateScreen.js";
 
 function HomeApplication({
   commandBus,
   queryBus,
   onExit,
   projectRoot,
+  updateChecksEnabled = true,
 }: StartHomeParams & { onExit: () => void; projectRoot?: string }) {
   const [refiningFeatureId, setRefiningFeatureId] = useState<string | null>(
     null,
@@ -27,6 +29,16 @@ function HomeApplication({
   const [statusFeature, setStatusFeature] = useState<FeatureReadModel | null>(
     null,
   );
+  const [updating, setUpdating] = useState(false);
+  if (updating)
+    return (
+      <UpdateScreen
+        commandBus={commandBus}
+        queryBus={queryBus}
+        onHome={() => setUpdating(false)}
+        onQuit={onExit}
+      />
+    );
   if (runningRunId && projectRoot)
     return (
       <RunScreen
@@ -90,6 +102,8 @@ function HomeApplication({
       onView={setViewingFeatureId}
       onRun={setRunFeature}
       onStatus={setStatusFeature}
+      updateChecksEnabled={updateChecksEnabled}
+      onUpdateRequested={() => setUpdating(true)}
     />
   );
 }
@@ -98,10 +112,16 @@ export interface StartHomeParams {
   commandBus: CommandBus;
   queryBus: QueryBus;
   projectRoot?: string;
+  updateChecksEnabled?: boolean;
 }
 
 export async function startHome(params: StartHomeParams): Promise<void> {
-  const { commandBus, queryBus, projectRoot = process.cwd() } = params;
+  const {
+    commandBus,
+    queryBus,
+    projectRoot = process.cwd(),
+    updateChecksEnabled = true,
+  } = params;
 
   const renderer = await createCliRenderer({
     exitOnCtrlC: false,
@@ -121,6 +141,7 @@ export async function startHome(params: StartHomeParams): Promise<void> {
         commandBus={commandBus}
         queryBus={queryBus}
         projectRoot={projectRoot}
+        updateChecksEnabled={updateChecksEnabled}
         onExit={handleExit}
       />
     </ThemeProvider>,

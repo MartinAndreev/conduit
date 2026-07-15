@@ -20,6 +20,13 @@ export const requiredAgentResponseFields = [
   "globalPromotionProposals",
 ] as const;
 
+function normalizeRepositoryPath(repositoryPath: string): string {
+  if (/^(\.\/)+$/.test(repositoryPath)) return ".";
+  const withoutPrefix = repositoryPath.replace(/^(\.\/)+/, "");
+  const withoutTrailingSlash = withoutPrefix.replace(/\/+$/, "");
+  return withoutTrailingSlash || repositoryPath;
+}
+
 export function createAgentAssignmentV1(input: {
   assignmentId: string;
   role: string;
@@ -39,8 +46,8 @@ export function createAgentAssignmentV1(input: {
     role: input.role,
     roleKind: input.roleKind,
     objective: input.objective,
-    ownedPaths: input.ownedPaths,
-    forbiddenPaths: input.forbiddenPaths ?? [],
+    ownedPaths: input.ownedPaths.map(normalizeRepositoryPath),
+    forbiddenPaths: (input.forbiddenPaths ?? []).map(normalizeRepositoryPath),
     dependencies: input.dependencies ?? [],
     contextReferences: input.contextReferences,
     acceptanceCriteria: input.acceptanceCriteria,

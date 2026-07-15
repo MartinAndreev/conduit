@@ -58,6 +58,7 @@ export interface BootstrapDependencies {
     run: Run;
     runDir: string;
     dryRun?: boolean;
+    onRoleWorkspaceReady?: () => Promise<void>;
     signal?: AbortSignal;
     eventRepository?: RunEventRepository;
     processRegistry?: RunProcessRegistry;

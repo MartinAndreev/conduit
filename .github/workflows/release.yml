@@ -33,6 +33,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:standalone -- ${{ matrix.target }}
       - run: pnpm --filter conduit-orchestrator test -- standalone-persistence
+      - if: runner.os != 'Windows'
+        run: pnpm --filter conduit-orchestrator test -- standalone-installer
       - uses: actions/upload-artifact@v4
         with:
           name: conduit-${{ matrix.target }}

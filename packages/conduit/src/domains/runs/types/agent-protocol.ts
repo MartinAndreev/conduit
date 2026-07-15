@@ -155,6 +155,7 @@ export interface AgentResponseV1 {
 export interface AgentAssignmentPolicyV1 {
   readonly roleKind: AgentRoleKind;
   readonly ownedPaths: readonly string[];
+  readonly forbiddenPaths?: readonly string[];
   readonly requiredVerification?: readonly string[];
   readonly expectedArtifacts?: readonly string[];
   readonly observedChangedFiles?: readonly string[];
@@ -189,6 +190,7 @@ export interface ConduitResultRecordV1 {
   readonly agentClaimedEvents: readonly import("./runner-events.js").RunnerEvent[];
   readonly protocolValidation: AgentValidationMetadataV1;
   readonly semanticValidation: AgentValidationMetadataV1;
+  readonly ownershipWarnings?: readonly ValidationIssue[];
   readonly response: AgentResponseV1;
 }
 

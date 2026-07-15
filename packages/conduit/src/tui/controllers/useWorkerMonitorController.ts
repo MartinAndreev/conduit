@@ -16,6 +16,7 @@ import type {
 } from "@tui/types/worker-monitor.js";
 import { usePollingQuery } from "@tui/hooks/usePollingQuery.js";
 import { useSelectableList } from "@tui/hooks/useSelectableList.js";
+import { workerMonitorFocusForKey } from "@tui/helpers/worker-monitor-navigation.js";
 
 const initialMonitorState: WorkerMonitorState = {
   events: [],
@@ -37,7 +38,7 @@ const initialMonitorState: WorkerMonitorState = {
   fileDiffExpanded: false,
 };
 
-function monitorReducer(
+export function monitorReducer(
   state: WorkerMonitorState,
   action: WorkerMonitorAction,
 ): WorkerMonitorState {
@@ -98,7 +99,6 @@ function monitorReducer(
       return {
         ...state,
         selectedFileIndex: action.index,
-        fileDiffExpanded: false,
       };
     case "toggleExpand": {
       const next =
@@ -318,14 +318,20 @@ export function useWorkerMonitorController(
           });
         return;
       }
+      const requestedFocus = workerMonitorFocusForKey(
+        event.name,
+        state.focusMode,
+        state.changedFiles.length > 0,
+      );
+      if (requestedFocus) {
+        return dispatch({ type: "setFocus", focus: requestedFocus });
+      }
       if (event.name === "left" || (event.name === "tab" && event.shift))
         return roles.previous();
       if (event.name === "right" || event.name === "tab") return roles.next();
       if (state.focusMode === "roles") {
         if (event.name === "up") return roles.previous();
         if (event.name === "down") return roles.next();
-        if (event.name === "return" || event.name === "space")
-          return dispatch({ type: "setFocus", focus: "activity" });
       } else if (state.focusMode === "files") {
         if (event.name === "up" || event.name === "left")
           return files.previous();
@@ -357,6 +363,7 @@ export function useWorkerMonitorController(
       state.focusMode,
       state.cancelled,
       state.scrollOffset,
+      state.changedFiles.length,
       onExit,
       selectedRoleEvents.length,
       commandBus,

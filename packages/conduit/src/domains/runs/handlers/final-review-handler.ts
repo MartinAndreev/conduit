@@ -8,6 +8,7 @@ import type { RunRecoveryRepository } from "../interfaces/run-recovery-repositor
 import type { Config } from "../../configuration/types/config.js";
 import type { Feature } from "../../features/types/feature.js";
 import type { Run } from "../types/run.js";
+import type { ValidationIssue } from "../types/agent-protocol.js";
 import type { ReviewDecision, ReviewFinding } from "../types/review.js";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
@@ -27,6 +28,7 @@ import {
 } from "@system/runners/registry.js";
 import { createAgentAssignmentV1 } from "../factories/agent-assignment-factory.js";
 import { validateAgentAssignmentV1 } from "../validation/agent-assignment-validator.js";
+import { FileConduitResultRecordRepository } from "../repositories/file-conduit-result-record-repository.js";
 
 export interface FinalReviewDependencies {
   loadConfig: (projectRoot: string) => Promise<Config>;
@@ -42,9 +44,20 @@ export function buildReviewPrompt(
   run: Run,
   diffs: Map<string, string>,
   packetContent: string,
+  ownershipWarnings: ReadonlyMap<
+    string,
+    readonly ValidationIssue[]
+  > = new Map(),
 ): string {
   const diffSections = [...diffs.entries()]
     .map(([role, diff]) => `## Role: ${role}\n\`\`\`diff\n${diff}\n\`\`\``)
+    .join("\n\n");
+  const ownershipSections = [...ownershipWarnings.entries()]
+    .filter(([, warnings]) => warnings.length > 0)
+    .map(
+      ([role, warnings]) =>
+        `### Role: ${role}\n${warnings.map((warning) => `- ${warning.message}`).join("\n")}`,
+    )
     .join("\n\n");
 
   return `# Final review contract
@@ -65,6 +78,9 @@ ${packetContent}
 ## Authoritative Worktree Diffs
 ${diffSections}
 
+## Ownership Warnings
+${ownershipSections || "No unexpected ownership changes were reported."}
+
 ## Review Instructions
 1. Read every supplied diff section and compare it against every applicable acceptance criterion and contract. Do not approve based on summaries or stated intent.
 2. Inspect changed logic and its callers, consumers, and established repository conventions in context. Apply the complete final review contract above.
@@ -72,6 +88,7 @@ ${diffSections}
 4. Each material finding must name the affected file and line when available, explain the observable risk, and state the smallest concrete remediation.
 5. Reject for any material correctness, security, reliability, performance, maintainability, compatibility, operability, or verification concern. Approve only when every material requirement is independently verified.
 6. Do not add speculative findings. Findings must be grounded in the supplied packet, diff, or directly implied behavior.
+7. Treat ownership warnings as integration signals, not automatic failures. Decide whether each unexpected path is acceptable for the approved task or represents a material conflict or scope violation.
 
 ${agentResponseContractPrompt()}
 
@@ -185,7 +202,15 @@ export function createFinalReviewHandler(
 
       // Gather authoritative worktree diffs
       const diffs = new Map<string, string>();
+      const ownershipWarnings = new Map<string, readonly ValidationIssue[]>();
+      const resultRepository = new FileConduitResultRecordRepository(
+        path.join(command.projectRoot, config.stateDir, "runs"),
+      );
       for (const role of run.roles) {
+        const resultRecord = await resultRepository.load(run.id, role.name);
+        if (resultRecord?.ownershipWarnings?.length) {
+          ownershipWarnings.set(role.name, resultRecord.ownershipWarnings);
+        }
         if (role.worktree) {
           const diffResult = spawnSync(
             "git",
@@ -211,6 +236,7 @@ export function createFinalReviewHandler(
         run,
         diffs,
         packetContent,
+        ownershipWarnings,
       );
 
       // Invoke the configured reviewer runner. Review policy stays provider-neutral.

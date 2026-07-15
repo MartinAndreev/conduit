@@ -4,71 +4,20 @@ import type { FeatureReadModel } from "@domains/features/types/feature.js";
 import type { RolePortrait } from "@domains/roles/interfaces/role-portrait.js";
 import type { CommandBus } from "@system/bus/command-bus.js";
 import type { QueryBus } from "@system/bus/query-bus.js";
+import { conduitVersion } from "../../version.js";
+import { UpdateStatus } from "@domains/updates/enums/update-status.js";
+import type { UpdateStatusReadModel } from "@domains/updates/types/update-status-read-model.js";
 import tips from "@tui/assets/tips.json" with { type: "json" };
 import type {
   HomeControllerActions,
   HomeControllerState,
-  HomeInteraction,
 } from "@tui/types/home.js";
-
-export const FEATURE_ACTIONS = ["View", "Refine", "Run", "Status"] as const;
-
-type HomeInteractionAction =
-  | { type: "search" }
-  | { type: "create" }
-  | { type: "actions" }
-  | { type: "idle" }
-  | { type: "append"; value: string }
-  | { type: "setTitle"; value: string }
-  | { type: "backspace" }
-  | { type: "nextAction" }
-  | { type: "previousAction" };
-
-function interactionReducer(
-  state: HomeInteraction,
-  action: HomeInteractionAction,
-): HomeInteraction {
-  switch (action.type) {
-    case "search":
-      return { kind: "search", query: "" };
-    case "create":
-      return { kind: "create", title: "" };
-    case "actions":
-      return { kind: "featureActions", actionIndex: 0 };
-    case "idle":
-      return { kind: "idle" };
-    case "append":
-      return state.kind === "search"
-        ? { ...state, query: state.query + action.value }
-        : state.kind === "create"
-          ? { ...state, title: state.title + action.value }
-          : state;
-    case "setTitle":
-      return state.kind === "create"
-        ? { ...state, title: action.value }
-        : state;
-    case "backspace":
-      return state.kind === "search"
-        ? { ...state, query: state.query.slice(0, -1) }
-        : state.kind === "create"
-          ? { ...state, title: state.title.slice(0, -1) }
-          : state;
-    case "nextAction":
-      return state.kind === "featureActions"
-        ? {
-            ...state,
-            actionIndex: Math.min(
-              FEATURE_ACTIONS.length - 1,
-              state.actionIndex + 1,
-            ),
-          }
-        : state;
-    case "previousAction":
-      return state.kind === "featureActions"
-        ? { ...state, actionIndex: Math.max(0, state.actionIndex - 1) }
-        : state;
-  }
-}
+import {
+  canOpenUpdateConfirmation,
+  decideUpdateConfirmationKey,
+  FEATURE_ACTIONS,
+  homeInteractionReducer,
+} from "@tui/helpers/home-interaction.js";
 
 function randomTip(): string {
   return tips[Math.floor(Math.random() * tips.length)]!;
@@ -83,16 +32,36 @@ export function useHomeController(
   onView: (featureId: string) => void,
   onRun: (feature: FeatureReadModel) => void,
   onStatus: (feature: FeatureReadModel) => void,
+  updateChecksEnabled = true,
+  onUpdateRequested: () => void = () => undefined,
 ): [HomeControllerState, HomeControllerActions] {
   const [features, setFeatures] = useState<readonly FeatureReadModel[]>([]);
   const [portraits, setPortraits] = useState<HomeControllerState["portraits"]>(
     [],
   );
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [interaction, dispatchInteraction] = useReducer(interactionReducer, {
-    kind: "idle",
-  });
+  const [interaction, dispatchInteraction] = useReducer(
+    homeInteractionReducer,
+    {
+      kind: "idle",
+    },
+  );
   const [tip] = useState(randomTip);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatusReadModel>(
+    updateChecksEnabled
+      ? {
+          schemaVersion: 1,
+          status: UpdateStatus.Checking,
+          currentVersion: conduitVersion,
+        }
+      : {
+          schemaVersion: 1,
+          status: UpdateStatus.Unavailable,
+          currentVersion: conduitVersion,
+          message: "Update checks are disabled for non-interactive output.",
+          retryable: false,
+        },
+  );
 
   const loadData = useCallback(async () => {
     const featuresResult = await queryBus.execute({ type: "listFeatures" });
@@ -115,6 +84,40 @@ export function useHomeController(
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!updateChecksEnabled) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const refresh = async () => {
+      const result = await queryBus.execute({ type: "getUpdateStatus" });
+      if (!active) return;
+      if (!result.success) {
+        setUpdateStatus({
+          schemaVersion: 1,
+          status: UpdateStatus.Unavailable,
+          currentVersion: conduitVersion,
+          message: "The release check is unavailable.",
+          retryable: false,
+        });
+        return;
+      }
+      const next = result.data as UpdateStatusReadModel;
+      if (next.status === UpdateStatus.Idle) {
+        void queryBus.execute({ type: "checkForUpdate" });
+        timer = setTimeout(() => void refresh(), 100);
+        return;
+      }
+      setUpdateStatus(next);
+      if (next.status === UpdateStatus.Checking)
+        timer = setTimeout(() => void refresh(), 100);
+    };
+    void refresh();
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [queryBus, updateChecksEnabled]);
 
   const searchQuery = interaction.kind === "search" ? interaction.query : "";
   const filteredFeatures = searchQuery
@@ -209,12 +212,40 @@ export function useHomeController(
         return;
       }
 
+      if (interaction.kind === "updateConfirmation") {
+        const decision = decideUpdateConfirmationKey(interaction, key);
+        if (decision?.kind === "interaction") {
+          dispatchInteraction(decision.action);
+          return;
+        }
+        if (decision?.kind === "startUpdate") {
+          if (
+            updateStatus.status === UpdateStatus.Available &&
+            updateStatus.installation
+          ) {
+            void commandBus.dispatch({
+              type: "startUpdate",
+              release: updateStatus.release,
+              installation: updateStatus.installation,
+            });
+            onUpdateRequested();
+          }
+          dispatchInteraction({ type: "idle" });
+          return;
+        }
+        return;
+      }
+
       if (key === "/") {
         dispatchInteraction({ type: "search" });
         return;
       }
       if (key === "n") {
         dispatchInteraction({ type: "create" });
+        return;
+      }
+      if (key === "u" && canOpenUpdateConfirmation(interaction, updateStatus)) {
+        dispatchInteraction({ type: "openUpdateConfirmation" });
         return;
       }
       if (key === "q") {
@@ -250,6 +281,8 @@ export function useHomeController(
       onView,
       onRun,
       onStatus,
+      updateStatus,
+      onUpdateRequested,
     ],
   );
 
@@ -269,6 +302,10 @@ export function useHomeController(
         interaction.kind === "featureActions" ? interaction.actionIndex : 0,
       tip,
       filteredFeatures,
+      updateStatus,
+      updateConfirmationOpen: interaction.kind === "updateConfirmation",
+      selectedUpdateAction:
+        interaction.kind === "updateConfirmation" ? interaction.actionIndex : 0,
     },
     { handleKeyDown, setFeatureTitle, submitFeature },
   ];

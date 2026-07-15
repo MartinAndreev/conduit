@@ -24,10 +24,23 @@ function issue(path: string, message: string): ValidationIssue {
   return { path, message };
 }
 
+function normalizeRepositoryPath(repositoryPath: string): string {
+  if (/^(\.\/)+$/.test(repositoryPath)) return ".";
+  const withoutPrefix = repositoryPath.replace(/^(\.\/)+/, "");
+  const withoutTrailingSlash = withoutPrefix.replace(/\/+$/, "");
+  return withoutTrailingSlash || repositoryPath;
+}
+
 function overlaps(path: string, ownedPaths: readonly string[]): boolean {
-  return ownedPaths.some(
-    (root) => path === root || path.startsWith(`${root}/`) || root === ".",
-  );
+  const normalizedPath = normalizeRepositoryPath(path);
+  return ownedPaths.some((configuredRoot) => {
+    const root = normalizeRepositoryPath(configuredRoot);
+    return (
+      root === "." ||
+      normalizedPath === root ||
+      normalizedPath.startsWith(`${root}/`)
+    );
+  });
 }
 
 function requiresChangedArtifacts(
@@ -37,6 +50,16 @@ function requiresChangedArtifacts(
     roleKind === AgentRoleKind.Implementation ||
     roleKind === AgentRoleKind.Documentation ||
     roleKind === AgentRoleKind.Architect
+  );
+}
+
+function allowsFailedVerificationEvidence(
+  roleKind: AgentAssignmentPolicyV1["roleKind"],
+): boolean {
+  return (
+    roleKind === AgentRoleKind.Research ||
+    roleKind === AgentRoleKind.QualityAssurance ||
+    roleKind === AgentRoleKind.Reviewer
   );
 }
 
@@ -74,11 +97,20 @@ function validateStatusSections(
       ),
     );
   }
-  if (response.verification.some((item) => item.outcome !== "passed")) {
+  if (
+    response.verification.some(
+      (item) =>
+        item.outcome !== "passed" &&
+        (item.outcome !== "failed" ||
+          !allowsFailedVerificationEvidence(policy.roleKind)),
+    )
+  ) {
     issues.push(
       issue(
         "$.verification",
-        "completed status requires every reported verification outcome to be passed",
+        allowsFailedVerificationEvidence(policy.roleKind)
+          ? "completed evaluation requires every reported verification outcome to be passed or failed; skipped, blocked, and unknown outcomes are incomplete"
+          : "completed status requires every reported verification outcome to be passed",
       ),
     );
   }
@@ -93,14 +125,22 @@ function validateArtifactClaims(
   issues: ValidationIssue[],
 ): void {
   for (const artifact of response.artifacts) {
+    if (artifact.action !== "inspected" && policy.readOnly) {
+      issues.push(
+        issue(
+          "$.artifacts.path",
+          `read-only assignment reported a modification: ${artifact.path}`,
+        ),
+      );
+    }
     if (
       artifact.action !== "inspected" &&
-      !overlaps(artifact.path, policy.ownedPaths)
+      overlaps(artifact.path, policy.forbiddenPaths ?? [])
     ) {
       issues.push(
         issue(
           "$.artifacts.path",
-          `reported modification outside owned paths: ${artifact.path}`,
+          `reported modification in forbidden path: ${artifact.path}`,
         ),
       );
     }
@@ -116,11 +156,11 @@ function validateArtifactClaims(
     );
   }
   for (const changedFile of observed) {
-    if (!overlaps(changedFile, policy.ownedPaths)) {
+    if (overlaps(changedFile, policy.forbiddenPaths ?? [])) {
       issues.push(
         issue(
           "$.artifacts",
-          `Conduit observed a change outside owned paths: ${changedFile}`,
+          `Conduit observed a change in a forbidden path: ${changedFile}`,
         ),
       );
     }
@@ -148,6 +188,43 @@ function validateArtifactClaims(
       ),
     );
   }
+}
+
+export function collectOwnershipWarnings(
+  response: AgentResponseV1,
+  policy: AgentAssignmentPolicyV1,
+): ValidationIssue[] {
+  if (policy.readOnly) return [];
+  const warnings: ValidationIssue[] = [];
+  const forbiddenPaths = policy.forbiddenPaths ?? [];
+  for (const artifact of response.artifacts) {
+    if (
+      artifact.action !== "inspected" &&
+      !overlaps(artifact.path, policy.ownedPaths) &&
+      !overlaps(artifact.path, forbiddenPaths)
+    ) {
+      warnings.push(
+        issue(
+          "$.artifacts.path",
+          `reported modification outside assigned ownership: ${artifact.path}`,
+        ),
+      );
+    }
+  }
+  for (const changedFile of policy.observedChangedFiles ?? []) {
+    if (
+      !overlaps(changedFile, policy.ownedPaths) &&
+      !overlaps(changedFile, forbiddenPaths)
+    ) {
+      warnings.push(
+        issue(
+          "$.artifacts",
+          `Conduit observed a change outside assigned ownership: ${changedFile}`,
+        ),
+      );
+    }
+  }
+  return warnings;
 }
 
 function validateAssignmentRequirements(

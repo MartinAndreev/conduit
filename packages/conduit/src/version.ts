@@ -1,1 +1,1 @@
-export const conduitVersion = "0.5.4";
+export { conduitVersion } from "./generated/version.js";

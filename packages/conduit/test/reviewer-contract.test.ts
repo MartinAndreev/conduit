@@ -35,6 +35,18 @@ test("final review prompt preserves complete packet and diff evidence", () => {
     run,
     new Map([["backend", longEvidence]]),
     longEvidence,
+    new Map([
+      [
+        "qa",
+        [
+          {
+            path: "$.artifacts",
+            message:
+              "Conduit observed a change outside assigned ownership: vitest.config.js",
+          },
+        ],
+      ],
+    ]),
   );
 
   assert.equal(prompt.match(/final-marker/g)?.length, 2);
@@ -44,6 +56,8 @@ test("final review prompt preserves complete packet and diff evidence", () => {
     /performance, maintainability, compatibility, operability/,
   );
   assert.match(prompt, /Reject for any material/);
+  assert.match(prompt, /outside assigned ownership: vitest\.config\.js/);
+  assert.match(prompt, /integration signals, not automatic failures/);
 });
 
 test("final reviewer execution uses configured runner, model, and effort", () => {
@@ -57,8 +71,10 @@ test("final reviewer execution uses configured runner, model, and effort", () =>
   );
 
   assert.equal(command, "opencode");
-  assert.deepEqual(args.slice(0, 3), [
+  assert.deepEqual(args.slice(0, 5), [
     "run",
+    "--format",
+    "json",
     "--model",
     "provider/review-model",
   ]);

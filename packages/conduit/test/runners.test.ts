@@ -131,6 +131,12 @@ test("OpenCodeAdapter has correct configuration", () => {
   const adapter = new OpenCodeAdapter();
   assert.equal(adapter.name, "opencode");
   assert.equal(adapter.command, "opencode");
+  assert.deepEqual(adapter.buildArgs("/tmp/assignment.json"), [
+    "run",
+    "--format",
+    "json",
+    "Read /tmp/assignment.json and perform only your assigned task.",
+  ]);
 });
 
 test("OpenCodeAdapter parses JSON fixture", async () => {

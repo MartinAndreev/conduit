@@ -93,6 +93,7 @@ export interface ApplicationDependencies {
     dryRun?: boolean;
     onProgress?: (message: string) => void;
     onChange?: (params: { summary: string; preview: string }) => void;
+    onRoleWorkspaceReady?: () => Promise<void>;
     signal?: AbortSignal;
     eventRepository?: import("../../domains/runs/interfaces/run-event-repository.js").RunEventRepository;
     processRegistry?: import("../../domains/runs/repositories/run-process-registry.js").RunProcessRegistry;

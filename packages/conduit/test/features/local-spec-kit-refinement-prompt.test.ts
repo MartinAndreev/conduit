@@ -44,8 +44,17 @@ test("refinement prompt preserves clarification decisions and fails closed", () 
     prompt,
     /If a material decision remains unclear after investigation/,
   );
-  assert.match(prompt, /stop and write only .*questions\.md/);
-  assert.match(prompt, /Do not update the handoff until answered/);
+  assert.match(prompt, /status `needs_input`/);
+  assert.match(prompt, /structured `questions\[\]`/);
+  assert.match(prompt, /Conduit will render that response to .*questions\.md/);
+  assert.match(
+    prompt,
+    /do not create, modify, delete, or report that run-state file as an artifact/,
+  );
+  assert.match(
+    prompt,
+    /Do not update the handoff until the questions are answered/,
+  );
   assert.match(prompt, /application settings, not project guidance/);
   assert.match(prompt, /regardless of provider/);
   assert.match(prompt, /Project-authored architect guidance.*advisory/s);

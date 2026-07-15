@@ -61,6 +61,11 @@
     "agentClaimedEvents": { "$ref": "#/$defs/events" },
     "protocolValidation": { "$ref": "#/$defs/validation" },
     "semanticValidation": { "$ref": "#/$defs/validation" },
+    "ownershipWarnings": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": { "$ref": "#/$defs/issue" }
+    },
     "response": { "$ref": "agent-response-v1.schema.json" }
   },
   "$defs": {
@@ -118,16 +123,17 @@
         "issues": {
           "type": "array",
           "maxItems": 1000,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["path", "message"],
-            "properties": {
-              "path": { "type": "string", "minLength": 1, "maxLength": 500 },
-              "message": { "type": "string", "minLength": 1, "maxLength": 2000 }
-            }
-          }
+          "items": { "$ref": "#/$defs/issue" }
         }
+      }
+    },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "message"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 2000 }
       }
     }
   }

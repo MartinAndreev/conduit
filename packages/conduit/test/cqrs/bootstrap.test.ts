@@ -7,6 +7,9 @@ import { InMemoryCredentialStore } from "../../src/domains/credentials/repositor
 import { LocalSpecKitProvider } from "../../src/domains/features/providers/local-spec-kit-provider.js";
 import { createPortraitRegistry } from "../../src/domains/roles/repositories/portrait-registry.js";
 import { createConfigurationRepository } from "../../src/domains/configuration/repositories/configuration-repository.js";
+import { UpdatesBootstrapService } from "../../src/domains/updates/services/updates-bootstrap-service.js";
+import { InstallationKind } from "../../src/domains/updates/enums/installation-kind.js";
+import { UpdateStatus } from "../../src/domains/updates/enums/update-status.js";
 
 function stubDeps(
   overrides: Partial<BootstrapDependencies> = {},
@@ -88,6 +91,54 @@ test("createApplication composes registrations through the bootstrap contract", 
   assert.equal(result.success, true);
   if (result.success)
     assert.equal((result.data as { registered: boolean }).registered, true);
+});
+
+test("UpdatesBootstrapService registers update query and command contracts", async () => {
+  const release = {
+    version: "0.6.0",
+    tagName: "v0.6.0",
+    publishedAt: "2026-07-15T08:00:00Z",
+    releaseUrl: "https://github.com/MartinAndreev/conduit/releases/tag/v0.6.0",
+    assets: [],
+  };
+  let installed = false;
+  const app = createApplication(stubDeps(), [
+    new UpdatesBootstrapService(
+      { discover: async () => release },
+      {
+        install: async () => {
+          installed = true;
+        },
+      },
+      "0.5.4",
+    ),
+  ]);
+
+  const checked = await app.queryBus.execute({ type: "checkForUpdate" });
+  assert.equal(
+    checked.success &&
+      (checked.data as { status: UpdateStatus }).status ===
+        UpdateStatus.Available,
+    true,
+  );
+
+  const updated = await app.commandBus.dispatch({
+    type: "startUpdate",
+    release,
+    installation: {
+      kind: InstallationKind.Standalone,
+      automatic: true,
+      label: "Official standalone binary",
+    },
+  });
+  assert.equal(installed, true);
+  assert.equal(
+    updated.success &&
+      (updated.data as { status: UpdateStatus }).status ===
+        UpdateStatus.Succeeded,
+    true,
+  );
+  await app.close();
 });
 
 test("project bootstrap injects the source-version repository", async () => {

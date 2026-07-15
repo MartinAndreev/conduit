@@ -74,3 +74,64 @@ test("run handler executes by default unless dry-run is requested", async () => 
   );
   assert.equal(receivedDryRun, false);
 });
+
+test("run handler persists role workspaces while the run is active", async () => {
+  const expectedVersions: Array<number | undefined> = [];
+  let version = 0;
+  const run = {
+    id: "r-live",
+    featureId: "001",
+    status: "running" as const,
+    createdAt: new Date().toISOString(),
+    roles: [],
+  };
+  await runCommand(
+    "001",
+    {
+      project: "/tmp/demo",
+      roles: "frontend",
+      dryRun: false,
+      fetchSkills: false,
+    },
+    {
+      output: () => {},
+      progress: async <T>(
+        _text: string,
+        work: (params?: { setText?: (text: string) => void }) => Promise<T>,
+      ) => work(),
+      loadConfig: async () => ({
+        version: 1,
+        specsDir: "specs",
+        stateDir: ".conduit",
+        roles: {},
+      }),
+      planRun: async () => ({ run, runDir: "/tmp/run" }),
+      executeRun: async ({
+        onRoleWorkspaceReady,
+      }: {
+        onRoleWorkspaceReady?: () => Promise<void>;
+      }) => {
+        await onRoleWorkspaceReady?.();
+        return [];
+      },
+      runRecoveryRepository: {
+        saveSnapshot: async (savedRun, expectedVersion) => {
+          expectedVersions.push(expectedVersion);
+          version += 1;
+          return {
+            run: savedRun,
+            state: "running",
+            version,
+            updatedAt: new Date().toISOString(),
+          };
+        },
+        loadSnapshot: async () => undefined,
+        listSnapshots: async () => [],
+        markInterrupted: async () => {},
+        markCancelled: async () => {},
+      },
+    },
+  );
+
+  assert.deepEqual(expectedVersions, [undefined, 1, 2]);
+});
