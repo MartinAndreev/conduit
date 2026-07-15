@@ -40,6 +40,16 @@ function requiresChangedArtifacts(
   );
 }
 
+function allowsFailedVerificationEvidence(
+  roleKind: AgentAssignmentPolicyV1["roleKind"],
+): boolean {
+  return (
+    roleKind === AgentRoleKind.Research ||
+    roleKind === AgentRoleKind.QualityAssurance ||
+    roleKind === AgentRoleKind.Reviewer
+  );
+}
+
 function validateStatusSections(
   response: AgentResponseV1,
   policy: AgentAssignmentPolicyV1,
@@ -74,11 +84,20 @@ function validateStatusSections(
       ),
     );
   }
-  if (response.verification.some((item) => item.outcome !== "passed")) {
+  if (
+    response.verification.some(
+      (item) =>
+        item.outcome !== "passed" &&
+        (item.outcome !== "failed" ||
+          !allowsFailedVerificationEvidence(policy.roleKind)),
+    )
+  ) {
     issues.push(
       issue(
         "$.verification",
-        "completed status requires every reported verification outcome to be passed",
+        allowsFailedVerificationEvidence(policy.roleKind)
+          ? "completed evaluation requires every reported verification outcome to be passed or failed; skipped, blocked, and unknown outcomes are incomplete"
+          : "completed status requires every reported verification outcome to be passed",
       ),
     );
   }

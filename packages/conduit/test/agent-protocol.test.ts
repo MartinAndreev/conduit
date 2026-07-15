@@ -10,6 +10,7 @@ import { renderResearchReport } from "../src/domains/runs/validation/research-re
 import { renderClarificationQuestions } from "../src/domains/runs/validation/clarification-renderer.js";
 import { roleKindForRole } from "../src/domains/runs/validation/agent-semantic-validator.js";
 import { AgentRoleKind } from "../src/domains/roles/enums/agent-role-kind.js";
+import { agentResponseContractPrompt } from "../src/domains/runs/assets/agent-response-contract.js";
 
 const base: AgentResponseV1 = {
   protocolVersion: "1.0",
@@ -234,7 +235,7 @@ test("an empty ownership list does not grant write access", () => {
   );
 });
 
-test("completed responses reject failed or skipped verification", () => {
+test("completed implementation responses reject failed or skipped verification", () => {
   for (const outcome of ["failed", "skipped", "blocked", "unknown"] as const) {
     const response: AgentResponseV1 = {
       ...base,
@@ -258,6 +259,79 @@ test("completed responses reject failed or skipped verification", () => {
       false,
     );
   }
+});
+
+test("completed research, QA, and review responses preserve negative verification evidence", () => {
+  const verification = [
+    {
+      operation: "pnpm test",
+      outcome: "failed" as const,
+      exitCode: 1,
+      summary: "The requested behavior is not implemented.",
+      evidence: ["test output"],
+    },
+  ];
+  const research: AgentResponseV1 = { ...base, verification };
+  assert.equal(
+    validateAgentResponseForAssignment(research, {
+      roleKind: AgentRoleKind.Research,
+      ownedPaths: [],
+    }).valid,
+    true,
+  );
+
+  const qualityAssurance: AgentResponseV1 = { ...base, verification };
+  assert.equal(
+    validateAgentResponseForAssignment(qualityAssurance, {
+      roleKind: AgentRoleKind.QualityAssurance,
+      ownedPaths: [],
+    }).valid,
+    true,
+  );
+
+  const reviewer: AgentResponseV1 = {
+    ...base,
+    verdict: {
+      decision: "rejected",
+      rationale: "The failing verification demonstrates a material defect.",
+    },
+    verification,
+  };
+  assert.equal(
+    validateAgentResponseForAssignment(reviewer, {
+      roleKind: AgentRoleKind.Reviewer,
+      ownedPaths: [],
+    }).valid,
+    true,
+  );
+});
+
+test("completed evaluative responses still reject skipped, blocked, or unknown verification", () => {
+  for (const outcome of ["skipped", "blocked", "unknown"] as const) {
+    const response: AgentResponseV1 = {
+      ...base,
+      verification: [
+        { operation: "pnpm test", outcome, summary: "Not completed." },
+      ],
+    };
+    assert.equal(
+      validateAgentResponseForAssignment(response, {
+        roleKind: AgentRoleKind.Research,
+        ownedPaths: [],
+      }).valid,
+      false,
+    );
+  }
+});
+
+test("AgentResponseV1 prompt explains role-aware negative verification semantics", () => {
+  const prompt = agentResponseContractPrompt();
+  assert.match(
+    prompt,
+    /implementation assignments, completed status requires every reported/i,
+  );
+  assert.match(prompt, /Research, QA, and reviewer assignments/i);
+  assert.match(prompt, /failed\s+product check is a finding/i);
 });
 
 test("rejected reviewer requires findings or a material rationale", () => {
