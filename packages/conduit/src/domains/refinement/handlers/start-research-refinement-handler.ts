@@ -79,15 +79,20 @@ export function createStartResearchRefinementHandler(
       });
       const researcher = run.roles[0];
       if (!researcher) throw new Error("Could not prepare the researcher run.");
+      // Research preflight is always read-only, even when an older project
+      // configuration omitted the flag. It reads the project in place and
+      // writes only its dedicated report artifact under the run directory.
+      researcher.readOnly = true;
       researcher.prompt += `\n\n# Refinement research assignment (authoritative)\n\nInvestigate the repository context needed to refine this feature. Do not edit source code, specification files, contracts, or the feature packet.\n\n## Feature request\n\n${redactSecrets(command.story)}\n\nReturn a concise Markdown report with: relevant files and call paths; confirmed facts; constraints and risks; existing tests and conventions; assumptions that require validation; and product or technical questions that should inform the architect. Cite paths for every repository claim. Do not propose a prompt, implementation plan, or production-code patch.`;
       await writeFile(researcher.promptFile, researcher.prompt);
       const reportFile = `conduit://research/${encodeURIComponent(feature.id)}`;
       const runnerReportFile = path.join(runDir, "researcher-output.md");
+      researcher.finalOutputFile = runnerReportFile;
       researcher.prompt += `
 
 # Research report delivery (authoritative)
 
-Write the final Markdown report to \`${runnerReportFile}\`. This is the only file you may create or modify. Do not include runner setup, prompts, tool calls, command transcripts, model metadata, or progress messages in that file. Do not modify source code, packet artifacts, or any other repository files.`;
+Return the Markdown report as your final response. Conduit captures and persists that response; do not attempt to write the report or any other file yourself. Do not include runner setup, prompts, tool calls, command transcripts, model metadata, or progress messages in the final report. Do not modify source code, packet artifacts, or any repository files.`;
       await writeFile(researcher.promptFile, researcher.prompt);
       const controller = new AbortController();
       activeResearch.set(feature.id, controller);
@@ -104,9 +109,12 @@ Write the final Markdown report to \`${runnerReportFile}\`. This is the only fil
         })
         .then(async ([result]) => {
           if (!result || result.status !== "completed") return;
-          const report = await readFile(runnerReportFile, "utf8").catch(
+          const capturedFile = await readFile(runnerReportFile, "utf8").catch(
             () => "",
           );
+          const report = capturedFile.trim()
+            ? capturedFile
+            : (result.stdout ?? "");
           if (!report.trim()) {
             await deps.eventRepository.append({
               type: "error",
@@ -116,14 +124,13 @@ Write the final Markdown report to \`${runnerReportFile}\`. This is the only fil
               payload: {
                 kind: "error",
                 code: "RESEARCH_REPORT_MISSING",
-                message:
-                  "Researcher completed without writing its report artifact.",
+                message: "Researcher completed without returning a report.",
                 recoverable: true,
               },
             });
             await deps.recoveryRepository.markInterrupted(
               run.id,
-              "Researcher completed without a report artifact.",
+              "Researcher completed without returning a report.",
             );
             return;
           }

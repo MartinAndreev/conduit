@@ -23,14 +23,16 @@ export function ArchitectClarifications({
   const questionsMarkdown = questions
     .map((question) =>
       [
-        `## ${question.id}`,
-        question.question,
-        question.context,
+        `## ${question.id} — ${question.question}`,
+        question.context ? `### Context\n\n${question.context}` : "",
         question.options.length
           ? [
               "### Options",
               ...question.options.map((option) => `- ${option}`),
             ].join("\n")
+          : "",
+        question.unblocker
+          ? `### Smallest unblocker\n\n${question.unblocker}`
           : "",
       ]
         .filter(Boolean)
@@ -54,15 +56,23 @@ export function ArchitectClarifications({
       backgroundColor={theme.surface.base}
       padding={1}
     >
-      <text content="Architect clarification" fg={theme.action.primary} />
-      <text
-        content="Answer the open product decisions."
-        fg={theme.text.muted}
-      />
-      <text
-        content={`${submitKey.label} resumes the architect · Esc returns.`}
-        fg={theme.text.muted}
-      />
+      <box height={4} flexDirection="column">
+        <text
+          height={1}
+          content="Architect clarification"
+          fg={theme.action.primary}
+        />
+        <text
+          height={1}
+          content="Answer the open product decisions."
+          fg={theme.text.muted}
+        />
+        <text
+          height={1}
+          content={`${submitKey.label} resumes the architect · Esc returns.`}
+          fg={theme.text.muted}
+        />
+      </box>
       <box
         flexGrow={1}
         marginTop={1}

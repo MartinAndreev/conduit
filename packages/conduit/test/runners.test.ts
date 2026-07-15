@@ -18,6 +18,24 @@ test("CodexAdapter has correct configuration", () => {
   assert.equal(adapter.command, "codex");
 });
 
+test("CodexAdapter owns final-output capture arguments", () => {
+  const adapter = new CodexAdapter();
+  assert.deepEqual(
+    adapter.configureFinalOutputCapture(
+      ["exec", "--model", "gpt-test", "Read the prompt."],
+      "/tmp/final.md",
+    ),
+    [
+      "exec",
+      "--model",
+      "gpt-test",
+      "--output-last-message",
+      "/tmp/final.md",
+      "Read the prompt.",
+    ],
+  );
+});
+
 test("CodexAdapter parses JSONL fixture", async () => {
   const adapter = new CodexAdapter();
   const fixturePath = path.join(__dirname, "fixtures/runners/codex.jsonl");

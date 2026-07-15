@@ -44,6 +44,7 @@ export function RefinementScreen({
     REFINEMENT_FIELDS,
     state.values,
     actions.submitForm,
+    actions.setValues,
     onExit,
     state.view === "form",
   );
@@ -142,6 +143,7 @@ export function RefinementScreen({
           theme={theme}
           content={
             state.packetContent ?? {
+              story: "",
               spec: "",
               plan: "",
               tasks: "",
@@ -170,7 +172,8 @@ export function RefinementScreen({
               theme={theme}
               values={state.values}
               architectEnabled={state.architectEnabled}
-              researchEnabled={state.researchEnabled}
+              researchAvailable={Boolean(state.researchReport?.trim())}
+              researchRequested={state.researchRequested}
               architectPreferences={state.architectPreferences}
             />
           </box>
@@ -224,6 +227,7 @@ export function RefinementScreen({
           theme={theme}
           content={
             state.packetContent ?? {
+              story: "",
               spec: "",
               plan: "",
               tasks: "",

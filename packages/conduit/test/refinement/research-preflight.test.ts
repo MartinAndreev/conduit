@@ -1,6 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createStartResearchRefinementHandler } from "@domains/refinement/handlers/start-research-refinement-handler.js";
@@ -16,6 +16,10 @@ test("research preflight saves a visible report before architect refinement", as
   await mkdir(runDir, { recursive: true });
   try {
     let savedReport: string | undefined;
+    let signalReportSaved: () => void = () => {};
+    const reportSaved = new Promise<void>((resolve) => {
+      signalReportSaved = resolve;
+    });
     const handler = createStartResearchRefinementHandler({
       projectRoot,
       builtinRoleRoot: "/roles",
@@ -25,7 +29,7 @@ test("research preflight saves a visible report before architect refinement", as
         stateDir: ".conduit",
         roles: {
           researcher: {
-            runner: "opencode",
+            runner: "codex",
             mode: "subagent",
             readOnly: true,
             skill: { source: "file:.conduit/roles/researcher.md" },
@@ -43,30 +47,44 @@ test("research preflight saves a visible report before architect refinement", as
           roles: [
             {
               name: "researcher",
-              runner: "opencode",
-              readOnly: true,
+              runner: "codex",
+              readOnly: false,
               owns: [],
               dependsOn: [],
               promptFile,
               prompt: "# Researcher",
-              command: "opencode",
-              args: [],
+              command: "codex",
+              args: ["exec", "Read the researcher prompt."],
               skillSource: "file:researcher.md",
               status: "planned",
             },
           ],
         },
       }),
-      executeRun: async () => {
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        await writeFile(
-          path.join(runDir, "researcher-output.md"),
-          "## Confirmed facts\n\n- `src/auth.ts` owns login.",
+      executeRun: async ({ run }) => {
+        assert.equal(
+          run.roles[0]?.readOnly,
+          true,
+          "research preflight must never create a writable worktree",
         );
+        assert.deepEqual(run.roles[0]?.args, [
+          "exec",
+          "Read the researcher prompt.",
+        ]);
+        assert.equal(
+          run.roles[0]?.finalOutputFile,
+          path.join(runDir, "researcher-output.md"),
+        );
+        assert.doesNotMatch(
+          run.roles[0]?.prompt ?? "",
+          /Write the final Markdown report to/,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 5));
         return [
           {
             role: "researcher",
             status: "completed",
+            stdout: "## Confirmed facts\n\n- `src/auth.ts` owns login.",
           },
         ];
       },
@@ -87,6 +105,7 @@ test("research preflight saves a visible report before architect refinement", as
       reportRepository: {
         save: async (featureId, report) => {
           savedReport = report;
+          signalReportSaved();
           return {
             featureId,
             report,
@@ -119,7 +138,7 @@ test("research preflight saves a visible report before architect refinement", as
     assert.equal(result.success, true);
     if (result.success) {
       assert.equal(result.data.runId, "research");
-      await new Promise((resolve) => setTimeout(resolve, 15));
+      await reportSaved;
       assert.equal(result.data.reportFile, "conduit://research/001");
       assert.match(savedReport ?? "", /Confirmed facts/);
     }

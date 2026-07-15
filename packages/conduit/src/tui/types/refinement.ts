@@ -21,6 +21,7 @@ export type RefinementView =
 export type ArchitectLifecycle = "idle" | "running" | "cancelled" | "failed";
 
 export interface RefinementPacketContent {
+  readonly story: string;
   readonly spec: string;
   readonly plan: string;
   readonly tasks: string;
@@ -44,7 +45,7 @@ export interface RefinementControllerState {
   readonly loading: boolean;
   readonly error: string | null;
   readonly architectEnabled: boolean;
-  readonly researchEnabled: boolean;
+  readonly researchRequested: boolean;
   readonly architectPreferences: ArchitectPreferences;
   readonly architectLifecycle: ArchitectLifecycle;
   readonly architectRunning: boolean;
@@ -58,7 +59,7 @@ export interface RefinementControllerState {
 export interface RefinementControllerActions {
   setView(view: Exclude<RefinementView, "loading" | "error">): void;
   setValues(values: Record<string, string>): void;
-  saveDraft(): Promise<void>;
+  saveDraft(values?: Record<string, string>): Promise<boolean>;
   submitForm(values: Record<string, string>): void;
   approvePreview(): Promise<void>;
   rejectPreview(): void;

@@ -56,7 +56,7 @@ export function parseRefinementBrief(story: string): RefinementBriefFields {
   for (const [key, headings] of markdownSections) {
     for (const heading of headings) {
       const expression = new RegExp(
-        `^## ${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\n([\\s\\S]*?)(?=^## |$)`,
+        `^## ${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\n([\\s\\S]*?)(?=^## |(?![\\s\\S]))`,
         "im",
       );
       const value = body.match(expression)?.[1]?.trim();

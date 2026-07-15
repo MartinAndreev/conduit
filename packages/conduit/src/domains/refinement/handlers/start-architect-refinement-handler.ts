@@ -13,6 +13,7 @@ import { architectExecutionContract } from "@domains/refinement/types/architect-
 import { localSpecKitArchitectContract } from "@domains/features/providers/local-spec-kit-role-contract.js";
 import type { ResearchReportRepository } from "@domains/refinement/interfaces/research-report-repository.js";
 import { redactSecrets } from "@system/storage/security/secret-redaction.js";
+import type { RefinementRevision } from "@domains/refinement/types/revision.js";
 
 export interface StartArchitectRefinementDependencies {
   readonly projectRoot: string;
@@ -46,6 +47,7 @@ export function createStartArchitectRefinementHandler(
   StartArchitectRefinementResult
 > {
   return async (command) => {
+    let activeRevision: RefinementRevision | undefined;
     try {
       const preferences = command.preferences ?? DEFAULT_ARCHITECT_PREFERENCES;
       const config = await deps.loadConfig(deps.projectRoot);
@@ -64,6 +66,7 @@ export function createStartArchitectRefinementHandler(
         latest && command.revisionId === latest.id
           ? await deps.revisionRepository.updateStatus(latest, "running")
           : await deps.revisionRepository.create(feature);
+      activeRevision = revision;
       const runId = `refine-${feature.id}-${Date.now()}`;
       const logFile = path.join(
         deps.projectRoot,
@@ -74,6 +77,7 @@ export function createStartArchitectRefinementHandler(
       );
       await mkdir(path.dirname(logFile), { recursive: true });
       await writeFile(logFile, "analysis\n");
+      await deps.revisionRepository.recordRun(revision, "analysis\n");
       const questionsFile = path.join(path.dirname(logFile), "questions.md");
       const result = await deps.runArchitect({
         projectRoot: deps.projectRoot,
@@ -131,6 +135,10 @@ export function createStartArchitectRefinementHandler(
         },
       };
     } catch (error) {
+      if (activeRevision)
+        await deps.revisionRepository
+          .updateStatus(activeRevision, "failed")
+          .catch(() => undefined);
       return {
         success: false,
         error: {
