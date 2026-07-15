@@ -8,6 +8,7 @@ const result = await Bun.build({
   target: "node",
   format: "esm",
   external: ["@opentui/core"],
+  define: { __CONDUIT_STANDALONE__: "false" },
 });
 
 if (!result.success) {

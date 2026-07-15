@@ -20,6 +20,7 @@ interface HomeScreenProps {
   onRun: (feature: FeatureReadModel) => void;
   onStatus: (feature: FeatureReadModel) => void;
   updateChecksEnabled: boolean;
+  onUpdateRequested: () => void;
 }
 
 export function HomeScreen({
@@ -32,6 +33,7 @@ export function HomeScreen({
   onRun,
   onStatus,
   updateChecksEnabled,
+  onUpdateRequested,
 }: HomeScreenProps) {
   const theme = useTheme();
   const [state, actions] = useHomeController(
@@ -44,6 +46,7 @@ export function HomeScreen({
     onRun,
     onStatus,
     updateChecksEnabled,
+    onUpdateRequested,
   );
 
   return (

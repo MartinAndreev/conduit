@@ -3,6 +3,7 @@ import { UpdateErrorKind } from "../enums/update-error-kind.js";
 import { UpdateError } from "../errors/update-errors.js";
 import type { ReleaseDiscovery } from "../interfaces/release-discovery.js";
 import type { InstallationDetector } from "../interfaces/installation-detector.js";
+import type { UpdateStatusRepository } from "../interfaces/update-status-repository.js";
 import type {
   CheckForUpdateQuery,
   CheckForUpdateResult,
@@ -14,33 +15,41 @@ export function createCheckForUpdateHandler(
   discovery: ReleaseDiscovery,
   currentVersion: string,
   installationDetector?: InstallationDetector,
+  statusRepository?: UpdateStatusRepository,
 ): (
   query: CheckForUpdateQuery,
 ) => Promise<Result<CheckForUpdateResult, ApplicationError>> {
   return async (_query) => {
+    statusRepository?.set({
+      schemaVersion: 1,
+      status: UpdateStatus.Checking,
+      currentVersion,
+    });
     try {
       const release = await discovery.discover(currentVersion);
       const installation =
         release && installationDetector
           ? await installationDetector.detect()
           : undefined;
+      const status: CheckForUpdateResult = release
+        ? {
+            schemaVersion: 1,
+            status: UpdateStatus.Available,
+            currentVersion,
+            targetVersion: release.version,
+            release,
+            ...(installation ? { installation } : {}),
+          }
+        : {
+            schemaVersion: 1,
+            status: UpdateStatus.Current,
+            currentVersion,
+            message: "Conduit is up to date.",
+          };
+      statusRepository?.set(status);
       return {
         success: true,
-        data: release
-          ? {
-              schemaVersion: 1,
-              status: UpdateStatus.Available,
-              currentVersion,
-              targetVersion: release.version,
-              release,
-              ...(installation ? { installation } : {}),
-            }
-          : {
-              schemaVersion: 1,
-              status: UpdateStatus.Current,
-              currentVersion,
-              message: "Conduit is up to date.",
-            },
+        data: status,
       };
     } catch (cause) {
       const error =
@@ -53,15 +62,17 @@ export function createCheckForUpdateHandler(
               true,
               { cause },
             );
+      const status: CheckForUpdateResult = {
+        schemaVersion: 1,
+        status: UpdateStatus.Unavailable,
+        currentVersion,
+        message: error.message,
+        retryable: error.retryable,
+      };
+      statusRepository?.set(status);
       return {
         success: true,
-        data: {
-          schemaVersion: 1,
-          status: UpdateStatus.Unavailable,
-          currentVersion,
-          message: error.message,
-          retryable: error.retryable,
-        },
+        data: status,
       };
     }
   };

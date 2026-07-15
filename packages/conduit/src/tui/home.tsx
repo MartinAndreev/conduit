@@ -11,6 +11,7 @@ import { RunScreen } from "./screens/RunScreen.js";
 import { FeatureStatusScreen } from "./screens/FeatureStatusScreen.js";
 import { RoleRunSelectionScreen } from "./screens/RoleRunSelectionScreen.js";
 import type { FeatureReadModel } from "@domains/features/types/feature.js";
+import { UpdateScreen } from "./screens/UpdateScreen.js";
 
 function HomeApplication({
   commandBus,
@@ -28,6 +29,16 @@ function HomeApplication({
   const [statusFeature, setStatusFeature] = useState<FeatureReadModel | null>(
     null,
   );
+  const [updating, setUpdating] = useState(false);
+  if (updating)
+    return (
+      <UpdateScreen
+        commandBus={commandBus}
+        queryBus={queryBus}
+        onHome={() => setUpdating(false)}
+        onQuit={onExit}
+      />
+    );
   if (runningRunId && projectRoot)
     return (
       <RunScreen
@@ -92,6 +103,7 @@ function HomeApplication({
       onRun={setRunFeature}
       onStatus={setStatusFeature}
       updateChecksEnabled={updateChecksEnabled}
+      onUpdateRequested={() => setUpdating(true)}
     />
   );
 }

@@ -79,10 +79,12 @@ const result = await Bun.build({
   plugins: [tursoBindingPlugin],
   define: build.libc
     ? {
+        __CONDUIT_STANDALONE__: "true",
         "process.env.OPENTUI_LIBC": JSON.stringify(build.libc),
         "process.env.CONDUIT_TURSO_BINDING": JSON.stringify(build.binding),
       }
     : {
+        __CONDUIT_STANDALONE__: "true",
         "process.env.CONDUIT_TURSO_BINDING": JSON.stringify(build.binding),
       },
 });

@@ -33,6 +33,7 @@ export function useHomeController(
   onRun: (feature: FeatureReadModel) => void,
   onStatus: (feature: FeatureReadModel) => void,
   updateChecksEnabled = true,
+  onUpdateRequested: () => void = () => undefined,
 ): [HomeControllerState, HomeControllerActions] {
   const [features, setFeatures] = useState<readonly FeatureReadModel[]>([]);
   const [portraits, setPortraits] = useState<HomeControllerState["portraits"]>(
@@ -86,19 +87,36 @@ export function useHomeController(
 
   useEffect(() => {
     if (!updateChecksEnabled) return;
-    void queryBus.execute({ type: "checkForUpdate" }).then((result) => {
-      if (result.success) {
-        setUpdateStatus(result.data as UpdateStatusReadModel);
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const refresh = async () => {
+      const result = await queryBus.execute({ type: "getUpdateStatus" });
+      if (!active) return;
+      if (!result.success) {
+        setUpdateStatus({
+          schemaVersion: 1,
+          status: UpdateStatus.Unavailable,
+          currentVersion: conduitVersion,
+          message: "The release check is unavailable.",
+          retryable: false,
+        });
         return;
       }
-      setUpdateStatus({
-        schemaVersion: 1,
-        status: UpdateStatus.Unavailable,
-        currentVersion: conduitVersion,
-        message: "The release check is unavailable.",
-        retryable: false,
-      });
-    });
+      const next = result.data as UpdateStatusReadModel;
+      if (next.status === UpdateStatus.Idle) {
+        void queryBus.execute({ type: "checkForUpdate" });
+        timer = setTimeout(() => void refresh(), 100);
+        return;
+      }
+      setUpdateStatus(next);
+      if (next.status === UpdateStatus.Checking)
+        timer = setTimeout(() => void refresh(), 100);
+    };
+    void refresh();
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
   }, [queryBus, updateChecksEnabled]);
 
   const searchQuery = interaction.kind === "search" ? interaction.query : "";
@@ -210,6 +228,7 @@ export function useHomeController(
               release: updateStatus.release,
               installation: updateStatus.installation,
             });
+            onUpdateRequested();
           }
           dispatchInteraction({ type: "idle" });
           return;
@@ -263,6 +282,7 @@ export function useHomeController(
       onRun,
       onStatus,
       updateStatus,
+      onUpdateRequested,
     ],
   );
 
