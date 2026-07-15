@@ -54,9 +54,10 @@ export function WorkerMonitorScreen(props: WorkerMonitorScreenProps) {
     );
 
   const role = props.roles[props.selectedRoleIndex];
+  const visibleEventCount = props.fileDiffExpanded ? 3 : 8;
   const visibleEvents = props.events.slice(
     props.scrollOffset,
-    props.scrollOffset + 8,
+    props.scrollOffset + visibleEventCount,
   );
   const hasUnavailable = props.roles.some((item) => item.isUnavailable);
   return (
@@ -74,8 +75,8 @@ export function WorkerMonitorScreen(props: WorkerMonitorScreenProps) {
       <text
         content={
           props.cancelOnExit
-            ? "←/→ or Tab switch roles · ↑/↓ navigate · j/k scroll · Ctrl+C cancel · Esc/q cancel and exit"
-            : "←/→ or Tab switch roles · ↑/↓ navigate · j/k scroll · Ctrl+C cancel · q exit"
+            ? "←/→ or Tab switch roles · 1 roles · 2 activity · 3 files · ↑/↓ navigate · Enter open · Ctrl+C cancel · Esc/q cancel and exit"
+            : "←/→ or Tab switch roles · 1 roles · 2 activity · 3 files · ↑/↓ navigate · Enter open · Ctrl+C cancel · q exit"
         }
         fg={theme.text.muted}
       />
@@ -184,9 +185,10 @@ export function WorkerMonitorScreen(props: WorkerMonitorScreenProps) {
                   totalAdditions={props.totalAdditions}
                   totalDeletions={props.totalDeletions}
                   theme={theme}
+                  maxVisibleFiles={props.fileDiffExpanded ? 4 : 12}
                 />
                 {props.fileDiffExpanded && (
-                  <SplitDiff diff={props.selectedFileDiff} height={10} />
+                  <SplitDiff diff={props.selectedFileDiff} height={12} />
                 )}
               </box>
             </>

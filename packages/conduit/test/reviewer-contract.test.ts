@@ -71,8 +71,10 @@ test("final reviewer execution uses configured runner, model, and effort", () =>
   );
 
   assert.equal(command, "opencode");
-  assert.deepEqual(args.slice(0, 3), [
+  assert.deepEqual(args.slice(0, 5), [
     "run",
+    "--format",
+    "json",
     "--model",
     "provider/review-model",
   ]);

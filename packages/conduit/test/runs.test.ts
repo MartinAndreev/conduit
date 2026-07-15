@@ -5,7 +5,12 @@ import { commandForRole } from "../src/domains/runs/repositories/run-orchestrato
 test("builds subscription CLI commands for each supported runner", () => {
   assert.deepEqual(commandForRole({ runner: "opencode" }, "/tmp/task.md"), [
     "opencode",
-    ["run", "Read /tmp/task.md and perform only your assigned task."],
+    [
+      "run",
+      "--format",
+      "json",
+      "Read /tmp/task.md and perform only your assigned task.",
+    ],
   ]);
   assert.deepEqual(commandForRole({ runner: "codex" }, "/tmp/task.md"), [
     "codex",
@@ -32,6 +37,8 @@ test("builds subscription CLI commands for each supported runner", () => {
       "opencode",
       [
         "run",
+        "--format",
+        "json",
         "--model",
         "openai/gpt-5-mini",
         "Read /tmp/task.md and perform only your assigned task.",

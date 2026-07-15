@@ -413,7 +413,12 @@ test("commandForRole builds correct args for all runners", async () => {
     await import("../src/domains/runs/repositories/run-orchestrator.js");
   assert.deepEqual(commandForRole({ runner: "opencode" }, "/tmp/p.md"), [
     "opencode",
-    ["run", "Read /tmp/p.md and perform only your assigned task."],
+    [
+      "run",
+      "--format",
+      "json",
+      "Read /tmp/p.md and perform only your assigned task.",
+    ],
   ]);
   assert.deepEqual(commandForRole({ runner: "codex" }, "/tmp/p.md"), [
     "codex",
@@ -444,7 +449,7 @@ test("WorktreeDiffReader reports untracked agent-created files", async () => {
       encoding: "utf8",
     });
     await writeFile(path.join(dir, "tracked.txt"), "base\n");
-    await writeFile(path.join(dir, ".gitignore"), "node_modules/\nvendor/\n");
+    await writeFile(path.join(dir, ".gitignore"), "generated/\n");
     spawnSync("git", ["-C", dir, "add", "tracked.txt", ".gitignore"], {
       encoding: "utf8",
     });
@@ -470,14 +475,36 @@ test("WorktreeDiffReader reports untracked agent-created files", async () => {
       recursive: true,
     });
     await writeFile(path.join(dir, "node_modules", "package", "index.js"), "");
+    await mkdir(path.join(dir, "nested", "node_modules", "package"), {
+      recursive: true,
+    });
+    await writeFile(
+      path.join(dir, "nested", "node_modules", "package", "index.js"),
+      "",
+    );
+    for (const generatedDirectory of [
+      "dist",
+      "coverage",
+      "test-results",
+      "playwright-report",
+    ]) {
+      await mkdir(path.join(dir, generatedDirectory), { recursive: true });
+      await writeFile(
+        path.join(dir, generatedDirectory, "generated.json"),
+        "{}\n",
+      );
+    }
+    await writeFile(path.join(dir, "large-output.txt"), "x".repeat(300 * 1024));
 
     const result = new WorktreeDiffReader().readDiff(dir);
 
     assert.deepEqual(
       result.changedFiles.map((file) => file.path),
-      ["agent-output.txt"],
+      ["agent-output.txt", "large-output.txt"],
     );
     assert.ok(result.diff?.includes("agent-output.txt"));
+    assert.equal(result.diff?.includes("large-output.txt"), false);
+    assert.equal(result.diff?.includes("generated.json"), false);
     assert.equal(result.diff?.includes("internal.json"), false);
     assert.ok(extractFileDiff(result.diff ?? "", "agent-output.txt"));
   } finally {
@@ -677,7 +704,11 @@ test("executeRun persists role worktrees before agent completion and emits flow 
         path.join(binDir, "codex"),
         `#!/bin/sh
 mkdir -p src
+mkdir -p dist node_modules/.vite/vitest test-results
 printf 'created\n' > src/generated.ts
+printf 'generated build\n' > dist/index.html
+printf '{}\n' > node_modules/.vite/vitest/results.json
+printf '{}\n' > test-results/.last-run.json
 printf 'export default {}\n' > vitest.config.js
 printf '%s\n' '{"protocolVersion":"1.0","status":"completed","summary":"ok","verdict":null,"artifacts":[{"path":"src/generated.ts","category":"source","purpose":"test","action":"modified"},{"path":"vitest.config.js","category":"configuration","purpose":"test configuration","action":"created"}],"findings":[],"verification":[{"operation":"test","outcome":"passed","summary":"ok"}],"decisions":[],"blockers":[],"questions":[],"risks":[],"evidence":[],"memoryProposals":[],"globalPromotionProposals":[]}'
 sleep 0.25
@@ -768,6 +799,15 @@ sleep 0.25
       results[0]?.resultRecord?.observedChangedFiles.includes(
         "src/generated.ts",
       ),
+    );
+    assert.equal(
+      results[0]?.resultRecord?.observedChangedFiles.some(
+        (file) =>
+          file.startsWith("dist/") ||
+          file.startsWith("node_modules/") ||
+          file.startsWith("test-results/"),
+      ),
+      false,
     );
     assert.deepEqual(
       results[0]?.resultRecord?.ownershipWarnings?.map(

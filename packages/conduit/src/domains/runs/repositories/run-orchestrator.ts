@@ -39,6 +39,10 @@ import {
   ensureConduitStateGitIgnored,
   ensureWorktreeRootGitIgnored,
 } from "@system/storage/factories/gitignore.js";
+import {
+  isUntrackedArtifactPath,
+  untrackedArtifactGitExcludes,
+} from "../helpers/dependency-tree-paths.js";
 
 const databaseEnvironmentKey =
   /^(?:TURSO_|LIBSQL_|DATABASE_(?:URL|TOKEN)$|CONDUIT_DB)/i;
@@ -591,12 +595,23 @@ function changedFiles(cwd: string): string[] {
   );
   const untracked: SpawnSyncReturns<string> = spawnSync(
     "git",
-    ["-C", cwd, "ls-files", "--others", "--exclude-standard"],
+    [
+      "-C",
+      cwd,
+      "ls-files",
+      "--others",
+      "--exclude-standard",
+      ...untrackedArtifactGitExcludes(),
+    ],
     { encoding: "utf8" },
   );
   const files = [
     ...(tracked.status === 0 ? tracked.stdout.split("\n") : []),
-    ...(untracked.status === 0 ? untracked.stdout.split("\n") : []),
+    ...(untracked.status === 0
+      ? untracked.stdout
+          .split("\n")
+          .filter((file) => !isUntrackedArtifactPath(file))
+      : []),
   ];
   return [...new Set(files)]
     .filter(Boolean)

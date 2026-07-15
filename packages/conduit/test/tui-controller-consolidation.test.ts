@@ -7,6 +7,9 @@ import {
   normalizeSelectedIndex,
 } from "../src/tui/hooks/useSelectableList.js";
 import { extractFileDiff } from "../src/tui/helpers/event-presentation.js";
+import { workerMonitorFocusForKey } from "../src/tui/helpers/worker-monitor-navigation.js";
+import { monitorReducer } from "../src/tui/controllers/useWorkerMonitorController.js";
+import type { WorkerMonitorState } from "../src/tui/types/worker-monitor.js";
 
 test("selectable list bounds selection and safely resets an empty list", () => {
   assert.equal(normalizeSelectedIndex(7, 3), 2);
@@ -39,6 +42,43 @@ test("a changed-file selection extracts only that unified file diff", () => {
   const selected = extractFileDiff(diff, "b.ts");
   assert.ok(selected?.includes("b.ts"));
   assert.ok(!selected?.includes("a.ts"));
+});
+
+test("worker monitor keyboard navigation can reach changed files", () => {
+  assert.equal(workerMonitorFocusForKey("3", "roles", true), "files");
+  assert.equal(workerMonitorFocusForKey("return", "roles", true), "files");
+  assert.equal(workerMonitorFocusForKey("space", "roles", false), "activity");
+  assert.equal(workerMonitorFocusForKey("3", "roles", false), undefined);
+});
+
+test("selecting the next file keeps an open diff preview expanded", () => {
+  const state: WorkerMonitorState = {
+    events: [],
+    roles: [],
+    run: undefined,
+    selectedRoleIndex: 0,
+    diff: "diff",
+    changedFiles: [
+      { path: "a.ts", additions: 1, deletions: 0 },
+      { path: "b.ts", additions: 1, deletions: 0 },
+    ],
+    selectedFileIndex: 0,
+    totalAdditions: 2,
+    totalDeletions: 0,
+    loading: false,
+    error: null,
+    expandedEventIndex: null,
+    scrollOffset: 0,
+    cancelled: false,
+    focusMode: "files",
+    transcriptExpanded: false,
+    fileDiffExpanded: true,
+  };
+
+  const next = monitorReducer(state, { type: "selectFile", index: 1 });
+
+  assert.equal(next.selectedFileIndex, 1);
+  assert.equal(next.fileDiffExpanded, true);
 });
 
 test("controllers do not own renderer primitives or exported view contracts", async () => {
