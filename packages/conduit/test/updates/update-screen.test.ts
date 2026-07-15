@@ -64,11 +64,31 @@ test("loader runs only for non-terminal update state", () => {
   assert.equal(updateScreenKeyAction(failed, "r"), "retry");
   assert.equal(updateScreenKeyAction(failed, "escape"), "home");
   assert.equal(updateScreenKeyAction(succeeded, "q"), "quit");
+  assert.equal(updateScreenKeyAction(succeeded, "h"), "home");
+  assert.equal(updateScreenKeyAction(failed, "q"), "none");
   assert.match(updateScreenActions(failed), /Retry/);
   assert.match(
     updateSuccessGuidance(succeeded)[0] ?? "",
     /next Conduit launch/,
   );
+});
+
+test("terminal failure always permits Home and retry only when approved", () => {
+  const failure: FailedUpdateStatus = {
+    ...base,
+    status: UpdateStatus.Failed,
+    progress: {
+      stage: UpdateProgressStage.Downloading,
+      message: "Downloading",
+    },
+    message: "The release service could not be reached.",
+    retryable: false,
+  };
+  assert.equal(isUpdateAnimating(failure), false);
+  assert.equal(updateScreenKeyAction(failure, "r"), "none");
+  assert.equal(updateScreenKeyAction(failure, "escape"), "home");
+  assert.doesNotMatch(updateScreenActions(failure), /Retry/);
+  assert.match(updateScreenActions(failure), /Return Home/);
 });
 
 test("standalone and manual success guidance is strategy-specific", () => {

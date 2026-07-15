@@ -73,6 +73,8 @@ From Home you can:
 
 - Press `n` to create a feature and jump into refinement.
 - Press `/` to search features.
+- Press `u` when Home reports a newer version to review the detected update
+  method and choose whether to update.
 - Use `↑`/`↓` to select a feature, then `Enter` to choose **View**, **Refine**, **Run**, or **Status**.
 - Use **View** to read packet files, **Refine** to edit and approve packet updates, **Run** to choose roles and start isolated work, and **Status** to open the latest run.
 
@@ -118,6 +120,43 @@ Conduit supports three run paths from Home's **Run** and **Status** actions or f
 Inside the worker monitor, use `←`/`→` or `Tab` to switch roles, `Enter` or `Space` to move from roles into activity, `j`/`k` or `↑`/`↓` to scroll activity, `t` to toggle transcript payloads, and `Ctrl+C` to request cancellation. From the files focus, `Enter` or `Space` toggles the selected file's split diff. `q` exits the monitor without cancelling a normal run.
 
 Status shows the selected feature lifecycle and latest run. Press `Enter` from Status to open that run in the monitor.
+
+### Updates
+
+Interactive Home shows the running Conduit version and checks the official
+GitHub Releases feed once after local startup completes. The check is
+non-blocking: Home remains usable while it is checking and when GitHub is
+offline, unavailable, or rate limited. Scripted commands, piped output, CI, and
+other non-interactive paths neither make this request nor print update notices.
+
+When a newer stable version is available, press `u` from idle Home. The
+confirmation names the current version, exact target version, and detected
+installation method, and defaults to **Cancel**. Press `Esc` or `q` to cancel;
+select **Update** explicitly to continue. The update screen reports applicable
+typed download, verification, and installation stages. A failure keeps retry
+and return-to-Home actions available and shows only bounded, sanitized
+diagnostics.
+
+Automatic updates are deliberately fail-closed:
+
+- Official Linux x64, Linux ARM64, and macOS ARM64 standalone binaries download
+  the exact selected release asset and `SHA256SUMS` from allowlisted GitHub
+  release hosts. Conduit verifies the size and SHA-256 digest, stages the new
+  executable beside the installed one, and atomically replaces it. The old
+  executable remains in place if download, verification, or replacement fails.
+- Positively identified global npm, pnpm, and Bun installations run that package
+  manager directly, without a shell, in a private temporary directory and pin
+  `conduit-orchestrator@<exact-version>`. Project manifests and lockfiles are not
+  changed.
+- Windows standalone, project-local dependency, source checkout, unknown,
+  unsupported, and read-only installations receive manual guidance and are not
+  mutated. Windows remains manual until deferred executable replacement passes
+  its release-matrix gate.
+
+After a successful automatic update, the current process is still the old
+version. Exit and launch Conduit again to use the new standalone or package.
+Manual downloads and checksums remain available on
+[GitHub Releases](https://github.com/MartinAndreev/conduit/releases/latest).
 
 ## Feature packet
 

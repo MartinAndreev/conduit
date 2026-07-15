@@ -6,7 +6,7 @@ import type { ProcessExecutor } from "../../src/domains/updates/interfaces/proce
 import { PackageUpdateInstaller } from "../../src/domains/updates/repositories/package-update-installer.js";
 import type { ProcessExecutionRequest } from "../../src/domains/updates/types/process-execution.js";
 import { NodeProcessExecutor } from "../../src/domains/updates/repositories/node-process-executor.js";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -47,6 +47,7 @@ test("global package update uses a fixed executable and exact-version arguments"
     "conduit-orchestrator@0.6.0",
   ]);
   assert.ok(observed?.cwd.includes("conduit-update-"));
+  await assert.rejects(access(observed!.cwd));
   assert.deepEqual(stages, ["preparing", "installing", "complete"]);
 });
 
@@ -132,5 +133,41 @@ test("package process primitive strips unrelated environment secrets", async () 
     if (previous === undefined) delete process.env.CONDUIT_PROVIDER_TOKEN;
     else process.env.CONDUIT_PROVIDER_TOKEN = previous;
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("global package update leaves project manifests and lockfiles unchanged", async () => {
+  const project = await mkdtemp(path.join(tmpdir(), "conduit-project-"));
+  const manifest = path.join(project, "package.json");
+  const lockfile = path.join(project, "pnpm-lock.yaml");
+  await writeFile(manifest, '{"name":"consumer","private":true}\n');
+  await writeFile(lockfile, "lockfileVersion: '9.0'\n");
+  const beforeManifest = await readFile(manifest, "utf8");
+  const beforeLockfile = await readFile(lockfile, "utf8");
+  const executor: ProcessExecutor = {
+    execute: async (request) => {
+      assert.notEqual(request.cwd, project);
+      assert.match(request.cwd, /conduit-update-/);
+      return { exitCode: 0, stdout: "", stderr: "", timedOut: false };
+    },
+  };
+  try {
+    await new PackageUpdateInstaller(executor).install(
+      {
+        currentVersion: "0.5.4",
+        release,
+        installation: {
+          kind: InstallationKind.GlobalPackage,
+          automatic: true,
+          label: "pnpm global package",
+          packageManager: "pnpm",
+        },
+      },
+      () => undefined,
+    );
+    assert.equal(await readFile(manifest, "utf8"), beforeManifest);
+    assert.equal(await readFile(lockfile, "utf8"), beforeLockfile);
+  } finally {
+    await rm(project, { recursive: true, force: true });
   }
 });

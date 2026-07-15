@@ -102,10 +102,12 @@ export function UpdateScreen({
           <text
             content={`Source v${status.currentVersion} → Target v${status.targetVersion}`}
             fg={theme.text.default}
+            wrapMode="word"
           />
           <text
             content={`Method: ${status.installation?.label ?? "Manual update"}`}
             fg={theme.text.muted}
+            wrapMode="word"
           />
         </box>
       ) : null}
@@ -124,6 +126,7 @@ export function UpdateScreen({
                 ? "Update complete"
                 : (progress?.message ?? "Preparing the update.")
           }
+          wrapMode="word"
           fg={
             failed
               ? theme.status.error
@@ -142,15 +145,24 @@ export function UpdateScreen({
           <text content={`Stage: ${progress.stage}`} fg={theme.text.muted} />
         ) : null}
         {failed ? (
-          <text content={status.message} fg={theme.status.error} />
+          <text
+            content={status.message}
+            fg={theme.status.error}
+            wrapMode="word"
+          />
         ) : null}
         {succeeded
           ? updateSuccessGuidance(status).map((line) => (
-              <text key={line} content={line} fg={theme.text.default} />
+              <text
+                key={line}
+                content={line}
+                fg={theme.text.default}
+                wrapMode="word"
+              />
             ))
           : null}
         {queryError ? (
-          <text content={queryError} fg={theme.status.error} />
+          <text content={queryError} fg={theme.status.error} wrapMode="word" />
         ) : null}
       </box>
       <text content="" />

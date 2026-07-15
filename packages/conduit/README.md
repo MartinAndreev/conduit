@@ -7,6 +7,14 @@ the result.
 For installation and usage, see the repository documentation:
 https://github.com/MartinAndreev/conduit
 
+Interactive Home performs a non-blocking check of the official GitHub Releases
+feed and offers a default-cancel `u` update flow when a newer stable version is
+available. Supported official Unix standalone builds use staged SHA-256-verified
+atomic replacement; positively detected global npm, pnpm, and Bun installs use
+a shell-free exact-version update. Unsupported, local, source, read-only, and
+Windows standalone installs remain manual. See the repository README for the
+complete integrity, offline, restart, and fallback behavior.
+
 Developer and agent documentation for the embedded Turso/Kysely persistence
 API is available in [docs/database-api.md](docs/database-api.md).
 

@@ -158,3 +158,61 @@ test("constructor rejects configurable endpoints outside the official repository
       error.code === "UNAPPROVED_ENDPOINT",
   );
 });
+
+test("offline, HTTP, and rate-limit failures use stable sanitized error codes", async () => {
+  const cases = [
+    {
+      fetch: async () => {
+        throw new Error("getaddrinfo ENOTFOUND secret.internal.example");
+      },
+      code: "OFFLINE",
+    },
+    {
+      fetch: async () => new Response("private upstream body", { status: 500 }),
+      code: "HTTP_ERROR",
+    },
+    {
+      fetch: async () => new Response("token quota details", { status: 429 }),
+      code: "RATE_LIMITED",
+    },
+  ] as const;
+  for (const fixture of cases) {
+    const discovery = new GitHubReleaseDiscovery({ fetch: fixture.fetch });
+    await assert.rejects(
+      discovery.discover("1.0.0"),
+      (error: unknown) =>
+        error instanceof UpdateDiscoveryError &&
+        error.code === fixture.code &&
+        !error.message.includes("secret.internal") &&
+        !error.message.includes("private upstream") &&
+        !error.message.includes("token quota"),
+    );
+  }
+});
+
+test("discovery request cannot contain project or environment secrets", async () => {
+  const seededSecret = "provider-secret-005";
+  const projectPath = "/private/work/customer-project";
+  let serializedRequest = "";
+  const previous = process.env.CONDUIT_PROVIDER_TOKEN;
+  process.env.CONDUIT_PROVIDER_TOKEN = seededSecret;
+  try {
+    const discovery = new GitHubReleaseDiscovery({
+      fetch: async (input, init) => {
+        serializedRequest = JSON.stringify({
+          input: String(input),
+          method: init?.method,
+          headers: Object.fromEntries(new Headers(init?.headers)),
+        });
+        return jsonResponse([]);
+      },
+    });
+    await discovery.discover("1.0.0");
+    assert.equal(serializedRequest.includes(seededSecret), false);
+    assert.equal(serializedRequest.includes(projectPath), false);
+    assert.equal(serializedRequest.includes(process.cwd()), false);
+  } finally {
+    if (previous === undefined) delete process.env.CONDUIT_PROVIDER_TOKEN;
+    else process.env.CONDUIT_PROVIDER_TOKEN = previous;
+  }
+});

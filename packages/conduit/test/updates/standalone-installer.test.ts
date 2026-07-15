@@ -1,7 +1,9 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import {
+  access,
   chmod,
   mkdtemp,
   readFile,
@@ -10,7 +12,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import path from "node:path";
+import path, { resolve } from "node:path";
 import { InstallationKind } from "../../src/domains/updates/enums/installation-kind.js";
 import {
   UpdateIntegrityError,
@@ -20,6 +22,7 @@ import { ReleaseAssetFetcher } from "../../src/domains/updates/repositories/rele
 import { VerifiedStandaloneInstaller } from "../../src/domains/updates/repositories/verified-standalone-installer.js";
 import type { StableRelease } from "../../src/domains/updates/types/release.js";
 import type { ExecutableReplacer } from "../../src/domains/updates/interfaces/executable-replacer.js";
+import { conduitVersion } from "../../src/version.js";
 
 const assetName = "conduit-linux-x64";
 const binaryUrl =
@@ -239,3 +242,130 @@ test("standalone installer rejects assets from a different release tag", async (
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("interrupted asset download preserves the old executable and removes staging", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "conduit-interrupted-"));
+  const executable = path.join(directory, "conduit");
+  await writeFile(executable, "known-good executable");
+  await chmod(executable, 0o755);
+  const fetcher = new ReleaseAssetFetcher(async (input) => {
+    if (String(input) === checksumUrl)
+      return new Response(`${"0".repeat(64)}  ${assetName}\n`);
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("partial"));
+          controller.error(new Error("simulated interrupted transfer"));
+        },
+      }),
+    );
+  });
+  try {
+    await assert.rejects(
+      new VerifiedStandaloneInstaller(fetcher).install(
+        {
+          currentVersion: "0.5.4",
+          release: fixtureRelease(20),
+          installation: {
+            kind: InstallationKind.Standalone,
+            automatic: true,
+            label: "Official standalone binary",
+            executablePath: executable,
+            assetName,
+          },
+        },
+        () => undefined,
+      ),
+      /could not be downloaded/i,
+    );
+    assert.equal(await readFile(executable, "utf8"), "known-good executable");
+    assert.deepEqual(
+      (await readdir(directory)).filter((name) =>
+        name.startsWith(".conduit-update-"),
+      ),
+      [],
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+const updaterHosts = {
+  "linux:x64": { target: "linux-x64", asset: "conduit-linux-x64" },
+  "linux:arm64": { target: "linux-arm64", asset: "conduit-linux-arm64" },
+  "darwin:arm64": { target: "darwin-arm64", asset: "conduit-darwin-arm64" },
+} as const;
+const updaterHost =
+  updaterHosts[
+    `${process.platform}:${process.arch}` as keyof typeof updaterHosts
+  ];
+
+(updaterHost ? test : test.skip)(
+  "supported standalone artifact survives replacement and reports its version on next launch",
+  async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "conduit-next-launch-"),
+    );
+    const executable = path.join(directory, "conduit");
+    const built = resolve("dist/release", updaterHost!.asset);
+    try {
+      try {
+        await access(built);
+      } catch {
+        execFileSync(
+          "bun",
+          ["scripts/build-standalone.js", updaterHost!.target],
+          {
+            stdio: "pipe",
+          },
+        );
+      }
+      const binary = await readFile(built);
+      const digest = createHash("sha256").update(binary).digest("hex");
+      const tagName = `v${conduitVersion}`;
+      const binaryDownload = `https://github.com/MartinAndreev/conduit/releases/download/${tagName}/${updaterHost!.asset}`;
+      const sumsDownload = `https://github.com/MartinAndreev/conduit/releases/download/${tagName}/SHA256SUMS`;
+      await writeFile(executable, "previous executable");
+      await chmod(executable, 0o755);
+      const fetcher = new ReleaseAssetFetcher(async (input) =>
+        String(input) === binaryDownload
+          ? new Response(binary)
+          : new Response(`${digest}  ${updaterHost!.asset}\n`),
+      );
+      await new VerifiedStandaloneInstaller(fetcher).install(
+        {
+          currentVersion: "0.0.0",
+          release: {
+            version: conduitVersion,
+            tagName,
+            publishedAt: "2026-07-15T08:00:00Z",
+            releaseUrl: `https://github.com/MartinAndreev/conduit/releases/tag/${tagName}`,
+            assets: [
+              {
+                name: updaterHost!.asset,
+                url: binaryDownload,
+                size: binary.byteLength,
+              },
+              { name: "SHA256SUMS", url: sumsDownload, size: 100 },
+            ],
+          },
+          installation: {
+            kind: InstallationKind.Standalone,
+            automatic: true,
+            label: "Official standalone binary",
+            executablePath: executable,
+            assetName: updaterHost!.asset,
+          },
+        },
+        () => undefined,
+      );
+      assert.equal(
+        execFileSync(executable, ["version"], { encoding: "utf8" }).trim(),
+        conduitVersion,
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);

@@ -15,7 +15,7 @@ export function UpdateConfirmation({
 }: UpdateConfirmationProps) {
   const [current, target, method] = updateConfirmationDetails(status);
   return (
-    <box width="70%" height="100%" flexDirection="column" padding={1}>
+    <box width="100%" height="100%" flexDirection="column" padding={1}>
       <box
         flexDirection="column"
         borderStyle="single"
@@ -24,9 +24,9 @@ export function UpdateConfirmation({
       >
         <text content="Update Conduit?" fg={theme.text.strong} />
         <text content="" />
-        <text content={current} fg={theme.text.default} />
-        <text content={target} fg={theme.action.attention} />
-        <text content={method} fg={theme.text.default} />
+        <text content={current} fg={theme.text.default} wrapMode="word" />
+        <text content={target} fg={theme.action.attention} wrapMode="word" />
+        <text content={method} fg={theme.text.default} wrapMode="word" />
         <text content="" />
         <text
           content={`${selectedAction === 0 ? ">" : " "} Cancel`}
