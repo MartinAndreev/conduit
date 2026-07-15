@@ -60,6 +60,17 @@ export async function runCommand(
     }),
   );
   const snapshot = await dependencies.runRecoveryRepository?.saveSnapshot(run);
+  let snapshotVersion = snapshot?.version;
+  let snapshotWrite = Promise.resolve();
+  const persistSnapshot = (): Promise<void> => {
+    const repository = dependencies.runRecoveryRepository;
+    if (!repository) return Promise.resolve();
+    snapshotWrite = snapshotWrite.then(async () => {
+      const persisted = await repository.saveSnapshot(run, snapshotVersion);
+      snapshotVersion = persisted.version;
+    });
+    return snapshotWrite;
+  };
   const dryRun = Boolean(options.dryRun);
   const controller = new AbortController();
   const onInterrupt = () => controller.abort();
@@ -100,6 +111,7 @@ export async function runCommand(
       signal: controller.signal,
       eventRepository: dependencies.runEventRepository,
       processRegistry: dependencies.runProcessRegistry,
+      onRoleWorkspaceReady: persistSnapshot,
       onProgress: (message: string) => {
         setText(`Agents · ${message}`);
         liveView?.updateStatus(message);
@@ -115,10 +127,7 @@ export async function runCommand(
           dryRun ? "Rendering dry-run plan" : "Launching agent runs",
           execute,
         );
-    await dependencies.runRecoveryRepository?.saveSnapshot(
-      run,
-      snapshot?.version,
-    );
+    await persistSnapshot();
     if (run.status === "cancelled")
       await dependencies.runRecoveryRepository?.markCancelled(run.id);
   } catch (error) {

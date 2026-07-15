@@ -25,6 +25,7 @@ import {
 } from "@system/runners/registry.js";
 import { parseAgentResponseV1 } from "../validation/agent-response-validator.js";
 import {
+  collectOwnershipWarnings,
   roleKindForRole,
   validateAgentResponseForAssignment,
 } from "../validation/agent-semantic-validator.js";
@@ -186,6 +187,17 @@ export async function planRun({
     config.specsDir,
     featureId,
   );
+  const relativeStateDirectory = path.relative(projectRoot, stateDirectory);
+  const forbiddenPaths = [
+    ".git",
+    ".conduit",
+    ...(relativeStateDirectory &&
+    relativeStateDirectory !== "." &&
+    !relativeStateDirectory.startsWith(`..${path.sep}`) &&
+    relativeStateDirectory !== ".."
+      ? [relativeStateDirectory]
+      : []),
+  ].filter((value, index, values) => values.indexOf(value) === index);
   const roles: RunRole[] = [];
   for (const name of roleNames) {
     const role = config.roles[name];
@@ -205,7 +217,7 @@ export async function planRun({
     const contextFile = path.join(runDir, `${name}-context.md`);
     const roleDependencies = role.dependsOn ?? [];
     const context = redactSecrets(
-      `${localSpecKitRoleContract(name, role.effort)}\n\n# Project role guidance (advisory)\n\n${skill.content}\n\n# Assignment (authoritative)\n\nFeature: ${featureId}\nRead the approved feature packet snapshot below before changing code.\nOwned paths: ${(role.owns ?? ["none defined"]).join(", ")}\nRun dependencies: ${roleDependencies.length ? roleDependencies.join(", ") : "none"}\nDo not modify contracts or paths outside your ownership.\nReport tests run and unresolved integration risks.\n\n${agentResponseContractPrompt()}\n\nThe system role contract and assignment take precedence over project role guidance.\n\n# Approved feature packet snapshot (read-only)\n\n${packetSnapshot}`,
+      `${localSpecKitRoleContract(name, role.effort)}\n\n# Project role guidance (advisory)\n\n${skill.content}\n\n# Assignment (authoritative)\n\nFeature: ${featureId}\nRead the approved feature packet snapshot below before changing code.\nOwned paths: ${(role.owns ?? ["none defined"]).join(", ")}\nForbidden paths: ${forbiddenPaths.join(", ")}\nRun dependencies: ${roleDependencies.length ? roleDependencies.join(", ") : "none"}\nStay within assigned ownership when practical. Report necessary cross-ownership changes explicitly for integration review, and never modify forbidden paths.\nReport tests run and unresolved integration risks.\n\n${agentResponseContractPrompt()}\n\nThe system role contract and assignment take precedence over project role guidance.\n\n# Approved feature packet snapshot (read-only)\n\n${packetSnapshot}`,
     );
     const roleKind = roleKindForRole(name, role.roleKind);
     const assignment = createAgentAssignmentV1({
@@ -214,6 +226,7 @@ export async function planRun({
       roleKind,
       objective: `Complete only the approved ${name} work for feature ${featureId}. Read the complete packet snapshot in the context reference before acting and return exactly one AgentResponseV1 object.`,
       ownedPaths: role.owns ?? [],
+      forbiddenPaths,
       dependencies: roleDependencies,
       contextReferences: [path.relative(projectRoot, contextFile)],
       acceptanceCriteria: [
@@ -413,12 +426,7 @@ function addWorktree(projectRoot: string, run: Run, role: RunRole): string {
   // A newly initialized repository can have an unborn HEAD. Git cannot make
   // a worktree from it, but roles can still work safely in the project root
   // when their configured ownership does not overlap.
-  const head = spawnSync(
-    "git",
-    ["-C", projectRoot, "rev-parse", "--verify", "HEAD"],
-    { encoding: "utf8" },
-  );
-  if (head.status !== 0) return projectRoot;
+  if (!repositoryHasHead(projectRoot)) return projectRoot;
   const target = worktreePath(projectRoot, run, role);
   const branch = `conduit/${run.id}/${role.name}`;
   const disabledHooksDirectory = path.join(
@@ -467,6 +475,14 @@ function addWorktree(projectRoot: string, run: Run, role: RunRole): string {
     );
   }
   return target;
+}
+
+function repositoryHasHead(projectRoot: string): boolean {
+  return (
+    spawnSync("git", ["-C", projectRoot, "rev-parse", "--verify", "HEAD"], {
+      encoding: "utf8",
+    }).status === 0
+  );
 }
 
 async function writeWorktreePrompt(
@@ -948,15 +964,24 @@ function runProcess(
               { path: "$", message: "missing AgentResponseV1 final response" },
             ],
           };
+      const assignmentPolicy = {
+        roleKind: role.assignment?.roleKind ?? roleKindForRole(role.name),
+        ownedPaths: role.owns,
+        forbiddenPaths: role.assignment?.forbiddenPaths ?? [],
+        observedChangedFiles: files,
+        readOnly: role.readOnly,
+      };
       const semantic =
         structural.valid && structural.value
-          ? validateAgentResponseForAssignment(structural.value, {
-              roleKind: role.assignment?.roleKind ?? roleKindForRole(role.name),
-              ownedPaths: role.owns,
-              observedChangedFiles: files,
-              readOnly: role.readOnly,
-            })
+          ? validateAgentResponseForAssignment(
+              structural.value,
+              assignmentPolicy,
+            )
           : structural;
+      const ownershipWarnings =
+        structural.valid && structural.value
+          ? collectOwnershipWarnings(structural.value, assignmentPolicy)
+          : [];
       if (role.finalOutputFile && capturedFinal)
         await writeFile(role.finalOutputFile, redactSecrets(capturedFinal));
       const protocolCompleted = Boolean(
@@ -992,6 +1017,14 @@ function runProcess(
             message: `The agent did not return a valid AgentResponseV1 object: ${failures}. Sanitized output: ${logFile}.`,
             recoverable: true,
           };
+        } else if (structural.value?.status !== "completed") {
+          const responseStatus = structural.value?.status ?? "missing";
+          const summary = structural.value?.summary ?? "No summary provided.";
+          validationFailure = {
+            code: "AGENT_RESPONSE_INCOMPLETE",
+            message: `The agent returned ${responseStatus}: ${summary}`,
+            recoverable: true,
+          };
         } else if (!semantic.valid) {
           const failures = semantic.issues
             .map((item) => `${item.path}: ${item.message}`)
@@ -999,14 +1032,6 @@ function runProcess(
           validationFailure = {
             code: "AGENT_RESPONSE_INVALID",
             message: `The agent response violated its assignment policy: ${failures}. Sanitized output: ${logFile}.`,
-            recoverable: true,
-          };
-        } else if (structural.value?.status !== "completed") {
-          const responseStatus = structural.value?.status ?? "missing";
-          const summary = structural.value?.summary ?? "No summary provided.";
-          validationFailure = {
-            code: "AGENT_RESPONSE_INCOMPLETE",
-            message: `The agent returned ${responseStatus}: ${summary}`,
             recoverable: true,
           };
         }
@@ -1102,6 +1127,7 @@ function runProcess(
                 valid: semantic.valid,
                 issues: semantic.issues,
               },
+              ownershipWarnings,
               response: structural.value,
             }
           : undefined;
@@ -1150,6 +1176,7 @@ export async function executeRun({
   dryRun = true,
   onProgress = () => {},
   onChange = () => {},
+  onRoleWorkspaceReady,
   signal,
   eventRepository,
   processRegistry,
@@ -1160,6 +1187,7 @@ export async function executeRun({
   dryRun?: boolean;
   onProgress?: (message: string) => void;
   onChange?: (event: { summary: string; preview: string }) => void;
+  onRoleWorkspaceReady?: () => Promise<void>;
   signal?: AbortSignal;
   eventRepository?: RunEventRepository;
   processRegistry?: RunProcessRegistry;
@@ -1196,7 +1224,8 @@ export async function executeRun({
     const cwd = role.readOnly
       ? projectRoot
       : addWorktree(projectRoot, run, role);
-    role.worktree = role.readOnly || cwd === projectRoot ? undefined : cwd;
+    role.worktree = role.readOnly ? undefined : cwd;
+    await onRoleWorkspaceReady?.();
     if (!role.readOnly) await writeWorktreePrompt(cwd, run, role);
     return runProcess(
       role,
@@ -1249,6 +1278,7 @@ export async function executeRun({
   };
   const results: RunResult[] = [];
   const terminalByRole = new Map<string, RunResult>();
+  const requiresSharedWorkspace = !repositoryHasHead(projectRoot);
   for (const group of roleExecutionGroups(run.roles)) {
     const blocked = group.filter((role) =>
       role.dependsOn.some((dependency) =>
@@ -1284,7 +1314,14 @@ export async function executeRun({
       });
     }
     const runnable = group.filter((role) => !terminalByRole.has(role.name));
-    const groupResults = await Promise.all(runnable.map(launchRoleSafely));
+    const groupResults: RunResult[] = [];
+    if (requiresSharedWorkspace) {
+      for (const role of runnable) {
+        groupResults.push(await launchRoleSafely(role));
+      }
+    } else {
+      groupResults.push(...(await Promise.all(runnable.map(launchRoleSafely))));
+    }
     for (const result of groupResults) {
       results.push(result);
       terminalByRole.set(result.role, result);

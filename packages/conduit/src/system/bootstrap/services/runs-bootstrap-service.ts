@@ -47,7 +47,20 @@ export class RunsBootstrapService implements ApplicationBootstrapService {
           roleNames,
           builtinRoot: dependencies.builtinRoleRoot ?? "",
         });
-        await repositories.recovery?.saveSnapshot(run);
+        const initialSnapshot = await repositories.recovery?.saveSnapshot(run);
+        let snapshotVersion = initialSnapshot?.version;
+        let snapshotWrite = Promise.resolve();
+        const persistSnapshot = (): Promise<void> => {
+          if (!repositories.recovery) return Promise.resolve();
+          snapshotWrite = snapshotWrite.then(async () => {
+            const persisted = await repositories.recovery?.saveSnapshot(
+              run,
+              snapshotVersion,
+            );
+            snapshotVersion = persisted?.version;
+          });
+          return snapshotWrite;
+        };
         void executeRun({
           projectRoot,
           run,
@@ -55,9 +68,10 @@ export class RunsBootstrapService implements ApplicationBootstrapService {
           dryRun: false,
           eventRepository: repositories.runEvents,
           processRegistry,
+          onRoleWorkspaceReady: persistSnapshot,
         })
           .then(async () => {
-            await repositories.recovery?.saveSnapshot(run, 1);
+            await persistSnapshot();
             if (run.status === "cancelled")
               await repositories.recovery?.markCancelled(run.id);
           })

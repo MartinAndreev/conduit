@@ -485,6 +485,147 @@ test("WorktreeDiffReader reports untracked agent-created files", async () => {
   }
 });
 
+test("WorktreeDiffReader reports files in an unborn repository", async () => {
+  const { WorktreeDiffReader } =
+    await import("../src/domains/runs/repositories/worktree-diff-reader.js");
+  const dir = await mkdtemp(path.join(tmpdir(), "conduit-unborn-diff-"));
+  try {
+    const { spawnSync } = await import("node:child_process");
+    const { writeFile } = await import("node:fs/promises");
+    spawnSync("git", ["-C", dir, "init"], { encoding: "utf8" });
+    await writeFile(path.join(dir, "package.json"), "{}\n");
+
+    const result = new WorktreeDiffReader().readDiff(dir);
+
+    assert.deepEqual(result.changedFiles, [
+      { path: "package.json", additions: 2, deletions: 0 },
+    ]);
+    assert.ok(result.diff?.includes("package.json"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("executeRun retains an unborn repository workspace for diff queries", async () => {
+  const { executeRun } =
+    await import("../src/domains/runs/repositories/run-orchestrator.js");
+  const { chmod, mkdir, writeFile } = await import("node:fs/promises");
+  const { spawnSync } = await import("node:child_process");
+  const projectRoot = await mkdtemp(path.join(tmpdir(), "conduit-unborn-run-"));
+  const runDir = path.join(projectRoot, ".conduit", "runs", "run-unborn");
+  const previousPath = process.env.PATH;
+  try {
+    spawnSync("git", ["-C", projectRoot, "init"], { encoding: "utf8" });
+    await mkdir(runDir, { recursive: true });
+    const response = {
+      protocolVersion: "1.0",
+      status: "completed",
+      summary: "Implemented the assigned change.",
+      verdict: null,
+      artifacts: [
+        {
+          path: "package.json",
+          category: "configuration",
+          purpose: "configure the application",
+          action: "created",
+        },
+      ],
+      findings: [],
+      verification: [
+        { operation: "node --check", outcome: "passed", summary: "passed" },
+      ],
+      decisions: [],
+      blockers: [],
+      questions: [],
+      risks: [],
+      evidence: [],
+      memoryProposals: [],
+      globalPromotionProposals: [],
+    };
+    const binDir = path.join(projectRoot, "bin");
+    await mkdir(binDir, { recursive: true });
+    await writeFile(
+      path.join(binDir, "codex"),
+      `#!/bin/sh
+if ! mkdir .conduit/test-agent-lock 2>/dev/null; then
+  exit 91
+fi
+sleep 0.05
+rmdir .conduit/test-agent-lock
+printf '%s\n' '${JSON.stringify(response)}'
+`,
+    );
+    await chmod(path.join(binDir, "codex"), 0o755);
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+    const run: Run = {
+      id: "run-unborn",
+      featureId: "001",
+      status: "planned",
+      createdAt: new Date().toISOString(),
+      stateDirectory: path.join(projectRoot, ".conduit"),
+      roles: [
+        {
+          name: "frontend",
+          runner: "codex",
+          readOnly: false,
+          owns: ["./"],
+          dependsOn: [],
+          promptFile: path.join(runDir, "frontend-assignment.json"),
+          prompt: "prompt",
+          command: "codex",
+          args: [],
+          skillSource: "test",
+          status: "planned",
+          assignment: assignmentFor("run-unborn", "frontend", ["./"]),
+        },
+        {
+          name: "backend",
+          runner: "codex",
+          readOnly: false,
+          owns: ["./"],
+          dependsOn: [],
+          promptFile: path.join(runDir, "backend-assignment.json"),
+          prompt: "prompt",
+          command: "codex",
+          args: [],
+          skillSource: "test",
+          status: "planned",
+          assignment: assignmentFor("run-unborn", "backend", ["./"]),
+        },
+      ],
+    };
+
+    let workspaceReadyCalls = 0;
+    const results = await executeRun({
+      projectRoot,
+      run,
+      runDir,
+      dryRun: false,
+      onRoleWorkspaceReady: async () => {
+        workspaceReadyCalls += 1;
+        assert.equal(
+          run.roles.filter((role) => role.worktree === projectRoot).length,
+          workspaceReadyCalls,
+        );
+      },
+    });
+
+    assert.equal(
+      results.every((result) => result.status === "completed"),
+      true,
+      JSON.stringify(results),
+    );
+    assert.equal(
+      run.roles.every((role) => role.worktree === projectRoot),
+      true,
+    );
+    assert.equal(workspaceReadyCalls, 2);
+  } finally {
+    process.env.PATH = previousPath;
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
 test("executeRun persists role worktrees before agent completion and emits flow completion", async () => {
   const { executeRun } =
     await import("../src/domains/runs/repositories/run-orchestrator.js");
@@ -537,7 +678,8 @@ test("executeRun persists role worktrees before agent completion and emits flow 
         `#!/bin/sh
 mkdir -p src
 printf 'created\n' > src/generated.ts
-printf '%s\n' '{"protocolVersion":"1.0","status":"completed","summary":"ok","verdict":null,"artifacts":[{"path":"src/generated.ts","category":"source","purpose":"test","action":"modified"}],"findings":[],"verification":[{"operation":"test","outcome":"passed","summary":"ok"}],"decisions":[],"blockers":[],"questions":[],"risks":[],"evidence":[],"memoryProposals":[],"globalPromotionProposals":[]}'
+printf 'export default {}\n' > vitest.config.js
+printf '%s\n' '{"protocolVersion":"1.0","status":"completed","summary":"ok","verdict":null,"artifacts":[{"path":"src/generated.ts","category":"source","purpose":"test","action":"modified"},{"path":"vitest.config.js","category":"configuration","purpose":"test configuration","action":"created"}],"findings":[],"verification":[{"operation":"test","outcome":"passed","summary":"ok"}],"decisions":[],"blockers":[],"questions":[],"risks":[],"evidence":[],"memoryProposals":[],"globalPromotionProposals":[]}'
 sleep 0.25
 `,
       ).then(() => chmod(path.join(binDir, "codex"), 0o755)),
@@ -626,6 +768,15 @@ sleep 0.25
       results[0]?.resultRecord?.observedChangedFiles.includes(
         "src/generated.ts",
       ),
+    );
+    assert.deepEqual(
+      results[0]?.resultRecord?.ownershipWarnings?.map(
+        (warning) => warning.message,
+      ),
+      [
+        "reported modification outside assigned ownership: vitest.config.js",
+        "Conduit observed a change outside assigned ownership: vitest.config.js",
+      ],
     );
     assert.ok(
       results[0]?.resultRecord?.conduitObservedEvents.every(

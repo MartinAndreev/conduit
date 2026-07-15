@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseAgentResponseV1 } from "../src/domains/runs/validation/agent-response-validator.js";
-import { validateAgentResponseForAssignment } from "../src/domains/runs/validation/agent-semantic-validator.js";
+import {
+  collectOwnershipWarnings,
+  validateAgentResponseForAssignment,
+} from "../src/domains/runs/validation/agent-semantic-validator.js";
 import { agentProcessEnvironment } from "../src/domains/runs/repositories/run-orchestrator.js";
 import type { AgentResponseV1 } from "../src/domains/runs/types/agent-protocol.js";
 import { createAgentAssignmentV1 } from "../src/domains/runs/factories/agent-assignment-factory.js";
@@ -104,6 +107,21 @@ test("AgentAssignmentV1 is strict and normalized", () => {
     validateAgentAssignmentV1({ ...assignment, ownedPaths: ["../src"] }).valid,
     false,
   );
+  assert.deepEqual(
+    createAgentAssignmentV1({
+      ...assignment,
+      ownedPaths: ["./", "./src/"],
+    }).ownedPaths,
+    [".", "src"],
+  );
+  for (const ownedPath of ["", "/"] as const) {
+    assert.equal(
+      validateAgentAssignmentV1(
+        createAgentAssignmentV1({ ...assignment, ownedPaths: [ownedPath] }),
+      ).valid,
+      false,
+    );
+  }
 });
 
 test("configured custom role kinds override the built-in compatibility map", () => {
@@ -142,7 +160,7 @@ test("semantic policy differs by assignment role", () => {
   );
 });
 
-test("implementation completion requires owned artifacts and verification", () => {
+test("implementation completion requires artifacts and verification independent of ownership", () => {
   const response = parseAgentResponseV1(
     JSON.stringify({
       ...base,
@@ -171,11 +189,18 @@ test("implementation completion requires owned artifacts and verification", () =
       roleKind: "implementation",
       ownedPaths: ["docs"],
     }).valid,
-    false,
+    true,
+  );
+  assert.equal(
+    collectOwnershipWarnings(response, {
+      roleKind: "implementation",
+      ownedPaths: ["docs"],
+    }).length,
+    1,
   );
 });
 
-test("authoritative observed changes must stay owned and match claims", () => {
+test("authoritative observed changes must match claims and preserve ownership warnings", () => {
   const response: AgentResponseV1 = {
     ...base,
     artifacts: [
@@ -198,6 +223,36 @@ test("authoritative observed changes must stay owned and match claims", () => {
     }).valid,
     true,
   );
+  const unexpectedResponse: AgentResponseV1 = {
+    ...response,
+    artifacts: [
+      {
+        path: "docs/a.md",
+        category: "documentation",
+        purpose: "integration documentation",
+        action: "modified",
+      },
+    ],
+  };
+  const unexpectedPolicy = {
+    roleKind: AgentRoleKind.Implementation,
+    ownedPaths: ["src"],
+    observedChangedFiles: ["docs/a.md"],
+  } as const;
+  assert.equal(
+    validateAgentResponseForAssignment(unexpectedResponse, unexpectedPolicy)
+      .valid,
+    true,
+  );
+  assert.deepEqual(
+    collectOwnershipWarnings(unexpectedResponse, unexpectedPolicy).map(
+      (item) => item.message,
+    ),
+    [
+      "reported modification outside assigned ownership: docs/a.md",
+      "Conduit observed a change outside assigned ownership: docs/a.md",
+    ],
+  );
   assert.equal(
     validateAgentResponseForAssignment(response, {
       roleKind: "implementation",
@@ -208,7 +263,39 @@ test("authoritative observed changes must stay owned and match claims", () => {
   );
 });
 
-test("an empty ownership list does not grant write access", () => {
+test("repository root ownership accepts root and nested changes", () => {
+  const response: AgentResponseV1 = {
+    ...base,
+    artifacts: [
+      {
+        path: "package.json",
+        category: "configuration",
+        purpose: "configure the application",
+        action: "modified",
+      },
+      {
+        path: "src/main.ts",
+        category: "source",
+        purpose: "implement the application",
+        action: "created",
+      },
+    ],
+    verification: [
+      { operation: "pnpm test", outcome: "passed", summary: "passed" },
+    ],
+  };
+
+  assert.equal(
+    validateAgentResponseForAssignment(response, {
+      roleKind: AgentRoleKind.Implementation,
+      ownedPaths: ["./"],
+      observedChangedFiles: ["package.json", "src/main.ts"],
+    }).valid,
+    true,
+  );
+});
+
+test("empty ownership produces warnings without granting forbidden or read-only access", () => {
   const response: AgentResponseV1 = {
     ...base,
     artifacts: [
@@ -223,15 +310,28 @@ test("an empty ownership list does not grant write access", () => {
       { operation: "pnpm test", outcome: "passed", summary: "passed" },
     ],
   };
-  const result = validateAgentResponseForAssignment(response, {
+  const policy = {
     roleKind: AgentRoleKind.Implementation,
     ownedPaths: [],
     observedChangedFiles: ["src/mobile.ts"],
-  });
+  } as const;
+  const result = validateAgentResponseForAssignment(response, policy);
 
-  assert.equal(result.valid, false);
-  assert.ok(
-    result.issues.some((item) => item.message.includes("outside owned paths")),
+  assert.equal(result.valid, true);
+  assert.equal(collectOwnershipWarnings(response, policy).length, 2);
+  assert.equal(
+    validateAgentResponseForAssignment(response, {
+      ...policy,
+      forbiddenPaths: ["src"],
+    }).valid,
+    false,
+  );
+  assert.equal(
+    validateAgentResponseForAssignment(response, {
+      ...policy,
+      readOnly: true,
+    }).valid,
+    false,
   );
 });
 
