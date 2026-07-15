@@ -1,10 +1,13 @@
 import { TursoDraftRepository } from "../../../domains/refinement/repositories/turso-draft-repository.js";
 import { TursoArchitectEventRepository } from "../../../domains/refinement/repositories/turso-architect-event-repository.js";
+import { FileArchitectEventRepository } from "../../../domains/refinement/repositories/file-architect-event-repository.js";
+import { LiveArchitectEventRepository } from "../../../domains/refinement/repositories/live-architect-event-repository.js";
 import { TursoRefinementRevisionRepository } from "../../../domains/refinement/repositories/turso-revision-repository.js";
 import { TursoResearchReportRepository } from "../../../domains/refinement/repositories/turso-research-report-repository.js";
 import { TursoRunEventRepository } from "../../../domains/runs/repositories/turso-run-event-repository.js";
 import { TursoReviewResultRepository } from "../../../domains/runs/repositories/turso-review-result-repository.js";
 import { TursoRunRecoveryRepository } from "../../../domains/runs/repositories/turso-run-recovery-repository.js";
+import { TursoSourceVersionRepository } from "../../../domains/source/repositories/turso-source-version-repository.js";
 import { InMemoryRunEventRepository } from "../../../domains/runs/repositories/in-memory-run-event-repository.js";
 import { InMemoryReviewResultRepository } from "../../../domains/runs/repositories/in-memory-review-result-repository.js";
 import { createRunProcessRegistry } from "../../../domains/runs/repositories/run-process-registry.js";
@@ -51,9 +54,16 @@ export function createBootstrapComposition(
       processRegistry: createRunProcessRegistry(),
       repositories: {
         drafts: connection ? new TursoDraftRepository(connection) : undefined,
-        architectEvents: connection
-          ? new TursoArchitectEventRepository(connection)
-          : undefined,
+        architectEvents:
+          connection && projectRoot
+            ? new LiveArchitectEventRepository(
+                new FileArchitectEventRepository(
+                  projectRoot,
+                  dependencies.stateDirectory,
+                ),
+                new TursoArchitectEventRepository(connection),
+              )
+            : undefined,
         revisions: connection
           ? new TursoRefinementRevisionRepository(connection)
           : undefined,
@@ -68,6 +78,9 @@ export function createBootstrapComposition(
           : new InMemoryReviewResultRepository(),
         recovery: connection
           ? new TursoRunRecoveryRepository(connection)
+          : undefined,
+        sourceVersions: connection
+          ? new TursoSourceVersionRepository(connection)
           : undefined,
       },
     },

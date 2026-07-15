@@ -1,6 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -25,6 +25,16 @@ test("spawned agents receive neither database environment nor database context",
     },
   };
   try {
+    const packetDirectory = join(projectRoot, "specs", "002-demo");
+    await mkdir(join(packetDirectory, "contracts"), { recursive: true });
+    await writeFile(
+      join(packetDirectory, "spec.md"),
+      "# Demo\n\nAcceptance criterion from the live packet.\n",
+    );
+    await writeFile(
+      join(packetDirectory, "contracts", "README.md"),
+      "# Contract\n\nReturn the stable response shape.\n",
+    );
     const environment = agentProcessEnvironment({
       PATH: "/usr/bin",
       TURSO_AUTH_TOKEN: "database-secret",
@@ -59,6 +69,11 @@ test("spawned agents receive neither database environment nor database context",
       suppliedContext,
       /state\.db|global\.db|libsql:|turso_auth|database_url|kysely/i,
     );
+    assert.match(
+      role.context ?? "",
+      /Acceptance criterion from the live packet/,
+    );
+    assert.match(role.context ?? "", /Return the stable response shape/);
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
   }

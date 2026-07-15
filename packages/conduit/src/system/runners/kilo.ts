@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import type { RunnerAdapter, RunnerAvailability } from "./adapter.js";
 import type { RunnerEvent } from "../../domains/runs/types/runner-events.js";
 import { createEvent } from "./events.js";
+import { JsonLineOutputParser } from "./jsonl-parser.js";
 
 export class KiloAdapter implements RunnerAdapter {
   readonly name = "kilo";
@@ -20,6 +21,17 @@ export class KiloAdapter implements RunnerAdapter {
     if (model) args.push("--model", model);
     args.push(`Read ${promptFile} and perform only your assigned task.`);
     return args;
+  }
+
+  createOutputParser(runId: string, roleId: string): JsonLineOutputParser {
+    return new JsonLineOutputParser(
+      (line) => this.parseOutput(`${line}\n`, runId, roleId),
+      (line) =>
+        createEvent("activity", runId, roleId, {
+          kind: "activity",
+          message: line.slice(0, 200),
+        }),
+    );
   }
 
   parseOutput(

@@ -59,6 +59,7 @@ import {
   ProjectDatabaseFactory,
 } from "./system/storage/factories/database-factories.js";
 import { TursoGlobalProfileRepository } from "./domains/configuration/repositories/turso-global-profile-repository.js";
+import { TursoGlobalConfigurationMetadataRepository } from "./domains/configuration/repositories/turso-global-configuration-metadata-repository.js";
 import { DefaultStartupMigrationRunner } from "./system/storage/migrations/startup-migration-runner.js";
 import { LegacyFileImporter } from "./system/storage/import/legacy-file-importer.js";
 import { runMigrationScreen } from "./tui/migration.js";
@@ -121,8 +122,12 @@ async function buildDependencies(
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   if (projectRoot) await startupMigration(projectRoot);
+  const globalDatabaseFactory = new GlobalDatabaseFactory(environment);
   const globalProfiles = new TursoGlobalProfileRepository(
-    new GlobalDatabaseFactory(environment),
+    globalDatabaseFactory,
+  );
+  const globalMetadata = new TursoGlobalConfigurationMetadataRepository(
+    globalDatabaseFactory,
   );
   const configurationRepository = createConfigurationRepository(globalProfiles);
   const globalConfigDir = configurationRepository.getGlobalConfigDir();
@@ -135,6 +140,11 @@ async function buildDependencies(
   );
 
   await credentialStore.initialize();
+  await globalMetadata.set("credentialProtection", {
+    mode: credentialStore.isUsingFallback()
+      ? "obfuscation-at-rest"
+      : "os-bound-vault",
+  });
 
   const portraitRegistry = createPortraitRegistry();
 
@@ -229,12 +239,12 @@ export function createProgram(
     program
       .command("refine <feature-id> [story]")
       .description(
-        "capture a story and optionally have Codex refine the specification",
+        "capture a story and optionally have the configured architect refine the specification",
       ),
   )
     .option(
       "--architect",
-      "run Codex to update the feature specification and contracts",
+      "run the configured architect to update the feature specification and contracts",
     )
     .option(
       "--compact",

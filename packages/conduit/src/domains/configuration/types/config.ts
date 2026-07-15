@@ -1,3 +1,5 @@
+import type { AgentRoleKindValue } from "../../roles/enums/agent-role-kind.js";
+
 export const CONFIG_FILE = "conduit.yml" as const;
 
 export type RoleReasoningEffort =
@@ -9,6 +11,7 @@ export interface RoleConfig {
   mode: string;
   model?: string;
   effort?: RoleReasoningEffort;
+  roleKind?: AgentRoleKindValue;
   readOnly?: boolean;
   owns?: string[];
   dependsOn?: string[];
@@ -22,5 +25,8 @@ export interface Config {
   version: number;
   specsDir: string;
   stateDir: string;
+  worktreeRoot?: string;
+  worktreeRetentionDays?: number;
+  runDiagnosticsRetentionDays?: number;
   roles: Record<string, RoleConfig>;
 }

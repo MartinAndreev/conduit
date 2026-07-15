@@ -73,8 +73,17 @@ test("startup blocks through schema and idempotent legacy import before use", as
 
     const second = await runner.run();
     assert.equal(second.importedRecords, 0);
-    assert.equal(second.skippedImports, 3);
-    assert.ok(await readFile(draftPath, "utf8"));
+    assert.equal(second.skippedImports, 0);
+    assert.equal(
+      await readFile(draftPath, "utf8").catch(() => undefined),
+      undefined,
+    );
+    assert.ok(
+      await readFile(
+        join(stateDirectory, "legacy-archive", "drafts", "001.json"),
+        "utf8",
+      ),
+    );
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
     await rm(globalRoot, { recursive: true, force: true });

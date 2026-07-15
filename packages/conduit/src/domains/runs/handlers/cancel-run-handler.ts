@@ -4,6 +4,7 @@ import type {
   CancelRunResult,
 } from "../interfaces/commands/cancel-run.js";
 import type { RunEventRepository } from "../interfaces/run-event-repository.js";
+import { RunnerEventProvenance } from "../enums/runner-event-provenance.js";
 import type { RunProcessRegistry } from "../repositories/run-process-registry.js";
 import type { RunnerEvent } from "../types/runner-events.js";
 import type { RunRecoveryRepository } from "../interfaces/run-recovery-repository.js";
@@ -24,6 +25,7 @@ export function createCancelRunHandler(
         // No active processes, just append a system-level cancel event
         const cancelEvent: RunnerEvent = {
           type: "lifecycle",
+          provenance: RunnerEventProvenance.ConduitObserved,
           runId: command.runId,
           roleId: "system",
           timestamp: new Date().toISOString(),
@@ -39,6 +41,7 @@ export function createCancelRunHandler(
         for (const entry of entries) {
           const cancelEvent: RunnerEvent = {
             type: "lifecycle",
+            provenance: RunnerEventProvenance.ConduitObserved,
             runId: command.runId,
             roleId: entry.roleId,
             timestamp: new Date().toISOString(),

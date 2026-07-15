@@ -90,6 +90,22 @@ test("createApplication composes registrations through the bootstrap contract", 
     assert.equal((result.data as { registered: boolean }).registered, true);
 });
 
+test("project bootstrap injects the source-version repository", async () => {
+  let sourceVersionsAvailable = false;
+  const service: ApplicationBootstrapService = {
+    register({ repositories }) {
+      sourceVersionsAvailable = Boolean(repositories.sourceVersions);
+    },
+  };
+  const app = createApplication(
+    stubDeps({ projectRoot: "/tmp/conduit-source-bootstrap" }),
+    [service],
+  );
+
+  assert.equal(sourceVersionsAvailable, true);
+  await app.close();
+});
+
 test("initializeProject command dispatches to dependency", async () => {
   const app = createApplication(stubDeps());
   const result = await app.commandBus.dispatch({

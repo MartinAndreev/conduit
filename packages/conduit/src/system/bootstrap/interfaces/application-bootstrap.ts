@@ -20,6 +20,7 @@ import type { Run, RunResult } from "../../../domains/runs/types/run.js";
 import type { CommandBus } from "../../bus/command-bus.js";
 import type { QueryBus } from "../../bus/query-bus.js";
 import type { DatabaseLifecycle } from "../../storage/interfaces/database-lifecycle.js";
+import type { SourceVersionRepository } from "../../../domains/source/interfaces/source-version-repository.js";
 
 export interface Application {
   readonly commandBus: CommandBus;
@@ -76,6 +77,7 @@ export interface BootstrapDependencies {
   ) => string;
   runArchitect?: (params: {
     projectRoot: string;
+    runner: string;
     prompt: string;
     logFile: string;
   }) => Promise<{ logFile: string }>;
@@ -97,6 +99,7 @@ export interface BootstrapRepositories {
   readonly runEvents: RunEventRepository;
   readonly reviews: ReviewResultRepository;
   readonly recovery?: RunRecoveryRepository;
+  readonly sourceVersions?: SourceVersionRepository;
 }
 
 export interface ApplicationBootstrapContext {

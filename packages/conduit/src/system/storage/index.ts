@@ -39,7 +39,10 @@ export {
   resolveProjectDatabasePaths,
   resolveGlobalDatabasePaths,
 } from "./factories/path-resolution.js";
-export { ensureConduitStateGitIgnored } from "./factories/gitignore.js";
+export {
+  ensureConduitStateGitIgnored,
+  ensureWorktreeRootGitIgnored,
+} from "./factories/gitignore.js";
 export {
   ProjectDatabaseFactory,
   GlobalDatabaseFactory,

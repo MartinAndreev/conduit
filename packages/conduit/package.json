@@ -1,6 +1,6 @@
 {
   "name": "conduit-orchestrator",
-  "version": "0.2.22",
+  "version": "0.5.4",
   "description": "Spec-driven, local-first orchestration for coding agents.",
   "license": "MIT",
   "type": "module",
@@ -33,7 +33,8 @@
     "commander": "^14.0.0",
     "kysely": "^0.29.3",
     "ora": "^9.3.0",
-    "react": "^19.2.7"
+    "react": "^19.2.7",
+    "zod": "4.4.3"
   },
   "engines": {
     "node": ">=22"

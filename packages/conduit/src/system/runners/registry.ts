@@ -22,3 +22,32 @@ export function configureFinalOutputCapture(
     ? adapter.configureFinalOutputCapture(args, outputFile)
     : args;
 }
+
+export function captureFinalResponse(
+  runner: string,
+  runId: string,
+  roleId: string,
+  stdout: string,
+  stderr: string,
+  capturedOutput: string,
+): string {
+  if (capturedOutput.trim()) return capturedOutput.trim();
+  const adapter = adapters[runner];
+  const stdoutParser = adapter?.createOutputParser?.(runId, roleId);
+  const stderrParser = adapter?.createOutputParser?.(runId, roleId);
+  stdoutParser?.push(stdout);
+  stdoutParser?.flush();
+  stderrParser?.push(stderr);
+  stderrParser?.flush();
+  return (
+    stdoutParser?.finalResponse ?? stderrParser?.finalResponse ?? stdout.trim()
+  );
+}
+
+export function runnerAdapter(runner: string): RunnerAdapter | undefined {
+  return adapters[runner];
+}
+
+export function supportedRunners(): readonly string[] {
+  return Object.keys(adapters);
+}

@@ -12,7 +12,7 @@ import { createRunProcessRegistry } from "../src/domains/runs/repositories/run-p
 import { CommandBus } from "../src/system/bus/command-bus.js";
 import type { LifecyclePayload } from "../src/domains/runs/types/runner-events.js";
 import type { RunEventRepository } from "../src/domains/runs/interfaces/run-event-repository.js";
-import type { DiffReader } from "../src/domains/runs/repositories/worktree-diff-reader.js";
+import type { DiffReader } from "../src/domains/runs/interfaces/diff-reader.js";
 import type { RunRecoveryRepository } from "../src/domains/runs/interfaces/run-recovery-repository.js";
 import type { Run } from "../src/domains/runs/types/run.js";
 

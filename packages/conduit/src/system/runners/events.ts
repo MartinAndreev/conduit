@@ -3,6 +3,7 @@ import type {
   RunnerEventPayload,
   RunnerEventType,
 } from "../../domains/runs/types/runner-events.js";
+import { RunnerEventProvenance } from "../../domains/runs/enums/runner-event-provenance.js";
 
 export type {
   RunnerEvent,
@@ -18,6 +19,7 @@ export function createEvent<T extends RunnerEventPayload>(
 ): RunnerEvent {
   return {
     type,
+    provenance: RunnerEventProvenance.RunnerReported,
     runId,
     roleId,
     timestamp: new Date().toISOString(),

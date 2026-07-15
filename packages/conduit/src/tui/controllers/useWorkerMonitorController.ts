@@ -42,14 +42,32 @@ function monitorReducer(
   action: WorkerMonitorAction,
 ): WorkerMonitorState {
   switch (action.type) {
-    case "eventsLoaded":
+    case "eventsLoaded": {
+      const selectedRole =
+        action.roles[state.selectedRoleIndex] ?? action.roles[0];
+      const previousRole = state.roles[state.selectedRoleIndex];
+      const previousEventCount = previousRole
+        ? state.events.filter((event) => event.roleId === previousRole.roleId)
+            .length
+        : 0;
+      const previousMaximum = Math.max(0, previousEventCount - 8);
+      const followingLatest = state.scrollOffset >= previousMaximum;
+      const nextEventCount = selectedRole
+        ? action.events.filter((event) => event.roleId === selectedRole.roleId)
+            .length
+        : 0;
+      const nextMaximum = Math.max(0, nextEventCount - 8);
       return {
         ...state,
         events: action.events,
         roles: action.roles,
+        scrollOffset: followingLatest
+          ? nextMaximum
+          : Math.min(state.scrollOffset, nextMaximum),
         loading: false,
         error: null,
       };
+    }
     case "runLoaded":
       return { ...state, run: action.run };
     case "diffLoaded":
@@ -62,14 +80,20 @@ function monitorReducer(
       };
     case "loadError":
       return { ...state, error: action.message, loading: false };
-    case "selectRole":
+    case "selectRole": {
+      const selectedRole = state.roles[action.index];
+      const selectedEventCount = selectedRole
+        ? state.events.filter((event) => event.roleId === selectedRole.roleId)
+            .length
+        : 0;
       return {
         ...state,
         selectedRoleIndex: action.index,
         expandedEventIndex: null,
-        scrollOffset: 0,
+        scrollOffset: Math.max(0, selectedEventCount - 8),
         selectedFileIndex: 0,
       };
+    }
     case "selectFile":
       return {
         ...state,
@@ -98,7 +122,12 @@ function monitorReducer(
     case "toggleFileDiff":
       return { ...state, fileDiffExpanded: !state.fileDiffExpanded };
     case "scroll": {
-      const max = Math.max(0, state.events.length - 8);
+      const selectedRole = state.roles[state.selectedRoleIndex];
+      const selectedEventCount = selectedRole
+        ? state.events.filter((event) => event.roleId === selectedRole.roleId)
+            .length
+        : 0;
+      const max = Math.max(0, selectedEventCount - 8);
       const next =
         action.direction === "up"
           ? Math.max(0, state.scrollOffset - 1)

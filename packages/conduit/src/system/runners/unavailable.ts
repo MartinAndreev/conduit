@@ -1,5 +1,6 @@
 import type { RunnerEvent } from "../../domains/runs/types/runner-events.js";
 import type { LifecyclePayload } from "../../domains/runs/types/runner-events.js";
+import { RunnerEventProvenance } from "../../domains/runs/enums/runner-event-provenance.js";
 
 export function createUnavailableEvent(
   runnerName: string,
@@ -9,6 +10,7 @@ export function createUnavailableEvent(
 ): RunnerEvent {
   return {
     type: "lifecycle",
+    provenance: RunnerEventProvenance.ConduitObserved,
     runId,
     roleId,
     timestamp: new Date().toISOString(),

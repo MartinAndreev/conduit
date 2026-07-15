@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TursoGlobalProfileRepository } from "../src/domains/configuration/repositories/turso-global-profile-repository.js";
+import { TursoGlobalConfigurationMetadataRepository } from "../src/domains/configuration/repositories/turso-global-configuration-metadata-repository.js";
 import { GlobalDatabaseFactory } from "../src/system/storage/factories/database-factories.js";
 
 test("global profiles persist partial role defaults with optimistic versions", async () => {
@@ -61,6 +62,24 @@ test("global profiles reject secret-like persisted fields", async () => {
       () => Buffer.alloc(0),
     );
     assert.equal(bytes.includes("seeded-profile-secret"), false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("global configuration metadata persists the credential protection mode", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "conduit-global-metadata-"));
+  const repository = new TursoGlobalConfigurationMetadataRepository(
+    new GlobalDatabaseFactory({ XDG_DATA_HOME: directory }),
+  );
+  try {
+    await repository.set("credentialProtection", {
+      mode: "obfuscation-at-rest",
+    });
+
+    assert.deepEqual(await repository.get("credentialProtection"), {
+      mode: "obfuscation-at-rest",
+    });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

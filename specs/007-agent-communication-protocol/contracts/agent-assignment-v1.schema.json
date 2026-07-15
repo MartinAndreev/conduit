@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://conduit.local/schemas/agent-assignment-v1.schema.json",
+  "title": "AgentAssignmentV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "assignmentId",
+    "role",
+    "roleKind",
+    "objective",
+    "ownedPaths",
+    "forbiddenPaths",
+    "dependencies",
+    "contextReferences",
+    "acceptanceCriteria",
+    "contracts",
+    "requiredVerification",
+    "expectedCapabilities",
+    "requiredResponseFields",
+    "outputSchemaRef",
+    "security",
+    "sizeLimits"
+  ],
+  "properties": {
+    "assignmentId": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "role": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "roleKind": {
+      "enum": [
+        "implementation",
+        "reviewer",
+        "research",
+        "architect",
+        "qa",
+        "documentation",
+        "custom"
+      ]
+    },
+    "objective": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "ownedPaths": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "$ref": "#/$defs/path" }
+    },
+    "forbiddenPaths": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "$ref": "#/$defs/path" }
+    },
+    "dependencies": { "$ref": "#/$defs/shortList" },
+    "contextReferences": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "$ref": "#/$defs/path" }
+    },
+    "acceptanceCriteria": { "$ref": "#/$defs/textList" },
+    "contracts": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "$ref": "#/$defs/path" }
+    },
+    "requiredVerification": { "$ref": "#/$defs/shortList" },
+    "expectedCapabilities": { "$ref": "#/$defs/shortList" },
+    "requiredResponseFields": {
+      "type": "array",
+      "minItems": 14,
+      "maxItems": 14,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "protocolVersion",
+          "status",
+          "summary",
+          "verdict",
+          "artifacts",
+          "findings",
+          "verification",
+          "decisions",
+          "blockers",
+          "questions",
+          "risks",
+          "evidence",
+          "memoryProposals",
+          "globalPromotionProposals"
+        ]
+      }
+    },
+    "outputSchemaRef": { "const": "agent-response-v1.schema.json" },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "databaseEnvironmentRemoved",
+        "databaseAccessForbidden",
+        "memoryActivationForbidden",
+        "secretReportingForbidden"
+      ],
+      "properties": {
+        "databaseEnvironmentRemoved": { "const": true },
+        "databaseAccessForbidden": { "const": true },
+        "memoryActivationForbidden": { "const": true },
+        "secretReportingForbidden": { "const": true }
+      }
+    },
+    "sizeLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["responseBytes", "summaryCharacters", "collectionItems"],
+      "properties": {
+        "responseBytes": { "type": "integer", "minimum": 1, "maximum": 256000 },
+        "summaryCharacters": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000
+        },
+        "collectionItems": { "type": "integer", "minimum": 1, "maximum": 100 }
+      }
+    }
+  },
+  "$defs": {
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+"
+    },
+    "shortList": {
+      "type": "array",
+      "maxItems": 50,
+      "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+    },
+    "textList": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+    }
+  }
+}

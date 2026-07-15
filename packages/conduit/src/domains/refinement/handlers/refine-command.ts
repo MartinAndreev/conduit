@@ -6,6 +6,7 @@ import {
   defaultDependencies,
   resolveProject,
 } from "../../../system/cli/command-support.js";
+import { defaultConfig } from "../../configuration/repositories/project-config.js";
 import type { RefinementResult } from "../types/refinement.js";
 import type { Run } from "../../runs/types/run.js";
 import type { ApplicationDependencies } from "../../../system/bootstrap/types.js";
@@ -15,6 +16,18 @@ import { formatRefinementBrief } from "@helpers/formatting/refinement-brief.js";
 import { redactSecrets } from "@system/storage/security/secret-redaction.js";
 import type { RunRecoveryRepository } from "../../runs/interfaces/run-recovery-repository.js";
 import { agentProcessEnvironment } from "../../runs/repositories/run-orchestrator.js";
+import { createAgentAssignmentV1 } from "../../runs/factories/agent-assignment-factory.js";
+import { validateAgentAssignmentV1 } from "../../runs/validation/agent-assignment-validator.js";
+import { parseAgentResponseV1 } from "../../runs/validation/agent-response-validator.js";
+import { validateAgentResponseForAssignment } from "../../runs/validation/agent-semantic-validator.js";
+import { renderClarificationQuestions } from "../../runs/validation/clarification-renderer.js";
+import { agentResponseContractPrompt } from "../../runs/assets/agent-response-contract.js";
+import {
+  captureFinalResponse,
+  configureFinalOutputCapture,
+  runnerAdapter,
+} from "@system/runners/registry.js";
+import { extractArchitectEvents } from "../helpers/architect-event-parser.js";
 
 const activeArchitectProcesses = new Map<string, ChildProcess>();
 
@@ -86,43 +99,93 @@ export async function collectArchitectAnswers(
 }
 
 export function architectProgressMessage(transcript: string): string {
-  if (/apply patch/i.test(transcript))
-    return "Codex is applying the specification patch";
-  const command = [...transcript.matchAll(/(?:^|\n)exec\n([^\n]+)/g)].at(
-    -1,
-  )?.[1];
-  if (command) return `Codex is running: ${command.slice(0, 90)}`;
-  if (/^analysis$/m.test(transcript))
-    return "Codex is analyzing the project context";
-  if (/^codex$/m.test(transcript))
-    return "Codex is refining the feature specification";
-  return "Codex is refining the feature specification";
+  const latestEvent = extractArchitectEvents(transcript).at(-1);
+  if (latestEvent?.type === "patch") {
+    return "Architect is applying the specification patch";
+  }
+  if (latestEvent?.type === "tool-call") {
+    return `Architect is running: ${latestEvent.content.slice(0, 90)}`;
+  }
+  if (latestEvent?.type === "thought") {
+    return `Architect reasoning: ${latestEvent.content.slice(0, 90)}`;
+  }
+  if (latestEvent?.type === "activity") {
+    return `Architect: ${latestEvent.content.slice(0, 90)}`;
+  }
+  if (latestEvent?.type === "lifecycle") {
+    return latestEvent.content;
+  }
+  return "Architect is refining the feature specification";
 }
 
 export async function runArchitect({
   projectRoot,
+  runner,
   prompt,
   logFile,
   onProgress = () => {},
   onTranscript = () => {},
 }: {
   projectRoot: string;
+  runner: string;
   prompt: string;
   logFile: string;
   onProgress?: (message: string) => void;
   onTranscript?: (transcript: string) => void;
 }): Promise<{ logFile: string }> {
   await mkdir(path.dirname(logFile), { recursive: true });
-  return new Promise((resolve, reject) => {
-    const child: ChildProcess = spawn(
-      "codex",
-      ["exec", "--sandbox", "workspace-write", redactSecrets(prompt)],
-      {
-        cwd: projectRoot,
-        stdio: ["ignore", "pipe", "pipe"],
-        env: agentProcessEnvironment(),
-      },
+  const contextFile = path.join(path.dirname(logFile), "architect-context.md");
+  const assignmentFile = path.join(
+    path.dirname(logFile),
+    "architect-assignment.json",
+  );
+  const responseFile = path.join(
+    path.dirname(logFile),
+    "architect-agent-response.json",
+  );
+  const questionsFile = path.join(path.dirname(logFile), "questions.md");
+  await writeFile(
+    contextFile,
+    redactSecrets(`${prompt}\n\n${agentResponseContractPrompt()}\n`),
+  );
+  const assignment = createAgentAssignmentV1({
+    assignmentId: `${path.basename(path.dirname(logFile))}:architect`,
+    role: "architect",
+    roleKind: "architect",
+    objective:
+      "Refine the approved feature packet using the referenced context. Modify only packet artifacts. Return completed with artifact claims, or needs_input with structured questions.",
+    ownedPaths: ["specs"],
+    contextReferences: [path.relative(projectRoot, contextFile)],
+    acceptanceCriteria: [
+      "Produce an implementation-ready feature packet grounded in repository evidence.",
+      "Return structured clarification questions when a product decision is missing.",
+    ],
+    contracts: ["specs"],
+    expectedCapabilities: ["repository-read", "workspace-write"],
+  });
+  const assignmentValidation = validateAgentAssignmentV1(assignment);
+  if (!assignmentValidation.valid)
+    throw new Error(
+      `Invalid architect assignment: ${assignmentValidation.issues.map((item) => `${item.path}: ${item.message}`).join("; ")}`,
     );
+  await writeFile(assignmentFile, `${JSON.stringify(assignment, null, 2)}\n`);
+  return new Promise((resolve, reject) => {
+    const adapter = runnerAdapter(runner);
+    if (!adapter) {
+      reject(new Error(`Architect runner adapter is unavailable: ${runner}.`));
+      return;
+    }
+    const baseArgs = adapter.buildArgs(assignmentFile);
+    const args = configureFinalOutputCapture(
+      runner,
+      [baseArgs[0]!, "--sandbox", "workspace-write", ...baseArgs.slice(1)],
+      responseFile,
+    );
+    const child: ChildProcess = spawn(adapter.command, args, {
+      cwd: projectRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: agentProcessEnvironment(),
+    });
     activeArchitectProcesses.set(logFile, child);
     let transcript = "";
     const capture = (chunk: Buffer | string) => {
@@ -140,12 +203,47 @@ export async function runArchitect({
         logFile,
         `--- Architect pass ${new Date().toISOString()} ---\n\n${transcript}`,
       );
-      if (code === 0) resolve({ logFile });
-      else {
+      const captured = await readFile(responseFile, "utf8").catch(() => "");
+      if (captured) await writeFile(responseFile, redactSecrets(captured));
+      const output = captureFinalResponse(
+        runner,
+        path.basename(path.dirname(logFile)),
+        "architect",
+        transcript,
+        "",
+        captured,
+      );
+      const structural = parseAgentResponseV1(output);
+      const semantic =
+        structural.valid && structural.value
+          ? validateAgentResponseForAssignment(structural.value, {
+              roleKind: "architect",
+              ownedPaths: ["specs"],
+            })
+          : structural;
+      if (
+        code === 0 &&
+        structural.valid &&
+        semantic.valid &&
+        structural.value?.status === "needs_input"
+      ) {
+        await writeFile(
+          questionsFile,
+          renderClarificationQuestions(structural.value),
+        );
+        resolve({ logFile });
+      } else if (
+        code === 0 &&
+        structural.valid &&
+        semantic.valid &&
+        structural.value?.status === "completed"
+      ) {
+        resolve({ logFile });
+      } else {
         const detail = transcript.trim().slice(-2_000);
         reject(
           new Error(
-            `Codex architect run failed with exit code ${code}.${detail ? `\n\n${detail}` : ""}\n\nFull log: ${logFile}`,
+            `Architect run failed protocol completion with exit code ${code}: ${[...structural.issues, ...semantic.issues].map((item) => `${item.path}: ${item.message}`).join("; ") || `status ${structural.value?.status ?? "missing"}`}.${detail ? `\n\n${detail}` : ""}\n\nFull log: ${logFile}`,
           ),
         );
       }
@@ -222,7 +320,7 @@ export async function refineCommand(
   if (testCasesFile) output(`Saved QA test cases to ${testCasesFile}`);
   if (!options.architect) {
     output(
-      "Draft saved. Run again with --architect to have Codex refine the spec and contracts.",
+      "Draft saved. Run again with --architect to refine the spec and contracts.",
     );
     return { feature, storyFile, testCasesFile, architectRan: false };
   }
@@ -233,6 +331,8 @@ export async function refineCommand(
     `refine-${feature.id}-${Date.now()}`,
     "architect.log",
   );
+  const architectRunner =
+    config.roles.architect?.runner ?? defaultConfig.roles.architect.runner;
   const architectRun: Run = {
     id: path.basename(path.dirname(logFile)),
     featureId: feature.id,
@@ -241,7 +341,7 @@ export async function refineCommand(
     roles: [
       {
         name: "architect",
-        runner: "codex",
+        runner: architectRunner,
         readOnly: false,
         owns: [],
         dependsOn: [],
@@ -300,6 +400,7 @@ export async function refineCommand(
       }: { setText?: (text: string) => void } = {}) =>
         runArch({
           projectRoot,
+          runner: architectRunner,
           prompt,
           logFile,
           onProgress: setText,
@@ -310,7 +411,7 @@ export async function refineCommand(
         : await progress(
             pass
               ? "Continuing refinement with your answers"
-              : "Refining specification with Codex",
+              : "Refining specification with the architect",
             execute,
           );
       const questions = (
@@ -371,7 +472,7 @@ export async function refineCommand(
     liveView?.close();
   }
   output(
-    `Codex refinement completed. Captured transcript: ${architect?.logFile}`,
+    `Architect refinement completed. Captured transcript: ${architect?.logFile}`,
   );
   output("Review spec.md and contracts before running workers.");
   if (showDashboard)

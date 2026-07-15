@@ -40,6 +40,7 @@ export interface ApplicationDependencies {
   collectArchitectAnswers: (questions: string) => Promise<string>;
   runArchitect: (params: {
     projectRoot: string;
+    runner: string;
     prompt: string;
     logFile: string;
     onProgress?: (message: string) => void;

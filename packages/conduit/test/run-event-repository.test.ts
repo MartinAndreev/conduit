@@ -4,6 +4,7 @@ import { InMemoryRunEventRepository } from "../src/domains/runs/repositories/in-
 import { createEvent } from "../src/system/runners/events.js";
 import type { RunnerEvent } from "../src/domains/runs/types/runner-events.js";
 import type { RunEventRepository } from "../src/domains/runs/interfaces/run-event-repository.js";
+import { RunnerEventProvenance } from "../src/domains/runs/enums/runner-event-provenance.js";
 
 test("append and loadByRun return events for the target run", async () => {
   const repo = new InMemoryRunEventRepository();
@@ -117,6 +118,7 @@ test("stores all discriminated runner event types", async () => {
   const events: RunnerEvent[] = [
     {
       type: "lifecycle",
+      provenance: RunnerEventProvenance.ConduitObserved,
       runId: "r",
       roleId: "role",
       timestamp: "",
@@ -124,6 +126,7 @@ test("stores all discriminated runner event types", async () => {
     },
     {
       type: "activity",
+      provenance: RunnerEventProvenance.RunnerReported,
       runId: "r",
       roleId: "role",
       timestamp: "",
@@ -131,6 +134,7 @@ test("stores all discriminated runner event types", async () => {
     },
     {
       type: "tool-call",
+      provenance: RunnerEventProvenance.RunnerReported,
       runId: "r",
       roleId: "role",
       timestamp: "",
@@ -138,6 +142,7 @@ test("stores all discriminated runner event types", async () => {
     },
     {
       type: "tool-output",
+      provenance: RunnerEventProvenance.RunnerReported,
       runId: "r",
       roleId: "role",
       timestamp: "",
@@ -150,6 +155,7 @@ test("stores all discriminated runner event types", async () => {
     },
     {
       type: "file-change",
+      provenance: RunnerEventProvenance.ConduitObserved,
       runId: "r",
       roleId: "role",
       timestamp: "",
@@ -162,6 +168,7 @@ test("stores all discriminated runner event types", async () => {
     },
     {
       type: "error",
+      provenance: RunnerEventProvenance.ConduitObserved,
       runId: "r",
       roleId: "role",
       timestamp: "",
@@ -174,6 +181,7 @@ test("stores all discriminated runner event types", async () => {
     },
     {
       type: "result",
+      provenance: RunnerEventProvenance.ConduitObserved,
       runId: "r",
       roleId: "role",
       timestamp: "",

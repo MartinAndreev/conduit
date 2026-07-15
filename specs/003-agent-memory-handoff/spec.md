@@ -287,3 +287,7 @@ A simpler normalized model is acceptable if it satisfies lifecycle, evidence, at
 - [ ] Global memory is generalized, opt-in, provenance-backed, revocable/supersedable, and stored in the global database without raw project evidence.
 - [ ] No spawned agent receives database access, raw project history, raw transcripts, credentials, or unbounded memory.
 - [ ] Token-efficiency tests distinguish measured prompt sizes from illustrative estimates and show reduced repeated context across representative launches.
+
+## Feature 007 Alignment
+
+Feature 007 supersedes any Feature 003 wording that implies a separate handoff wire format. Memory handoff data is carried as `memoryProposals` and `globalPromotionProposals` inside the universal `AgentResponseV1`, then persisted with Conduit-owned metadata in `ConduitResultRecordV1`. Agents still cannot activate memory or write project/global databases directly.

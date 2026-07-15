@@ -18,6 +18,26 @@ test("generated config round-trips built-in roles", () => {
   assert.match(parsed.roles.documentation.description!, /documentation/);
   assert.deepEqual(parsed.roles.qa.dependsOn, ["frontend", "backend"]);
   assert.deepEqual(parsed.roles.reviewer.dependsOn, ["qa", "documentation"]);
+  assert.equal(parsed.worktreeRoot, ".conduit/worktrees");
+  assert.equal(parsed.worktreeRetentionDays, 7);
+  assert.equal(parsed.runDiagnosticsRetentionDays, 30);
+});
+
+test("config preserves worktree root and retention", () => {
+  const parsed = parseConfig(
+    "version: 1\nspecsDir: specs\nstateDir: .state\nworktreeRoot: ../agent-worktrees\nworktreeRetentionDays: 14\nrunDiagnosticsRetentionDays: 21\nroles:\n",
+  );
+  assert.equal(parsed.worktreeRoot, "../agent-worktrees");
+  assert.equal(parsed.worktreeRetentionDays, 14);
+  assert.equal(parsed.runDiagnosticsRetentionDays, 21);
+});
+
+test("custom roles can override assignment semantics", () => {
+  const parsed = parseConfig(
+    "version: 1\nroles:\n  mobile:\n    roleKind: implementation\n    runner: codex\n    mode: subagent\n    skill:\n      source: builtin:frontend\n",
+  );
+  assert.equal(parsed.roles.mobile.roleKind, "implementation");
+  assert.match(serializeConfig(parsed), /roleKind: implementation/);
 });
 
 test("config preserves a role model override", () => {

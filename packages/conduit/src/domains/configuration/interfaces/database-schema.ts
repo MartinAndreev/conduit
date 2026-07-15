@@ -15,4 +15,11 @@ export interface GlobalProfilesTable {
 
 export interface ConfigurationDatabase {
   global_profiles: GlobalProfilesTable;
+  global_configuration_metadata: GlobalConfigurationMetadataTable;
+}
+
+export interface GlobalConfigurationMetadataTable {
+  key: string;
+  value_json: string;
+  updated_at: string;
 }

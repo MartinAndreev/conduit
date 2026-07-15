@@ -8,11 +8,14 @@ export type RunnerEventType =
   | "error"
   | "result";
 
+import type { RunnerEventProvenance } from "../enums/runner-event-provenance.js";
+
 export type LifecycleState =
   "starting" | "running" | "completed" | "failed" | "cancelled" | "unavailable";
 
 export interface RunnerEvent {
   readonly type: RunnerEventType;
+  readonly provenance: RunnerEventProvenance;
   readonly runId: string;
   readonly roleId: string;
   readonly timestamp: string;

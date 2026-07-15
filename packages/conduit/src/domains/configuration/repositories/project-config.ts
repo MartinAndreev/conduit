@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir, access, cp } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 import type { Config, RoleConfig } from "../types/config.js";
+import { AgentRoleKind } from "../../roles/enums/agent-role-kind.js";
 
 export const CONFIG_FILE = "conduit.yml" as const;
 
@@ -9,8 +10,12 @@ export const defaultConfig: Config = {
   version: 1,
   specsDir: "specs",
   stateDir: ".conduit",
+  worktreeRoot: ".conduit/worktrees",
+  worktreeRetentionDays: 7,
+  runDiagnosticsRetentionDays: 30,
   roles: {
     architect: {
+      roleKind: AgentRoleKind.Architect,
       description:
         "Turns a story into an approved, implementation-ready specification.",
       runner: "codex",
@@ -18,6 +23,7 @@ export const defaultConfig: Config = {
       skill: { source: "file:.conduit/roles/architect.md" },
     },
     researcher: {
+      roleKind: AgentRoleKind.Research,
       description:
         "Investigates the repository and reports evidence without changing code.",
       runner: "opencode",
@@ -26,6 +32,7 @@ export const defaultConfig: Config = {
       skill: { source: "file:.conduit/roles/researcher.md" },
     },
     frontend: {
+      roleKind: AgentRoleKind.Implementation,
       description:
         "Implements approved user-interface work within its owned paths.",
       runner: "opencode",
@@ -34,6 +41,7 @@ export const defaultConfig: Config = {
       skill: { source: "file:.conduit/roles/frontend.md" },
     },
     backend: {
+      roleKind: AgentRoleKind.Implementation,
       description: "Implements approved API, service, and data-contract work.",
       runner: "opencode",
       mode: "subagent",
@@ -41,6 +49,7 @@ export const defaultConfig: Config = {
       skill: { source: "file:.conduit/roles/backend.md" },
     },
     qa: {
+      roleKind: AgentRoleKind.QualityAssurance,
       description:
         "Converts approved cases into tests and reports reproducible defects.",
       runner: "opencode",
@@ -50,6 +59,7 @@ export const defaultConfig: Config = {
       skill: { source: "file:.conduit/roles/qa.md" },
     },
     documentation: {
+      roleKind: AgentRoleKind.Documentation,
       description:
         "Writes and verifies user, operator, and developer documentation.",
       runner: "opencode",
@@ -59,6 +69,7 @@ export const defaultConfig: Config = {
       skill: { source: "file:.conduit/roles/documentation.md" },
     },
     reviewer: {
+      roleKind: AgentRoleKind.Reviewer,
       description:
         "Independently checks the integrated change against the approved spec.",
       runner: "codex",
@@ -73,8 +84,11 @@ export const defaultConfig: Config = {
 export function serializeConfig(config: Config = defaultConfig): string {
   const lines = [
     "version: 1",
-    "specsDir: specs",
-    "stateDir: .conduit",
+    `specsDir: ${config.specsDir}`,
+    `stateDir: ${config.stateDir}`,
+    `worktreeRoot: ${config.worktreeRoot ?? path.posix.join(config.stateDir, "worktrees")}`,
+    `worktreeRetentionDays: ${config.worktreeRetentionDays ?? 7}`,
+    `runDiagnosticsRetentionDays: ${config.runDiagnosticsRetentionDays ?? 30}`,
     "roles:",
   ];
   for (const [name, role] of Object.entries(config.roles)) {
@@ -84,6 +98,7 @@ export function serializeConfig(config: Config = defaultConfig): string {
     lines.push(`    mode: ${role.mode}`);
     if (role.model) lines.push(`    model: ${role.model}`);
     if (role.effort) lines.push(`    effort: ${role.effort}`);
+    if (role.roleKind) lines.push(`    roleKind: ${role.roleKind}`);
     if (role.readOnly) lines.push("    readOnly: true");
     if (role.owns?.length) lines.push(`    owns: [${role.owns.join(", ")}]`);
     if (role.dependsOn?.length)

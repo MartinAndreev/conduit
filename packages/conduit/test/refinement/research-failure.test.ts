@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "bun:test";
 import type { RunnerEvent } from "@domains/runs/types/runner-events.js";
+import { RunnerEventProvenance } from "@domains/runs/enums/runner-event-provenance.js";
 import { formatResearchFailure } from "@tui/helpers/research-failure.js";
 
 test("research failure reports the structured launch cause and remediation", () => {
   const events: RunnerEvent[] = [
     {
       type: "error",
+      provenance: RunnerEventProvenance.ConduitObserved,
       runId: "run-17",
       roleId: "researcher",
       timestamp: "2026-07-15T10:00:00.000Z",
@@ -19,6 +21,7 @@ test("research failure reports the structured launch cause and remediation", () 
     },
     {
       type: "lifecycle",
+      provenance: RunnerEventProvenance.ConduitObserved,
       runId: "run-17",
       roleId: "researcher",
       timestamp: "2026-07-15T10:00:01.000Z",
@@ -43,6 +46,7 @@ test("research failure includes bounded stderr and exit code", () => {
   const events: RunnerEvent[] = [
     {
       type: "tool-output",
+      provenance: RunnerEventProvenance.ConduitObserved,
       runId: "run-18",
       roleId: "researcher",
       timestamp: "2026-07-15T10:00:00.000Z",
@@ -55,6 +59,7 @@ test("research failure includes bounded stderr and exit code", () => {
     },
     {
       type: "result",
+      provenance: RunnerEventProvenance.ConduitObserved,
       runId: "run-18",
       roleId: "researcher",
       timestamp: "2026-07-15T10:00:01.000Z",
@@ -78,6 +83,7 @@ test("research worktree hook failures are not reported as missing runners", () =
   const events: RunnerEvent[] = [
     {
       type: "error",
+      provenance: RunnerEventProvenance.ConduitObserved,
       runId: "run-19",
       roleId: "researcher",
       timestamp: "2026-07-15T10:00:00.000Z",

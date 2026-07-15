@@ -1,6 +1,53 @@
 import type { RunnerEvent } from "@domains/runs/types/runner-events.js";
 import type { RolePresentation } from "@tui/types/worker-monitor.js";
 
+const readOperationPattern =
+  /(?:^|\s)(?:cat|find|grep|head|less|ls|read|rg|sed|tail)(?:\s|$)/i;
+const writeOperationPattern =
+  /(?:apply_patch|(?:^|\s)(?:cp|mkdir|mv|rm|touch|write)(?:\s|$))/i;
+
+function operationPhase(operation: string): string {
+  if (writeOperationPattern.test(operation)) {
+    return "writing";
+  }
+  if (readOperationPattern.test(operation)) {
+    return "reading";
+  }
+  return "running";
+}
+
+export function activityPhaseForEvent(event: RunnerEvent): string {
+  const { payload } = event;
+  switch (payload.kind) {
+    case "lifecycle":
+      if (payload.state === "starting") {
+        return "starting";
+      }
+      return payload.state;
+    case "activity":
+      return "thinking";
+    case "tool-call":
+      return operationPhase(`${payload.tool} ${payload.args ?? ""}`);
+    case "tool-output":
+      return operationPhase(payload.tool);
+    case "file-change":
+    case "patch":
+      return "writing";
+    case "error":
+      return "failed";
+    case "result":
+      return payload.exitCode === 0 ? "completed" : "failed";
+  }
+}
+
+function bounded(value: string, maximum = 160): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maximum) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maximum - 1)}…`;
+}
+
 export function deriveRolePresentation(
   events: readonly RunnerEvent[],
   roleId: string,
@@ -22,15 +69,15 @@ export function deriveRolePresentation(
       state = "failed";
       isUnavailable = true;
     } else state = "working";
-    message = lastLifecycle.payload.message ?? lifecycleState;
+    message = activityPhaseForEvent(lastLifecycle);
   }
 
-  if (!isUnavailable) {
-    const lastActivity = [...roleEvents]
-      .reverse()
-      .find((e) => e.type === "activity");
-    if (lastActivity?.payload.kind === "activity") {
-      message = lastActivity.payload.message;
+  const terminal = state === "completed" || state === "failed";
+  if (!isUnavailable && !terminal) {
+    const latestEvent = roleEvents.at(-1);
+    if (latestEvent) {
+      state = "working";
+      message = activityPhaseForEvent(latestEvent);
     }
   }
 
@@ -49,19 +96,19 @@ export function formatEventDescription(event: RunnerEvent): string {
     case "lifecycle":
       return payload.message ?? `State: ${payload.state}`;
     case "activity":
-      return payload.message;
+      return bounded(payload.message);
     case "tool-call":
-      return `Called ${payload.tool}${payload.args ? `(${payload.args.slice(0, 60)})` : ""}`;
+      return `Called ${payload.tool}${payload.args ? `(${bounded(payload.args, 100)})` : ""}`;
     case "tool-output":
-      return `${payload.tool} → ${payload.output.slice(0, 80)}${payload.truncated ? "…" : ""}`;
+      return `${payload.tool} → ${bounded(payload.output, 120)}${payload.truncated ? "…" : ""}`;
     case "file-change":
       return `Changed ${payload.path} (+${payload.additions} -${payload.deletions})`;
     case "patch":
       return `Patch: ${payload.fileCount} files`;
     case "error":
-      return `[${payload.code}] ${payload.message}`;
+      return `[${payload.code}] ${bounded(payload.message)}`;
     case "result":
-      return `Exit ${payload.exitCode}: ${payload.summary}`;
+      return `Exit ${payload.exitCode}: ${bounded(payload.summary)}`;
   }
 }
 

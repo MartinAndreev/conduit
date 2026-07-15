@@ -3,6 +3,10 @@ import type { DatabaseConnection } from "@system/storage/interfaces/database.js"
 import type { ArchitectEventRepository } from "../interfaces/architect-event-repository.js";
 import type { RefinementDatabase } from "../interfaces/database-schema.js";
 import type { ArchitectEvent } from "../types/architect-event.js";
+import {
+  extractArchitectEvents,
+  normalizeArchitectEvents,
+} from "../helpers/architect-event-parser.js";
 
 export class TursoArchitectEventRepository implements ArchitectEventRepository {
   private readonly database;
@@ -18,14 +22,24 @@ export class TursoArchitectEventRepository implements ArchitectEventRepository {
       .where("feature_id", "=", featureId)
       .orderBy("sequence")
       .execute();
-    return rows.map((row) => ({
-      type: row.event_type as ArchitectEvent["type"],
-      timestamp: row.timestamp,
-      content: row.content,
-      ...(row.files_json
-        ? { files: JSON.parse(row.files_json) as string[] }
-        : {}),
-      ...(row.diff ? { diff: row.diff } : {}),
-    }));
+    const events = rows.flatMap((row) => {
+      const event: ArchitectEvent = {
+        type: row.event_type as ArchitectEvent["type"],
+        timestamp: row.timestamp,
+        content: row.content,
+        ...(row.files_json
+          ? { files: JSON.parse(row.files_json) as string[] }
+          : {}),
+        ...(row.diff ? { diff: row.diff } : {}),
+      };
+      if (event.type === "activity" && event.content.includes("\n")) {
+        const parsed = extractArchitectEvents(event.content, event.timestamp);
+        if (parsed.length > 0) {
+          return parsed;
+        }
+      }
+      return [event];
+    });
+    return normalizeArchitectEvents(events);
   }
 }

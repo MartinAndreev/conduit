@@ -17,7 +17,7 @@ Conduit uses two embedded Turso databases:
 | Scope   | Default location                                           | Owns                                                                                                                 |
 | ------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | Project | `<project>/.conduit/state.db`                              | Drafts, refinement state, run events, reviews, run snapshots/recovery, import history, and source-version primitives |
-| Global  | Platform application-data directory as `conduit/global.db` | Reusable global role profiles                                                                                        |
+| Global  | Platform application-data directory as `conduit/global.db` | Reusable global role profiles and non-secret configuration metadata                                                  |
 
 The project state directory can be changed by `stateDir` in `conduit.yml`.
 Global paths follow the operating system:
@@ -25,6 +25,36 @@ Global paths follow the operating system:
 - Linux: `${XDG_DATA_HOME:-~/.local/share}/conduit/global.db`
 - macOS: `~/Library/Application Support/conduit/global.db`
 - Windows: `${APPDATA}/conduit/global.db`
+
+## Runtime artifact lifecycle
+
+The resolved `stateDir` owns runtime data. Its internal `.gitignore` covers
+`runs/`, `cache/`, `assignments/`, worktree metadata, legacy archives, database
+files, WAL/SHM files, locks, and backups. This protection is generated inside
+the configured directory, so a custom value such as `.conduit-state` does not
+depend on root-level `.conduit` ignore rules.
+
+Writable agent worktrees use `worktreeRoot` (default
+`../.conduit-worktrees`). A run snapshot records the resolved root and each
+role's worktree. Terminal runs also write lifecycle metadata under
+`<stateDir>/worktree-metadata/`. Planning a later run removes terminal
+worktrees older than `worktreeRetentionDays` (default 7). Raw, secret-redacted
+run diagnostics are removed after `runDiagnosticsRetentionDays` (default 30),
+while validated result records remain available.
+
+Storage boundaries are deliberate:
+
+- the project database owns canonical semantic events, validated results,
+  refinement state, and recovery metadata;
+- `<stateDir>/runs/` owns bounded raw diagnostics with a TTL; and
+- Git owns approved human-readable feature artifacts only.
+
+Recovery snapshots omit duplicate prompt and context bodies. Research Markdown
+is rendered from the canonical validated database report instead of being
+stored a second time under the run directory. Refinement revisions store
+normalized architect events and bounded patch evidence rather than a complete
+transcript or transcript preview. File-backed refinement revisions likewise do
+not copy raw architect transcripts into `specs/`.
 
 The database stack has four layers:
 
@@ -477,23 +507,30 @@ Do not add raw domain queries when Kysely can express the operation.
 - feature research reports; and
 - refinement revisions, questions, answers, and architect transcripts.
 
-Each source path and content checksum is recorded in `import_ledger`. An
-unchanged successful import is skipped. Changed input is imported again.
-Invalid input records a redacted failure and remains on disk. Import never
-deletes legacy files and never copies intermediate state into `specs/`.
+Each source path and content checksum is recorded in `import_ledger`. A
+successful source is a one-time import and is never imported again under the
+same logical path. Successfully imported runtime files are moved under
+`<stateDir>/legacy-archive/`; invalid input records a redacted failure and
+remains in place for explicit repair. Legacy packet files under `specs/` are
+left in Git and the ledger remains authoritative for their import state.
 
 When adding a legacy importer:
 
 1. run it only after its destination schema exists;
 2. pass all text through `redactSecrets` or `redactPersistedValue`;
 3. use the import ledger for idempotency;
-4. keep the original file; and
+4. archive successfully imported runtime files; and
 5. test invalid input and repeated startup.
 
 ## Security contract
 
 Database storage is not a credential store. Provider credentials stay in the
-OS vault or encrypted fallback store.
+OS vault when one is available. The encrypted fallback stores
+`credentials.vault` and its key beside one another with user-only filesystem
+permissions. That fallback prevents accidental plaintext disclosure but is
+only obfuscation-at-rest: compromise of the user account or configuration
+directory exposes both key and ciphertext. It is not equivalent to an
+OS-bound vault or a user-supplied secret.
 
 Before persisting text or structured values:
 

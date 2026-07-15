@@ -83,6 +83,9 @@ importers:
       react:
         specifier: ^19.2.7
         version: 19.2.7
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
     optionalDependencies:
       '@tursodatabase/database-darwin-arm64':
         specifier: 0.7.0
