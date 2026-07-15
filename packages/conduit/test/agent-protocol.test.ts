@@ -382,6 +382,28 @@ test("blocked and needs_input require structured sections", () => {
   );
 });
 
+test("architect clarification completes semantically without a run-state artifact claim", () => {
+  const response: AgentResponseV1 = {
+    ...base,
+    status: "needs_input",
+    questions: [
+      {
+        question: "Which progression model should the game use?",
+        whyItMatters: "The choice changes persistence and level transitions.",
+        context: "The approved story does not select a model.",
+        options: ["Linear unlocks", "Independent levels"],
+        smallestUnblocker: "Choose one progression model.",
+      },
+    ],
+  };
+  const result = validateAgentResponseForAssignment(response, {
+    roleKind: AgentRoleKind.Architect,
+    ownedPaths: ["specs"],
+  });
+  assert.equal(result.valid, true);
+  assert.deepEqual(response.artifacts, []);
+});
+
 test("agent process environment removes database configuration", () => {
   const env = agentProcessEnvironment({
     TURSO_DATABASE_URL: "x",

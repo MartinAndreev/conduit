@@ -37,7 +37,7 @@ export function ArchitectActivity({
   const latestTime = latest
     ? new Date(latest.timestamp).toLocaleTimeString()
     : undefined;
-  const currentMessage = architectCurrentActivity(featureId, latest?.content);
+  const currentMessage = architectCurrentActivity(featureId, latest);
   return (
     <box
       width="100%"
