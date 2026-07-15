@@ -1,11 +1,6 @@
 import type { Theme } from "@tui/theme.js";
-
-export interface RefinementPacketContent {
-  readonly spec: string;
-  readonly plan: string;
-  readonly tasks: string;
-  readonly testCases: string;
-}
+import { MarkdownDocument } from "@tui/components/MarkdownDocument.js";
+import type { RefinementPacketContent } from "@tui/types/refinement.js";
 
 export function RefinementPacketSummary({
   theme,
@@ -14,6 +9,17 @@ export function RefinementPacketSummary({
   theme: Theme;
   content: RefinementPacketContent;
 }) {
+  const markdown = [
+    content.story,
+    content.spec,
+    content.plan,
+    content.tasks,
+    content.testCases,
+  ]
+    .map((section) => section.trim())
+    .filter(Boolean)
+    .join("\n\n---\n\n");
+
   return (
     <box
       width="100%"
@@ -53,15 +59,8 @@ export function RefinementPacketSummary({
         padding={1}
         backgroundColor={theme.surface.raised}
       >
-        <text
-          content={
-            content.spec ||
-            content.plan ||
-            content.tasks ||
-            content.testCases ||
-            "No approved packet content found."
-          }
-          fg={theme.text.default}
+        <MarkdownDocument
+          content={markdown || "No approved packet content found."}
         />
       </box>
     </box>

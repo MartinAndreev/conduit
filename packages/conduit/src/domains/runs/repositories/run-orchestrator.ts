@@ -10,6 +10,7 @@ import type { RunEventRepository } from "../interfaces/run-event-repository.js";
 import type { RunProcessRegistry } from "./run-process-registry.js";
 import { localSpecKitRoleContract } from "@domains/features/providers/local-spec-kit-role-contract.js";
 import { redactSecrets } from "@system/storage/security/secret-redaction.js";
+import { configureFinalOutputCapture } from "@system/runners/registry.js";
 
 interface RunnerAdapter {
   command: string;
@@ -310,13 +311,19 @@ function runProcess(
   };
 
   return new Promise((resolve) => {
-    const child = spawn(role.command, role.args, {
+    const args = configureFinalOutputCapture(
+      role.runner,
+      role.args,
+      role.finalOutputFile,
+    );
+    const child = spawn(role.command, args, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32",
       env: agentProcessEnvironment(),
     });
     let output = "";
+    let stdout = "";
     let cancelled = false;
     let previousFiles = "";
     const abortController = new AbortController();
@@ -399,6 +406,7 @@ function runProcess(
       const sanitizedChunk = redactSecrets(String(chunk));
       const transcript = sanitizedChunk.trim();
       output += sanitizedChunk;
+      stdout += sanitizedChunk;
       onProgress(
         transcript
           ? `${role.name}: ${transcript.replace(/\s+/g, " ").slice(0, 100)}`
@@ -458,6 +466,7 @@ function runProcess(
         status: "failed",
         error: redactSecrets(error.message),
         output,
+        stdout,
       });
     });
     child.on("close", async (code: number | null) => {
@@ -536,6 +545,7 @@ function runProcess(
         status,
         exitCode: code ?? undefined,
         output,
+        stdout,
         files,
       });
     });

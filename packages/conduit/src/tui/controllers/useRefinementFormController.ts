@@ -9,6 +9,7 @@ export function useRefinementFormController(
   fields: readonly DraftField[],
   initialValues: Record<string, string>,
   onSubmit: (values: Record<string, string>) => void,
+  onValuesChange: (values: Record<string, string>) => void,
   onCancel: () => void,
   enabled: boolean,
 ): RefinementFormViewModel {
@@ -66,12 +67,23 @@ export function useRefinementFormController(
       values,
       cursorPosition,
       setActiveValue: (value: string) => {
-        if (activeField)
-          setValues((current) => ({ ...current, [activeField.name]: value }));
+        if (activeField) {
+          const next = { ...values, [activeField.name]: value };
+          setValues(next);
+          onValuesChange(next);
+        }
       },
       submit: () => onSubmit(values),
       tip,
     }),
-    [activeField, activeFieldIndex, values, cursorPosition, tip],
+    [
+      activeField,
+      activeFieldIndex,
+      values,
+      cursorPosition,
+      tip,
+      onSubmit,
+      onValuesChange,
+    ],
   );
 }

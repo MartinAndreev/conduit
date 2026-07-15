@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useReducer } from "react";
+import { useState, useEffect, useCallback, useReducer, useRef } from "react";
 import { useKeyboard } from "@opentui/react";
 import type { CommandBus } from "@system/bus/command-bus.js";
 import type { QueryBus } from "@system/bus/query-bus.js";
@@ -28,6 +28,13 @@ import type {
   RefinementControllerState,
   RefinementView,
 } from "@tui/types/refinement.js";
+import type { RunnerEvent } from "@domains/runs/types/runner-events.js";
+import { formatResearchFailure } from "@tui/helpers/research-failure.js";
+import { createSerialTaskQueue } from "@helpers/async/serial-task-queue.js";
+import {
+  refinementApprovalRoute,
+  refinementResumeView,
+} from "@tui/helpers/refinement-resume.js";
 
 export const REFINEMENT_FIELDS: readonly DraftField[] = [
   {
@@ -141,7 +148,7 @@ export function useRefinementController(
   }, []);
   const [values, setValues] = useState<Record<string, string>>({});
   const [architectEnabled, setArchitectEnabled] = useState(false);
-  const [researchEnabled, setResearchEnabled] = useState(false);
+  const [researchRequested, setResearchRequested] = useState(false);
   const [architectPreferences, setArchitectPreferences] =
     useState<ArchitectPreferences>(DEFAULT_ARCHITECT_PREFERENCES);
   const [packetContent, setPacketContent] =
@@ -152,9 +159,13 @@ export function useRefinementController(
   );
   const [researchReport, setResearchReport] = useState<string | null>(null);
   const [researchRunId, setResearchRunId] = useState<string | null>(null);
+  const draftSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftSaveQueue = useRef(createSerialTaskQueue()).current;
 
   const loadData = useCallback(async () => {
     let hasPacket = false;
+    let hasResearch = false;
+    let restoredRevision: RefinementRevision | null = null;
     try {
       const featureResult = await queryBus.execute({
         type: "getFeature",
@@ -212,12 +223,45 @@ export function useRefinementController(
           });
         }
       }
+
+      const researchResult = await queryBus.execute({
+        type: "getResearchReport",
+        featureId,
+      });
+      if (researchResult.success) {
+        const report = (researchResult.data as { report: string | null })
+          .report;
+        if (report?.trim()) {
+          hasResearch = true;
+          setResearchReport(report);
+        }
+      }
+
+      const revisionResult = await queryBus.execute({
+        type: "getRefinementRevision",
+        featureId,
+      });
+      if (revisionResult.success) {
+        const data = revisionResult.data as {
+          revision: RefinementRevision | null;
+          questions: readonly ClarificationQuestion[];
+        };
+        restoredRevision = data.revision;
+        setRevision(data.revision);
+        setQuestions(data.questions);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       dispatchLifecycle({
         type: "loaded",
-        view: hasPacket ? "packet" : "form",
+        view: refinementResumeView({
+          hasPacket,
+          hasResearch,
+          ...(restoredRevision
+            ? { revisionStatus: restoredRevision.status }
+            : {}),
+        }),
       });
     }
   }, [queryBus, featureId]);
@@ -243,6 +287,7 @@ export function useRefinementController(
     if (!result.success) return;
     setPacketContent(
       result.data as {
+        story: string;
         spec: string;
         plan: string;
         tasks: string;
@@ -265,35 +310,72 @@ export function useRefinementController(
     });
   }, []);
 
-  const saveDraft = useCallback(async () => {
-    try {
-      const story = buildStory(values);
-      const result = await commandBus.dispatch({
-        type: "saveDraft",
-        featureId,
-        story,
-        testCases: values.testCases ?? "",
-        ...(draft?.version === undefined
-          ? {}
-          : { expectedVersion: draft.version }),
-      });
-      if (result.success) {
+  const persistDraft = useCallback(
+    async (formValues: Record<string, string>) => {
+      try {
+        const story = buildStory(formValues);
+        const result = await commandBus.dispatch({
+          type: "saveDraft",
+          featureId,
+          story,
+          testCases: formValues.testCases ?? "",
+        });
+        if (!result.success) {
+          setError(result.error.message);
+          return false;
+        }
         const refreshed = await queryBus.execute({
           type: "getDraft",
           featureId,
         });
         if (refreshed.success)
           setDraft((refreshed.data as { draft: RefinementDraft | null }).draft);
+        return true;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+        return false;
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [commandBus, queryBus, featureId, values, buildStory, draft?.version]);
+    },
+    [buildStory, commandBus, featureId, queryBus, setError],
+  );
 
-  const submitForm = useCallback((formValues: Record<string, string>) => {
-    setValues(formValues);
-    setView("preview");
-  }, []);
+  const saveDraft = useCallback(
+    (formValues = values) => draftSaveQueue(() => persistDraft(formValues)),
+    [draftSaveQueue, persistDraft, values],
+  );
+
+  const updateValues = useCallback(
+    (formValues: Record<string, string>) => {
+      setValues(formValues);
+      if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current);
+      draftSaveTimer.current = setTimeout(() => {
+        draftSaveTimer.current = null;
+        void saveDraft(formValues);
+      }, 500);
+    },
+    [saveDraft],
+  );
+
+  useEffect(
+    () => () => {
+      if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current);
+    },
+    [],
+  );
+
+  const submitForm = useCallback(
+    (formValues: Record<string, string>) => {
+      if (draftSaveTimer.current) {
+        clearTimeout(draftSaveTimer.current);
+        draftSaveTimer.current = null;
+      }
+      setValues(formValues);
+      void saveDraft(formValues).then((saved) => {
+        if (saved) setView("preview");
+      });
+    },
+    [saveDraft, setView],
+  );
 
   const startResearch = useCallback(() => {
     const story = buildStory(values);
@@ -321,17 +403,7 @@ export function useRefinementController(
       });
       if (!eventsResult.success || disposed) return;
       const data = eventsResult.data as {
-        events: readonly {
-          roleId: string;
-          type: string;
-          payload: {
-            kind: string;
-            state?: string;
-            message?: string;
-            exitCode?: number;
-            code?: string;
-          };
-        }[];
+        events: readonly RunnerEvent[];
       };
       const reportError = [...data.events]
         .reverse()
@@ -344,8 +416,9 @@ export function useRefinementController(
         );
       if (reportError) {
         setError(
-          reportError.payload.message ??
-            "Researcher completed without a report artifact.",
+          reportError.payload.kind === "error"
+            ? reportError.payload.message
+            : "Researcher completed without a report artifact.",
         );
         return;
       }
@@ -363,10 +436,11 @@ export function useRefinementController(
         );
       if (!terminal) return;
       const completed =
-        terminal.payload.state === "completed" ||
+        (terminal.payload.kind === "lifecycle" &&
+          terminal.payload.state === "completed") ||
         (terminal.payload.kind === "result" && terminal.payload.exitCode === 0);
       if (!completed) {
-        setError(terminal.payload.message ?? "Researcher did not complete.");
+        setError(formatResearchFailure(data.events, researchRunId));
         return;
       }
       const reportResult = await queryBus.execute({
@@ -377,6 +451,7 @@ export function useRefinementController(
       const report = (reportResult.data as { report: string | null }).report;
       if (!report) return;
       setResearchReport(report);
+      setResearchRequested(false);
       setView("researchReview");
     };
     void poll();
@@ -402,9 +477,25 @@ export function useRefinementController(
         return;
       }
 
-      if (architectEnabled && researchEnabled) {
+      const discardResult = await commandBus.dispatch({
+        type: "discardDraft",
+        featureId,
+      });
+      if (!discardResult.success) {
+        setError(
+          `The packet was approved, but its recoverable draft could not be cleared: ${discardResult.error.message}`,
+        );
+        return;
+      }
+      setDraft(null);
+
+      const approvalRoute = refinementApprovalRoute({
+        architectRequested: architectEnabled,
+        researchRerunRequested: researchRequested,
+      });
+      if (approvalRoute === "research") {
         startResearch();
-      } else if (architectEnabled) {
+      } else if (approvalRoute === "architect") {
         dispatchLifecycle({ type: "startArchitect" });
         void commandBus
           .dispatch({
@@ -442,7 +533,7 @@ export function useRefinementController(
     featureId,
     values,
     architectEnabled,
-    researchEnabled,
+    researchRequested,
     architectPreferences,
     buildStory,
     onExit,
@@ -463,7 +554,7 @@ export function useRefinementController(
     setArchitectEnabled((prev) => !prev);
   }, []);
   const toggleResearch = useCallback(() => {
-    setResearchEnabled((prev) => !prev);
+    setResearchRequested((prev) => !prev);
   }, []);
   const cycleArchitectPreference = useCallback(
     (kind: "effort" | "detailLevel") => {
@@ -599,7 +690,7 @@ export function useRefinementController(
       loading,
       error,
       architectEnabled,
-      researchEnabled,
+      researchRequested,
       architectPreferences,
       architectLifecycle,
       architectRunning,
@@ -611,7 +702,7 @@ export function useRefinementController(
     },
     {
       setView,
-      setValues,
+      setValues: updateValues,
       saveDraft,
       submitForm,
       approvePreview,

@@ -22,5 +22,6 @@ export interface ClarificationQuestion {
   readonly id: string;
   readonly question: string;
   readonly context?: string;
+  readonly unblocker?: string;
   readonly options: readonly string[];
 }

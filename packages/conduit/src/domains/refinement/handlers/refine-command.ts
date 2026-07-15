@@ -141,12 +141,14 @@ export async function runArchitect({
         `--- Architect pass ${new Date().toISOString()} ---\n\n${transcript}`,
       );
       if (code === 0) resolve({ logFile });
-      else
+      else {
+        const detail = transcript.trim().slice(-2_000);
         reject(
           new Error(
-            `Codex architect run failed with exit code ${code}. Full log: ${logFile}`,
+            `Codex architect run failed with exit code ${code}.${detail ? `\n\n${detail}` : ""}\n\nFull log: ${logFile}`,
           ),
         );
+      }
     });
   });
 }

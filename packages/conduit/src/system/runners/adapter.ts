@@ -9,6 +9,10 @@ export interface RunnerAdapter {
   readonly command: string;
   checkAvailability(): Promise<RunnerAvailability>;
   buildArgs(promptFile: string, model?: string): readonly string[];
+  configureFinalOutputCapture?(
+    args: readonly string[],
+    outputFile: string,
+  ): readonly string[];
   parseOutput(
     raw: string,
     runId: string,

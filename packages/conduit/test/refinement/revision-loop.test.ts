@@ -141,3 +141,43 @@ test("architect clarification and packet review keep an auditable revision histo
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("failed architect startup is persisted for research resume", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "conduit-architect-fail-"));
+  const feature = {
+    id: "001",
+    directory: path.join(root, "specs", "001-failed-architect"),
+  };
+  try {
+    await mkdir(feature.directory, { recursive: true });
+    const repository = new FileRefinementRevisionRepository();
+    const start = createStartArchitectRefinementHandler({
+      projectRoot: root,
+      loadConfig: async () => config,
+      findFeature: async () => feature,
+      refinementPrompt: () => "refine",
+      revisionRepository: repository,
+      runArchitect: async () => {
+        throw new Error("runner unavailable");
+      },
+    });
+
+    const result = await start({
+      type: "startArchitectRefinement",
+      featureId: "001",
+      story: "A researched story",
+    });
+
+    assert.equal(result.success, false);
+    assert.equal((await repository.getLatest(feature))?.status, "failed");
+    assert.match(
+      await readFile(
+        path.join(feature.directory, "revisions", "001", "architect-run.md"),
+        "utf8",
+      ),
+      /analysis/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

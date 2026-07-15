@@ -22,6 +22,7 @@ export interface RunRole {
   status: RunStatus;
   worktree?: string;
   worktreePromptFile?: string;
+  finalOutputFile?: string;
 }
 
 export interface Run {
@@ -38,6 +39,7 @@ export interface RunResult {
   exitCode?: number;
   error?: string;
   output?: string;
+  stdout?: string;
   files?: string[];
   command?: string[];
 }

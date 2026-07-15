@@ -22,6 +22,21 @@ export class CodexAdapter implements RunnerAdapter {
     return args;
   }
 
+  configureFinalOutputCapture(
+    args: readonly string[],
+    outputFile: string,
+  ): readonly string[] {
+    const promptArgument = args.at(-1);
+    if (!promptArgument)
+      throw new Error("Could not configure Codex final-output capture.");
+    return [
+      ...args.slice(0, -1),
+      "--output-last-message",
+      outputFile,
+      promptArgument,
+    ];
+  }
+
   parseOutput(
     raw: string,
     runId: string,

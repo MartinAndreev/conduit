@@ -7,7 +7,8 @@ interface RefinementPreviewProps {
   theme: Theme;
   values: Record<string, string>;
   architectEnabled: boolean;
-  researchEnabled: boolean;
+  researchAvailable: boolean;
+  researchRequested: boolean;
   architectPreferences: ArchitectPreferences;
 }
 
@@ -15,7 +16,8 @@ export function RefinementPreview({
   theme,
   values,
   architectEnabled,
-  researchEnabled,
+  researchAvailable,
+  researchRequested,
   architectPreferences,
 }: RefinementPreviewProps) {
   const markdown = [
@@ -82,8 +84,22 @@ export function RefinementPreview({
         <box flexDirection="row">
           <text content="Research [s]: " fg={theme.text.muted} />
           <text
-            content={researchEnabled ? "ON (preflight)" : "OFF"}
-            fg={researchEnabled ? theme.action.attention : theme.text.muted}
+            content={
+              researchRequested
+                ? researchAvailable
+                  ? "RERUN ON"
+                  : "ON (preflight)"
+                : researchAvailable
+                  ? "AVAILABLE (s rerun)"
+                  : "OFF"
+            }
+            fg={
+              researchRequested
+                ? theme.action.attention
+                : researchAvailable
+                  ? theme.action.primary
+                  : theme.text.muted
+            }
           />
         </box>
         <box flexDirection="row">
@@ -119,9 +135,11 @@ export function RefinementPreview({
         <text
           content={
             architectEnabled
-              ? researchEnabled
+              ? researchRequested
                 ? "Approve: research preflight, then architect"
-                : "Approve: start architect"
+                : researchAvailable
+                  ? "Approve: start architect with saved research"
+                  : "Approve: start architect"
               : "Approve: save refinement"
           }
           fg={theme.text.muted}
