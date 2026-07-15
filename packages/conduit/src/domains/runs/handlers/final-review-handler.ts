@@ -18,6 +18,9 @@ import {
   commandForRole,
 } from "../repositories/run-orchestrator.js";
 import { redactSecrets } from "@system/storage/security/secret-redaction.js";
+import { agentResponseContractPrompt } from "../assets/agent-response-contract.js";
+import { parseAgentResponseV1 } from "../validation/agent-response-validator.js";
+import { validateAgentResponseForAssignment } from "../validation/agent-semantic-validator.js";
 
 export interface FinalReviewDependencies {
   loadConfig: (projectRoot: string) => Promise<Config>;
@@ -64,19 +67,9 @@ ${diffSections}
 5. Reject for any material correctness, security, reliability, performance, maintainability, compatibility, operability, or verification concern. Approve only when every material requirement is independently verified.
 6. Do not add speculative findings. Findings must be grounded in the supplied packet, diff, or directly implied behavior.
 
-Respond in this exact JSON format:
-{
-  "decision": "approved" or "rejected",
-  "findings": [
-    {
-      "severity": "info" | "warning" | "error",
-      "file": "path/to/file.ts",
-      "line": 42,
-      "message": "Description of the finding"
-    }
-  ],
-  "followUp": "Concrete verification or remediation required before approval, or null"
-}`;
+${agentResponseContractPrompt()}
+
+Reviewer-specific requirements: set verdict.decision to approved or rejected. Put review findings in findings with path and line when applicable. Do not include a separate review_result format.`;
 }
 
 async function readApprovedPacket(directory: string): Promise<string> {
@@ -108,45 +101,40 @@ function parseReviewOutput(output: string): {
   findings: ReviewFinding[];
   followUp: string | undefined;
 } {
-  try {
-    // Try to extract JSON from the output
-    const jsonMatch = output.match(/\{[\s\S]*"decision"[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]) as {
-        decision: string;
-        findings?: Array<{
-          severity: string;
-          file?: string;
-          line?: number;
-          message: string;
-        }>;
-        followUp?: string | null;
-      };
-      const decision: ReviewDecision =
-        parsed.decision === "approved" ? "approved" : "rejected";
-      const findings: ReviewFinding[] = (parsed.findings ?? []).map((f) => ({
-        severity:
-          f.severity === "error"
-            ? "error"
-            : f.severity === "warning"
-              ? "warning"
-              : "info",
-        file: f.file,
-        line: f.line,
-        message: f.message,
-      }));
-      return { decision, findings, followUp: parsed.followUp ?? undefined };
-    }
-  } catch {
-    // Fall through to default
+  const structural = parseAgentResponseV1(output);
+  if (!structural.valid || !structural.value) {
+    return {
+      decision: "rejected",
+      findings: [
+        {
+          severity: "warning",
+          message: `Reviewer did not return valid AgentResponseV1: ${structural.issues.map((item) => `${item.path}: ${item.message}`).join("; ")}`,
+        },
+      ],
+      followUp: "Reviewer must return exactly one valid AgentResponseV1 JSON object.",
+    };
   }
-  // Default to rejected if parsing fails
+  const semantic = validateAgentResponseForAssignment(structural.value, {
+    roleKind: "reviewer",
+    ownedPaths: [],
+  });
+  const findings: ReviewFinding[] = structural.value.findings.map((finding) => ({
+    severity: finding.severity === "critical" ? "error" : finding.severity,
+    file: finding.path,
+    line: finding.line,
+    message: finding.message,
+  }));
+  if (!semantic.valid) {
+    findings.push({
+      severity: "warning",
+      message: `Reviewer response failed semantic policy: ${semantic.issues.map((item) => `${item.path}: ${item.message}`).join("; ")}`,
+    });
+  }
+  const approved = semantic.valid && structural.value.status === "completed" && structural.value.verdict?.decision === "approved";
   return {
-    decision: "rejected",
-    findings: [
-      { severity: "warning", message: "Could not parse review output" },
-    ],
-    followUp: "Manual review required",
+    decision: approved ? "approved" : "rejected",
+    findings,
+    followUp: approved ? undefined : (structural.value.verdict?.rationale ?? "Manual review required"),
   };
 }
 

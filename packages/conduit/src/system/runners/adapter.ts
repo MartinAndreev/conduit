@@ -1,4 +1,5 @@
 import type { RunnerEvent } from "../../domains/runs/types/runner-events.js";
+import type { RunnerOutputParser } from "./jsonl-parser.js";
 
 export type RunnerAvailability =
   | { readonly available: true }
@@ -13,6 +14,8 @@ export interface RunnerAdapter {
     args: readonly string[],
     outputFile: string,
   ): readonly string[];
+  readonly supportsNativeJsonSchema?: boolean;
+  createOutputParser?(runId: string, roleId: string): RunnerOutputParser;
   parseOutput(
     raw: string,
     runId: string,

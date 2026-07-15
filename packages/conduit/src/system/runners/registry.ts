@@ -22,3 +22,12 @@ export function configureFinalOutputCapture(
     ? adapter.configureFinalOutputCapture(args, outputFile)
     : args;
 }
+
+
+export function runnerAdapter(runner: string): RunnerAdapter | undefined {
+  return adapters[runner];
+}
+
+export function supportedRunners(): readonly string[] {
+  return Object.keys(adapters);
+}

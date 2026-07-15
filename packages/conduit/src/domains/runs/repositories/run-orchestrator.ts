@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcess, SpawnSyncReturns } from "node:child_process";
@@ -9,21 +9,11 @@ import type { RunnerEvent } from "../types/runner-events.js";
 import type { RunEventRepository } from "../interfaces/run-event-repository.js";
 import type { RunProcessRegistry } from "./run-process-registry.js";
 import { localSpecKitRoleContract } from "@domains/features/providers/local-spec-kit-role-contract.js";
+import { agentResponseContractPrompt } from "../assets/agent-response-contract.js";
 import { redactSecrets } from "@system/storage/security/secret-redaction.js";
-import { configureFinalOutputCapture } from "@system/runners/registry.js";
-
-interface RunnerAdapter {
-  command: string;
-  beforeModel: string[];
-  afterModel: string[];
-}
-
-const runnerAdapters: Record<string, RunnerAdapter> = {
-  opencode: { command: "opencode", beforeModel: ["run"], afterModel: [] },
-  codex: { command: "codex", beforeModel: ["exec"], afterModel: [] },
-  pi: { command: "pi", beforeModel: [], afterModel: ["-p"] },
-  kilo: { command: "kilo", beforeModel: ["run"], afterModel: [] },
-};
+import { configureFinalOutputCapture, runnerAdapter, supportedRunners } from "@system/runners/registry.js";
+import { parseAgentResponseV1 } from "../validation/agent-response-validator.js";
+import { roleKindForRole, validateAgentResponseForAssignment } from "../validation/agent-semantic-validator.js";
 
 const databaseEnvironmentKey =
   /^(?:TURSO_|LIBSQL_|DATABASE_(?:URL|TOKEN)$|CONDUIT_DB)/i;
@@ -46,20 +36,17 @@ export function commandForRole(
   },
   promptFile: string,
 ): [string, string[]] {
-  const adapter = runnerAdapters[role.runner];
+  const adapter = runnerAdapter(role.runner);
   if (!adapter)
     throw new Error(
-      `Unsupported runner: ${role.runner}. Supported runners: ${Object.keys(runnerAdapters).join(", ")}.`,
+      `Unsupported runner: ${role.runner}. Supported runners: ${supportedRunners().join(", ")}.`,
     );
-  const model = role.model ? ["--model", role.model] : [];
-  const effort = role.effort
-    ? ` Requested reasoning effort: ${role.effort}.`
-    : "";
-  const prompt = `Read ${promptFile} and perform only your assigned task.${effort}`;
-  return [
-    adapter.command,
-    [...adapter.beforeModel, ...model, ...adapter.afterModel, prompt],
-  ];
+  const args = [...adapter.buildArgs(promptFile, role.model)];
+  if (role.effort && args.length) {
+    const last = args[args.length - 1];
+    args[args.length - 1] = `${last} Requested reasoning effort: ${role.effort}.`;
+  }
+  return [adapter.command, args];
 }
 
 function pathsOverlap(left: string[] = [], right: string[] = []): boolean {
@@ -119,7 +106,7 @@ export async function planRun({
     const promptFile = path.join(runDir, `${name}.md`);
     const roleDependencies = role.dependsOn ?? [];
     const prompt = redactSecrets(
-      `${localSpecKitRoleContract(name, role.effort)}\n\n# Project role guidance (advisory)\n\n${skill.content}\n\n# Assignment (authoritative)\n\nFeature: ${featureId}\nRead the approved files in specs/${featureId}-*/ before changing code.\nOwned paths: ${(role.owns ?? ["none defined"]).join(", ")}\nRun dependencies: ${roleDependencies.length ? roleDependencies.join(", ") : "none"}\nDo not modify contracts or paths outside your ownership.\nReport tests run and unresolved integration risks.\n\nThe system role contract and assignment take precedence over project role guidance.`,
+      `${localSpecKitRoleContract(name, role.effort)}\n\n# Project role guidance (advisory)\n\n${skill.content}\n\n# Assignment (authoritative)\n\nFeature: ${featureId}\nRead the approved files in specs/${featureId}-*/ before changing code.\nOwned paths: ${(role.owns ?? ["none defined"]).join(", ")}\nRun dependencies: ${roleDependencies.length ? roleDependencies.join(", ") : "none"}\nDo not modify contracts or paths outside your ownership.\nReport tests run and unresolved integration risks.\n\n${agentResponseContractPrompt()}\n\nThe system role contract and assignment take precedence over project role guidance.`,
     );
     await writeFile(promptFile, prompt);
     const [command, args] = commandForRole(role, promptFile);
@@ -137,6 +124,7 @@ export async function planRun({
       args,
       skillSource: skill.source,
       status: "planned",
+      finalOutputFile: path.join(runDir, `${name}-agent-response.json`),
     });
   }
   assertDistinctOwnership(roles);
@@ -189,10 +177,9 @@ async function writeWorktreePrompt(
   run: Run,
   role: RunRole,
 ): Promise<void> {
+  const assignmentDir = path.join(cwd, ".conduit", "assignments");
   const promptFile = path.join(
-    cwd,
-    ".conduit",
-    "assignments",
+    assignmentDir,
     `${run.id}-${role.name}.md`,
   );
   await mkdir(path.dirname(promptFile), { recursive: true });
@@ -201,6 +188,7 @@ async function writeWorktreePrompt(
   role.command = command;
   role.args = args;
   role.worktreePromptFile = promptFile;
+  role.finalOutputFile = path.join(assignmentDir, `${run.id}-${role.name}-agent-response.json`);
 }
 
 function terminate(child: ChildProcess): void {
@@ -324,6 +312,9 @@ function runProcess(
     });
     let output = "";
     let stdout = "";
+    const adapter = runnerAdapter(role.runner);
+    const stdoutParser = adapter?.createOutputParser?.(runId, role.name);
+    const stderrParser = adapter?.createOutputParser?.(runId, role.name);
     let cancelled = false;
     let previousFiles = "";
     const abortController = new AbortController();
@@ -412,18 +403,21 @@ function runProcess(
           ? `${role.name}: ${transcript.replace(/\s+/g, " ").slice(0, 100)}`
           : `${role.name}: working`,
       );
-      void emitEvent({
-        type: "tool-output",
-        runId,
-        roleId: role.name,
-        timestamp: new Date().toISOString(),
-        payload: {
-          kind: "tool-output",
-          tool: "runner stdout",
-          output: transcript.slice(0, 4_000),
-          truncated: transcript.length > 4_000,
-        },
-      });
+      const parsedEvents = stdoutParser?.push(sanitizedChunk) ?? [];
+      if (parsedEvents.length) for (const event of parsedEvents) void emitEvent(event);
+      else
+        void emitEvent({
+          type: "tool-output",
+          runId,
+          roleId: role.name,
+          timestamp: new Date().toISOString(),
+          payload: {
+            kind: "tool-output",
+            tool: "runner stdout",
+            output: transcript.slice(0, 4_000),
+            truncated: transcript.length > 4_000,
+          },
+        });
     });
     child.stderr?.on("data", (chunk: Buffer | string) => {
       const sanitizedChunk = redactSecrets(String(chunk));
@@ -434,18 +428,21 @@ function runProcess(
           ? `${role.name}: ${transcript.replace(/\s+/g, " ").slice(0, 100)}`
           : `${role.name}: working`,
       );
-      void emitEvent({
-        type: "tool-output",
-        runId,
-        roleId: role.name,
-        timestamp: new Date().toISOString(),
-        payload: {
-          kind: "tool-output",
-          tool: "runner stderr",
-          output: transcript.slice(0, 4_000),
-          truncated: transcript.length > 4_000,
-        },
-      });
+      const parsedEvents = stderrParser?.push(sanitizedChunk) ?? [];
+      if (parsedEvents.length) for (const event of parsedEvents) void emitEvent(event);
+      else
+        void emitEvent({
+          type: "tool-output",
+          runId,
+          roleId: role.name,
+          timestamp: new Date().toISOString(),
+          payload: {
+            kind: "tool-output",
+            tool: "runner stderr",
+            output: transcript.slice(0, 4_000),
+            truncated: transcript.length > 4_000,
+          },
+        });
     });
     child.on("error", (error: Error) => {
       void emitEvent({
@@ -497,14 +494,53 @@ function runProcess(
           });
         }
       }
-      const status: RunResult["status"] = cancelled
-        ? "cancelled"
-        : code === 0
-          ? "completed"
-          : "failed";
       const files = changedFiles(cwd);
+      const finalParserEvents = [
+        ...(stdoutParser?.flush() ?? []),
+        ...(stderrParser?.flush() ?? []),
+      ];
+      for (const event of finalParserEvents) void emitEvent(event);
+      const capturedFinal = role.finalOutputFile
+        ? await readFile(role.finalOutputFile, "utf8").catch(() => "")
+        : "";
+      const finalResponseRaw = (capturedFinal.trim() || stdoutParser?.finalResponse || stderrParser?.finalResponse || stdout).trim();
+      const structural = finalResponseRaw
+        ? parseAgentResponseV1(finalResponseRaw)
+        : { valid: false, issues: [{ path: "$", message: "missing AgentResponseV1 final response" }] };
+      const semantic = structural.valid && structural.value
+        ? validateAgentResponseForAssignment(structural.value, {
+            roleKind: roleKindForRole(role.name),
+            ownedPaths: role.owns,
+          })
+        : structural;
+      const protocolCompleted = Boolean(code === 0 && structural.valid && semantic.valid && structural.value?.status === "completed");
+      const status: RunResult["status"] = cancelled ? "cancelled" : protocolCompleted ? "completed" : "failed";
+      if (!structural.valid || !semantic.valid || structural.value?.status !== "completed") {
+        const failures = [...structural.issues, ...semantic.issues].map((item) => `${item.path}: ${item.message}`).join("; ") || `AgentResponseV1 status ${structural.value?.status ?? "missing"}`;
+        void emitEvent({
+          type: "error",
+          runId,
+          roleId: role.name,
+          timestamp: new Date().toISOString(),
+          payload: {
+            kind: "error",
+            code: "AGENT_PROTOCOL_INVALID",
+            message: `Run ${runId} role ${role.name} runner ${role.runner} did not return a semantically complete AgentResponseV1: ${failures}. Remediation: return exactly one valid AgentResponseV1 JSON object. Sanitized raw response is in ${logFile}.`,
+            recoverable: true,
+          },
+        });
+      }
+      if (structural.valid) {
+        void emitEvent({
+          type: "activity",
+          runId,
+          roleId: role.name,
+          timestamp: new Date().toISOString(),
+          payload: { kind: "activity", message: `${role.name}: final AgentResponseV1 received` },
+        });
+      }
       onProgress(
-        `${role.name}: ${status}${files.length ? ` \u00b7 ${files.length} file${files.length === 1 ? "" : "s"} changed` : ""}`,
+        `${role.name}: ${status}${files.length ? ` · ${files.length} file${files.length === 1 ? "" : "s"} changed` : ""}`,
       );
 
       // Emit completion lifecycle event

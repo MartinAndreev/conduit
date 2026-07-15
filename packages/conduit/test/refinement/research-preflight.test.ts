@@ -84,7 +84,7 @@ test("research preflight saves a visible report before architect refinement", as
           {
             role: "researcher",
             status: "completed",
-            stdout: "## Confirmed facts\n\n- `src/auth.ts` owns login.",
+            stdout: '{"protocolVersion":"1.0","status":"completed","summary":"Researched auth context.","verdict":null,"artifacts":[],"findings":[{"severity":"info","category":"fact","message":"src/auth.ts owns login.","path":"src/auth.ts","evidence":["src/auth.ts"]}],"verification":[],"decisions":[],"blockers":[],"questions":[],"risks":[],"evidence":[{"kind":"path","reference":"src/auth.ts"}],"memoryProposals":[],"globalPromotionProposals":[]}',
           },
         ];
       },
@@ -140,7 +140,7 @@ test("research preflight saves a visible report before architect refinement", as
       assert.equal(result.data.runId, "research");
       await reportSaved;
       assert.equal(result.data.reportFile, "conduit://research/001");
-      assert.match(savedReport ?? "", /Confirmed facts/);
+      assert.match(savedReport ?? "", /Findings/);
     }
     assert.match(await readFile(promptFile, "utf8"), /research assignment/i);
     assert.match(

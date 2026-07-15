@@ -143,3 +143,37 @@ test("all adapters produce activity for malformed JSON input", () => {
     assert.equal(events[0].payload.kind, "activity");
   }
 });
+
+test("CodexAdapter incrementally parses JSONL split across chunks and captures final response", () => {
+  const adapter = new CodexAdapter();
+  const parser = adapter.createOutputParser("run", "role");
+  const finalResponse = JSON.stringify({
+    protocolVersion: "1.0",
+    status: "completed",
+    summary: "ok",
+    verdict: null,
+    artifacts: [],
+    findings: [],
+    verification: [],
+    decisions: [],
+    blockers: [],
+    questions: [],
+    risks: [],
+    evidence: [],
+    memoryProposals: [],
+    globalPromotionProposals: [],
+  });
+
+  assert.equal(
+    parser.push('{"type":"message","role":"assistant","content":"hel').length,
+    0,
+  );
+  const events = parser.push(
+    `lo"}
+${JSON.stringify({ type: "final", content: finalResponse })}
+`,
+  );
+
+  assert.ok(events.some((event) => event.type === "activity"));
+  assert.match(parser.finalResponse ?? "", /"protocolVersion":"1.0"/);
+});

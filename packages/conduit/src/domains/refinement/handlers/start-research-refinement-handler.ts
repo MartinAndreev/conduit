@@ -12,6 +12,10 @@ import type { RunEventRepository } from "@domains/runs/interfaces/run-event-repo
 import type { RunProcessRegistry } from "@domains/runs/repositories/run-process-registry.js";
 import type { ResearchReportRepository } from "@domains/refinement/interfaces/research-report-repository.js";
 import { redactSecrets } from "@system/storage/security/secret-redaction.js";
+import { parseAgentResponseV1 } from "@domains/runs/validation/agent-response-validator.js";
+import { validateAgentResponseForAssignment } from "@domains/runs/validation/agent-semantic-validator.js";
+import { renderResearchReport } from "@domains/runs/validation/research-renderer.js";
+import { agentResponseContractPrompt } from "@domains/runs/assets/agent-response-contract.js";
 import type { RunRecoveryRepository } from "@domains/runs/interfaces/run-recovery-repository.js";
 
 const activeResearch = new Map<string, AbortController>();
@@ -83,7 +87,7 @@ export function createStartResearchRefinementHandler(
       // configuration omitted the flag. It reads the project in place and
       // writes only its dedicated report artifact under the run directory.
       researcher.readOnly = true;
-      researcher.prompt += `\n\n# Refinement research assignment (authoritative)\n\nInvestigate the repository context needed to refine this feature. Do not edit source code, specification files, contracts, or the feature packet.\n\n## Feature request\n\n${redactSecrets(command.story)}\n\nReturn a concise Markdown report with: relevant files and call paths; confirmed facts; constraints and risks; existing tests and conventions; assumptions that require validation; and product or technical questions that should inform the architect. Cite paths for every repository claim. Do not propose a prompt, implementation plan, or production-code patch.`;
+      researcher.prompt += `\n\n# Refinement research assignment (authoritative)\n\nInvestigate the repository context needed to refine this feature. Do not edit source code, specification files, contracts, or the feature packet.\n\n## Feature request\n\n${redactSecrets(command.story)}\n\nReturn only AgentResponseV1 JSON. Put relevant files, call paths, confirmed facts, constraints, existing tests, assumptions, and questions in findings, evidence, risks, and questions. Cite paths for every repository claim. Do not propose a prompt, implementation plan, or production-code patch.`;
       await writeFile(researcher.promptFile, researcher.prompt);
       const reportFile = `conduit://research/${encodeURIComponent(feature.id)}`;
       const runnerReportFile = path.join(runDir, "researcher-output.md");
@@ -92,7 +96,9 @@ export function createStartResearchRefinementHandler(
 
 # Research report delivery (authoritative)
 
-Return the Markdown report as your final response. Conduit captures and persists that response; do not attempt to write the report or any other file yourself. Do not include runner setup, prompts, tool calls, command transcripts, model metadata, or progress messages in the final report. Do not modify source code, packet artifacts, or any repository files.`;
+${agentResponseContractPrompt()}
+
+Conduit renders the human-readable Markdown report from the validated JSON; do not attempt to write the report or any other file yourself. Do not include runner setup, prompts, tool calls, command transcripts, model metadata, progress messages, Markdown fences, or prose around the JSON. Do not modify source code, packet artifacts, or any repository files.`;
       await writeFile(researcher.promptFile, researcher.prompt);
       const controller = new AbortController();
       activeResearch.set(feature.id, controller);
@@ -134,12 +140,31 @@ Return the Markdown report as your final response. Conduit captures and persists
             );
             return;
           }
-          const sanitizedReport = redactSecrets(report);
-          await writeFile(runnerReportFile, sanitizedReport);
-          await deps.reportRepository.save(
-            feature.id,
-            `# Research context\n\n${sanitizedReport}\n`,
-          );
+          const structural = parseAgentResponseV1(report);
+          const semantic = structural.valid && structural.value
+            ? validateAgentResponseForAssignment(structural.value, {
+                roleKind: "research",
+                ownedPaths: [],
+              })
+            : structural;
+          if (!structural.valid || !semantic.valid || !structural.value) {
+            await deps.eventRepository.append({
+              type: "error",
+              runId: run.id,
+              roleId: researcher.name,
+              timestamp: new Date().toISOString(),
+              payload: {
+                kind: "error",
+                code: "RESEARCH_PROTOCOL_INVALID",
+                message: `Researcher returned invalid AgentResponseV1: ${[...structural.issues, ...semantic.issues].map((item) => `${item.path}: ${item.message}`).join("; ")}`,
+                recoverable: true,
+              },
+            });
+            return;
+          }
+          const sanitizedReport = redactSecrets(renderResearchReport(structural.value));
+          await writeFile(runnerReportFile, report);
+          await deps.reportRepository.save(feature.id, sanitizedReport);
           await deps.recoveryRepository.saveSnapshot(run, 1);
         })
         .catch(async (error) => {

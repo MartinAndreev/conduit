@@ -398,7 +398,11 @@ test("executeRun persists role worktrees before agent completion and emits flow 
     await import("node:fs/promises").then(({ writeFile, chmod }) =>
       writeFile(
         path.join(binDir, "codex"),
-        "#!/bin/sh\nprintf 'created\n' > agent-output.txt\nsleep 0.25\n",
+        `#!/bin/sh
+printf 'created\n' > agent-output.txt
+printf '%s\n' '{"protocolVersion":"1.0","status":"completed","summary":"ok","verdict":null,"artifacts":[{"path":"src/generated.ts","category":"source","purpose":"test","action":"modified"}],"findings":[],"verification":[{"operation":"test","outcome":"passed","summary":"ok"}],"decisions":[],"blockers":[],"questions":[],"risks":[],"evidence":[],"memoryProposals":[],"globalPromotionProposals":[]}'
+sleep 0.25
+`,
       ).then(() => chmod(path.join(binDir, "codex"), 0o755)),
     );
     process.env.PATH = `${binDir}:${previousPath ?? ""}`;
@@ -431,7 +435,7 @@ test("executeRun persists role worktrees before agent completion and emits flow 
           promptFile: path.join(runDir, "reviewer.md"),
           prompt: "review",
           command: process.execPath,
-          args: ["-e", "process.exit(0)"],
+          args: ["-e", "console.log(JSON.stringify(" + '{"protocolVersion":"1.0","status":"completed","summary":"ok","verdict":{"decision":"approved","rationale":"ok"},"artifacts":[],"findings":[],"verification":[],"decisions":[],"blockers":[],"questions":[],"risks":[],"evidence":[],"memoryProposals":[],"globalPromotionProposals":[]}' + "))"],
           skillSource: "test",
           status: "planned" as const,
         },
@@ -496,6 +500,12 @@ test("executeRun follows configured role dependency groups", async () => {
         process.exit(1);
       }
       fs.writeFileSync(${JSON.stringify(projectRoot)} + "/" + ${JSON.stringify(name)} + ".done", "done");
+      const review = '{"protocolVersion":"1.0","status":"completed","summary":"ok","verdict":{"decision":"approved","rationale":"ok"},"artifacts":[],"findings":[],"verification":[],"decisions":[],"blockers":[],"questions":[],"risks":[],"evidence":[],"memoryProposals":[],"globalPromotionProposals":[]}';
+      const impl = '{"protocolVersion":"1.0","status":"completed","summary":"ok","verdict":null,"artifacts":[{"path":"src/generated.ts","category":"source","purpose":"test","action":"modified"}],"findings":[],"verification":[{"operation":"test","outcome":"passed","summary":"ok"}],"decisions":[],"blockers":[],"questions":[],"risks":[],"evidence":[],"memoryProposals":[],"globalPromotionProposals":[]}';
+      const qa = impl;
+      const docs = impl;
+      const content = ${JSON.stringify(name)}.includes("reviewer") ? review : impl;
+      console.log(content);
     `;
     const role = (
       name: string,
