@@ -1,109 +1,8 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import type { ArchitectEvent } from "../types/architect-event.js";
 import type { ArchitectEventRepository } from "../interfaces/architect-event-repository.js";
-
-function extractEventsFromTranscript(transcript: string): ArchitectEvent[] {
-  const events: ArchitectEvent[] = [];
-  const lines = transcript.split("\n");
-  let i = 0;
-
-  while (i < lines.length) {
-    const line = lines[i];
-
-    if (line === "exec") {
-      const command = lines[i + 1] ?? "";
-      events.push({
-        type: "tool-call",
-        timestamp: new Date().toISOString(),
-        content: command,
-      });
-      i += 2;
-      continue;
-    }
-
-    if (line === "analysis" || line === "codex") {
-      events.push({
-        type: "activity",
-        timestamp: new Date().toISOString(),
-        content:
-          line === "analysis"
-            ? "Analyzing project context"
-            : "Refining feature specification",
-      });
-      i += 1;
-      continue;
-    }
-
-    if (line === "apply patch") {
-      events.push({
-        type: "activity",
-        timestamp: new Date().toISOString(),
-        content: "Applying specification patch",
-      });
-      i += 1;
-      continue;
-    }
-
-    if (line === "patch: completed") {
-      events.push({
-        type: "lifecycle",
-        timestamp: new Date().toISOString(),
-        content: "Patch completed",
-      });
-      i += 1;
-      continue;
-    }
-
-    if (line.startsWith("diff --git ")) {
-      const diffLines: string[] = [line];
-      i += 1;
-      while (
-        i < lines.length &&
-        !lines[i].match(/^(?:exec|analysis|codex|apply patch|patch: completed)/)
-      ) {
-        diffLines.push(lines[i]);
-        i += 1;
-      }
-      const diff = diffLines.join("\n");
-      const files = [
-        ...new Set(
-          [...diff.matchAll(/^diff --git a\/(.+?) b\//gm)].map((m) => m[1]),
-        ),
-      ];
-      events.push({
-        type: "patch",
-        timestamp: new Date().toISOString(),
-        content: `Applied patch: ${files.length} file${files.length === 1 ? "" : "s"}`,
-        files,
-        diff,
-      });
-      continue;
-    }
-
-    i += 1;
-  }
-
-  return events;
-}
-
-function deduplicatePatchEvents(events: ArchitectEvent[]): ArchitectEvent[] {
-  const seen = new Map<string, ArchitectEvent>();
-  const result: ArchitectEvent[] = [];
-
-  for (const event of events) {
-    if (event.type === "patch" && event.files) {
-      const key = [...event.files].sort().join(",");
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.set(key, event);
-    }
-    result.push(event);
-  }
-
-  return result;
-}
+import { extractArchitectEvents } from "../helpers/architect-event-parser.js";
+import type { ArchitectEvent } from "../types/architect-event.js";
 
 export class FileArchitectEventRepository implements ArchitectEventRepository {
   private readonly projectRoot: string;
@@ -138,7 +37,9 @@ export class FileArchitectEventRepository implements ArchitectEventRepository {
       return [];
     }
 
-    const events = extractEventsFromTranscript(transcript);
-    return deduplicatePatchEvents(events);
+    const modifiedAt = await stat(logFile)
+      .then((entry) => entry.mtime.toISOString())
+      .catch(() => new Date().toISOString());
+    return extractArchitectEvents(transcript, modifiedAt);
   }
 }

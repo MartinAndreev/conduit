@@ -15,9 +15,29 @@ import type {
   LifecyclePayload,
 } from "../src/domains/runs/types/runner-events.js";
 import type { Run } from "../src/domains/runs/types/run.js";
+import { RunnerEventProvenance } from "../src/domains/runs/enums/runner-event-provenance.js";
+import { createAgentAssignmentV1 } from "../src/domains/runs/factories/agent-assignment-factory.js";
+import { roleKindForRole } from "../src/domains/runs/validation/agent-semantic-validator.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+
+function assignmentFor(
+  runId: string,
+  name: string,
+  ownedPaths: readonly string[],
+) {
+  return createAgentAssignmentV1({
+    assignmentId: `${runId}:${name}`,
+    role: name,
+    roleKind: roleKindForRole(name),
+    objective: `Complete the ${name} test assignment.`,
+    ownedPaths,
+    contextReferences: [],
+    acceptanceCriteria: ["Return a valid AgentResponseV1."],
+    contracts: ["specs"],
+  });
+}
 
 // File-backed run event repository integration
 
@@ -211,6 +231,7 @@ test("deriveRolePresentation returns correct state for lifecycle events", () => 
   const events: RunnerEvent[] = [
     {
       type: "lifecycle",
+      provenance: RunnerEventProvenance.ConduitObserved,
       runId: "r",
       roleId: "be",
       timestamp: "",
@@ -218,6 +239,7 @@ test("deriveRolePresentation returns correct state for lifecycle events", () => 
     },
     {
       type: "activity",
+      provenance: RunnerEventProvenance.RunnerReported,
       runId: "r",
       roleId: "be",
       timestamp: "",
@@ -225,6 +247,7 @@ test("deriveRolePresentation returns correct state for lifecycle events", () => 
     },
     {
       type: "lifecycle",
+      provenance: RunnerEventProvenance.ConduitObserved,
       runId: "r",
       roleId: "be",
       timestamp: "",
@@ -241,6 +264,7 @@ test("deriveRolePresentation detects unavailable runners", () => {
   const events: RunnerEvent[] = [
     {
       type: "lifecycle",
+      provenance: RunnerEventProvenance.ConduitObserved,
       runId: "r",
       roleId: "be",
       timestamp: "",
@@ -256,10 +280,11 @@ test("deriveRolePresentation detects unavailable runners", () => {
   assert.equal(presentation.isUnavailable, true);
 });
 
-test("deriveRolePresentation shows last activity message when running", () => {
+test("deriveRolePresentation shows a bounded activity phase when running", () => {
   const events: RunnerEvent[] = [
     {
       type: "lifecycle",
+      provenance: RunnerEventProvenance.ConduitObserved,
       runId: "r",
       roleId: "be",
       timestamp: "",
@@ -267,15 +292,90 @@ test("deriveRolePresentation shows last activity message when running", () => {
     },
     {
       type: "activity",
+      provenance: RunnerEventProvenance.RunnerReported,
       runId: "r",
       roleId: "be",
       timestamp: "",
-      payload: { kind: "activity", message: "reading files" },
+      payload: {
+        kind: "activity",
+        message:
+          "A very long reasoning summary that must remain in event details.",
+      },
     },
   ];
   const presentation = deriveRolePresentation(events, "be");
   assert.equal(presentation.state, "working");
-  assert.equal(presentation.message, "reading files");
+  assert.equal(presentation.message, "thinking");
+});
+
+test("terminal lifecycle state wins over intermediate response activity", () => {
+  const events: RunnerEvent[] = [
+    {
+      type: "activity",
+      provenance: RunnerEventProvenance.AgentClaimed,
+      runId: "r",
+      roleId: "be",
+      timestamp: "",
+      payload: {
+        kind: "activity",
+        message: "backend: final AgentResponseV1 received",
+      },
+    },
+    {
+      type: "lifecycle",
+      provenance: RunnerEventProvenance.ConduitObserved,
+      runId: "r",
+      roleId: "be",
+      timestamp: "",
+      payload: {
+        kind: "lifecycle",
+        state: "failed",
+        message: "backend: failed",
+      },
+    },
+  ];
+
+  const presentation = deriveRolePresentation(events, "be");
+  assert.equal(presentation.state, "failed");
+  assert.equal(presentation.message, "failed");
+});
+
+test("activity header uses phases while the event list keeps bounded details", async () => {
+  const { activityPhaseForEvent, formatEventDescription } =
+    await import("../src/tui/helpers/event-presentation.js");
+  const readingEvent: RunnerEvent = {
+    type: "tool-call",
+    provenance: RunnerEventProvenance.RunnerReported,
+    runId: "r",
+    roleId: "be",
+    timestamp: "",
+    payload: {
+      kind: "tool-call",
+      tool: "shell",
+      args: "sed -n '1,120p' src/server.ts",
+    },
+  };
+  const thoughtEvent: RunnerEvent = {
+    type: "activity",
+    provenance: RunnerEventProvenance.RunnerReported,
+    runId: "r",
+    roleId: "be",
+    timestamp: "",
+    payload: {
+      kind: "activity",
+      message: "This detailed reasoning text should not occupy the header.",
+    },
+  };
+
+  assert.equal(activityPhaseForEvent(readingEvent), "reading");
+  assert.equal(
+    formatEventDescription(readingEvent),
+    "Called shell(sed -n '1,120p' src/server.ts)",
+  );
+  assert.equal(
+    formatEventDescription(thoughtEvent),
+    "This detailed reasoning text should not occupy the header.",
+  );
 });
 
 test("extractFileDiff extracts diff section for a specific file", () => {
@@ -317,7 +417,7 @@ test("commandForRole builds correct args for all runners", async () => {
   ]);
   assert.deepEqual(commandForRole({ runner: "codex" }, "/tmp/p.md"), [
     "codex",
-    ["exec", "Read /tmp/p.md and perform only your assigned task."],
+    ["exec", "--json", "Read /tmp/p.md and perform only your assigned task."],
   ]);
   assert.deepEqual(commandForRole({ runner: "pi" }, "/tmp/p.md"), [
     "pi",
@@ -335,7 +435,7 @@ test("WorktreeDiffReader reports untracked agent-created files", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "conduit-diff-"));
   try {
     const { spawnSync } = await import("node:child_process");
-    const { writeFile } = await import("node:fs/promises");
+    const { mkdir, symlink, writeFile } = await import("node:fs/promises");
     spawnSync("git", ["-C", dir, "init"], { encoding: "utf8" });
     spawnSync("git", ["-C", dir, "config", "user.email", "test@example.com"], {
       encoding: "utf8",
@@ -344,11 +444,32 @@ test("WorktreeDiffReader reports untracked agent-created files", async () => {
       encoding: "utf8",
     });
     await writeFile(path.join(dir, "tracked.txt"), "base\n");
-    spawnSync("git", ["-C", dir, "add", "tracked.txt"], { encoding: "utf8" });
+    await writeFile(path.join(dir, ".gitignore"), "node_modules/\nvendor/\n");
+    spawnSync("git", ["-C", dir, "add", "tracked.txt", ".gitignore"], {
+      encoding: "utf8",
+    });
     spawnSync("git", ["-C", dir, "commit", "-m", "init"], {
       encoding: "utf8",
     });
     await writeFile(path.join(dir, "agent-output.txt"), "created\n");
+    await mkdir(path.join(dir, ".conduit", "assignments"), {
+      recursive: true,
+    });
+    await writeFile(
+      path.join(dir, ".conduit", "assignments", "internal.json"),
+      "{}\n",
+    );
+    await mkdir(path.join(dir, ".conduit", "dependencies", "package"), {
+      recursive: true,
+    });
+    await symlink(
+      path.join(dir, ".conduit", "dependencies"),
+      path.join(dir, "vendor"),
+    );
+    await mkdir(path.join(dir, "node_modules", "package"), {
+      recursive: true,
+    });
+    await writeFile(path.join(dir, "node_modules", "package", "index.js"), "");
 
     const result = new WorktreeDiffReader().readDiff(dir);
 
@@ -357,6 +478,7 @@ test("WorktreeDiffReader reports untracked agent-created files", async () => {
       ["agent-output.txt"],
     );
     assert.ok(result.diff?.includes("agent-output.txt"));
+    assert.equal(result.diff?.includes("internal.json"), false);
     assert.ok(extractFileDiff(result.diff ?? "", "agent-output.txt"));
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -366,7 +488,7 @@ test("WorktreeDiffReader reports untracked agent-created files", async () => {
 test("executeRun persists role worktrees before agent completion and emits flow completion", async () => {
   const { executeRun } =
     await import("../src/domains/runs/repositories/run-orchestrator.js");
-  const { mkdir } = await import("node:fs/promises");
+  const { mkdir, readFile } = await import("node:fs/promises");
   const { execFileSync } = await import("node:child_process");
   const projectRoot = await mkdtemp(path.join(tmpdir(), "conduit-run-"));
   const previousPath = process.env.PATH;
@@ -391,6 +513,20 @@ test("executeRun persists role worktrees before agent completion and emits flow 
       ["-C", projectRoot, "-c", "commit.gpgSign=false", "commit", "-m", "init"],
       { encoding: "utf8" },
     );
+    const hooksDirectory = path.join(projectRoot, ".git", "hooks");
+    await import("node:fs/promises").then(async ({ chmod, writeFile }) => {
+      const hook = path.join(hooksDirectory, "post-checkout");
+      await writeFile(hook, "#!/bin/sh\nexit 91\n");
+      await chmod(hook, 0o755);
+    });
+    await mkdir(path.join(projectRoot, "node_modules"), { recursive: true });
+    await mkdir(path.join(projectRoot, "vendor"), { recursive: true });
+    await import("node:fs/promises").then(({ writeFile }) =>
+      writeFile(path.join(projectRoot, "node_modules", ".sentinel"), "ready"),
+    );
+    await import("node:fs/promises").then(({ writeFile }) =>
+      writeFile(path.join(projectRoot, "vendor", ".sentinel"), "ready"),
+    );
     const runDir = path.join(projectRoot, ".conduit", "runs", "run-1");
     await mkdir(runDir, { recursive: true });
     const binDir = path.join(projectRoot, "bin");
@@ -399,7 +535,8 @@ test("executeRun persists role worktrees before agent completion and emits flow 
       writeFile(
         path.join(binDir, "codex"),
         `#!/bin/sh
-printf 'created\n' > agent-output.txt
+mkdir -p src
+printf 'created\n' > src/generated.ts
 printf '%s\n' '{"protocolVersion":"1.0","status":"completed","summary":"ok","verdict":null,"artifacts":[{"path":"src/generated.ts","category":"source","purpose":"test","action":"modified"}],"findings":[],"verification":[{"operation":"test","outcome":"passed","summary":"ok"}],"decisions":[],"blockers":[],"questions":[],"risks":[],"evidence":[],"memoryProposals":[],"globalPromotionProposals":[]}'
 sleep 0.25
 `,
@@ -425,6 +562,7 @@ sleep 0.25
           args: [],
           skillSource: "test",
           status: "planned" as const,
+          assignment: assignmentFor("run-1", "backend", ["src"]),
         },
         {
           name: "reviewer",
@@ -435,9 +573,15 @@ sleep 0.25
           promptFile: path.join(runDir, "reviewer.md"),
           prompt: "review",
           command: process.execPath,
-          args: ["-e", "console.log(JSON.stringify(" + '{"protocolVersion":"1.0","status":"completed","summary":"ok","verdict":{"decision":"approved","rationale":"ok"},"artifacts":[],"findings":[],"verification":[],"decisions":[],"blockers":[],"questions":[],"risks":[],"evidence":[],"memoryProposals":[],"globalPromotionProposals":[]}' + "))"],
+          args: [
+            "-e",
+            "console.log(JSON.stringify(" +
+              '{"protocolVersion":"1.0","status":"completed","summary":"ok","verdict":{"decision":"approved","rationale":"ok"},"artifacts":[],"findings":[],"verification":[],"decisions":[],"blockers":[],"questions":[],"risks":[],"evidence":[],"memoryProposals":[],"globalPromotionProposals":[]}' +
+              "))",
+          ],
           skillSource: "test",
           status: "planned" as const,
+          assignment: assignmentFor("run-1", "reviewer", []),
         },
       ],
     };
@@ -459,8 +603,42 @@ sleep 0.25
     const results = await executing;
     assert.ok(persistedWorktree);
     assert.equal(
+      await readFile(
+        path.join(persistedWorktree, "node_modules", ".sentinel"),
+        "utf8",
+      ),
+      "ready",
+    );
+    assert.equal(
+      await readFile(
+        path.join(persistedWorktree, "vendor", ".sentinel"),
+        "utf8",
+      ),
+      "ready",
+    );
+    assert.equal(
       results.every((result) => result.status === "completed"),
       true,
+      JSON.stringify(results),
+    );
+    assert.equal(results[0]?.resultRecord?.assignmentId, "run-1:backend");
+    assert.ok(
+      results[0]?.resultRecord?.observedChangedFiles.includes(
+        "src/generated.ts",
+      ),
+    );
+    assert.ok(
+      results[0]?.resultRecord?.conduitObservedEvents.every(
+        (event) => event.provenance === RunnerEventProvenance.ConduitObserved,
+      ),
+    );
+    assert.equal(
+      JSON.parse(
+        await import("node:fs/promises").then(({ readFile }) =>
+          readFile(path.join(runDir, "backend-result.json"), "utf8"),
+        ),
+      ).recordVersion,
+      "1.0",
     );
     const events = await eventRepository.loadByRun("run-1");
     assert.ok(
@@ -501,7 +679,7 @@ test("executeRun follows configured role dependency groups", async () => {
       }
       fs.writeFileSync(${JSON.stringify(projectRoot)} + "/" + ${JSON.stringify(name)} + ".done", "done");
       const review = '{"protocolVersion":"1.0","status":"completed","summary":"ok","verdict":{"decision":"approved","rationale":"ok"},"artifacts":[],"findings":[],"verification":[],"decisions":[],"blockers":[],"questions":[],"risks":[],"evidence":[],"memoryProposals":[],"globalPromotionProposals":[]}';
-      const impl = '{"protocolVersion":"1.0","status":"completed","summary":"ok","verdict":null,"artifacts":[{"path":"src/generated.ts","category":"source","purpose":"test","action":"modified"}],"findings":[],"verification":[{"operation":"test","outcome":"passed","summary":"ok"}],"decisions":[],"blockers":[],"questions":[],"risks":[],"evidence":[],"memoryProposals":[],"globalPromotionProposals":[]}';
+      const impl = '{"protocolVersion":"1.0","status":"completed","summary":"ok","verdict":null,"artifacts":[{"path":"src/generated.ts","category":"source","purpose":"test fixture evidence","action":"inspected"}],"findings":[],"verification":[{"operation":"test","outcome":"passed","summary":"ok"}],"decisions":[],"blockers":[],"questions":[],"risks":[],"evidence":[],"memoryProposals":[],"globalPromotionProposals":[]}';
       const qa = impl;
       const docs = impl;
       const content = ${JSON.stringify(name)}.includes("reviewer") ? review : impl;
@@ -522,6 +700,7 @@ test("executeRun follows configured role dependency groups", async () => {
       args: ["-e", script(name, dependsOn)],
       skillSource: "test",
       status: "planned" as const,
+      assignment: assignmentFor("run-flow", name, []),
     });
     const run: Run = {
       id: "run-flow",
@@ -556,5 +735,264 @@ test("executeRun follows configured role dependency groups", async () => {
     );
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("zero-exit invalid and incomplete responses block dependents", async () => {
+  const { executeRun } =
+    await import("../src/domains/runs/repositories/run-orchestrator.js");
+  const { mkdir, readFile } = await import("node:fs/promises");
+  const projectRoot = await mkdtemp(path.join(tmpdir(), "conduit-protocol-"));
+  try {
+    const cases = [
+      { name: "invalid", output: "not-json" },
+      {
+        name: "partial",
+        output: JSON.stringify({
+          protocolVersion: "1.0",
+          status: "partial",
+          summary: "partial",
+          verdict: null,
+          artifacts: [],
+          findings: [],
+          verification: [],
+          decisions: [],
+          blockers: [],
+          questions: [],
+          risks: [],
+          evidence: [],
+          memoryProposals: [],
+          globalPromotionProposals: [],
+        }),
+      },
+      {
+        name: "blocked",
+        output: JSON.stringify({
+          protocolVersion: "1.0",
+          status: "blocked",
+          summary: "blocked",
+          verdict: null,
+          artifacts: [],
+          findings: [],
+          verification: [],
+          decisions: [],
+          blockers: [
+            {
+              blocker: "missing input",
+              impact: "cannot continue",
+              minimumUnblocker: "provide input",
+            },
+          ],
+          questions: [],
+          risks: [],
+          evidence: [],
+          memoryProposals: [],
+          globalPromotionProposals: [],
+        }),
+      },
+      {
+        name: "needs-input",
+        output: JSON.stringify({
+          protocolVersion: "1.0",
+          status: "needs_input",
+          summary: "question",
+          verdict: null,
+          artifacts: [],
+          findings: [],
+          verification: [],
+          decisions: [],
+          blockers: [],
+          questions: [
+            {
+              question: "Which option?",
+              whyItMatters: "Changes behavior.",
+              context: "No decision exists.",
+              options: ["A", "B"],
+              smallestUnblocker: "Choose one.",
+            },
+          ],
+          risks: [],
+          evidence: [],
+          memoryProposals: [],
+          globalPromotionProposals: [],
+        }),
+      },
+    ];
+
+    for (const scenario of cases) {
+      const runId = `run-${scenario.name}`;
+      const runDir = path.join(projectRoot, ".conduit", "runs", runId);
+      const marker = path.join(projectRoot, `${scenario.name}-dependent.txt`);
+      await mkdir(runDir, { recursive: true });
+      const run: Run = {
+        id: runId,
+        featureId: "007",
+        status: "planned",
+        createdAt: new Date().toISOString(),
+        roles: [
+          {
+            name: "backend",
+            runner: "node",
+            readOnly: true,
+            owns: ["src"],
+            dependsOn: [],
+            promptFile: path.join(runDir, "backend-assignment.json"),
+            prompt: "{}",
+            command: process.execPath,
+            args: ["-e", `console.log(${JSON.stringify(scenario.output)})`],
+            skillSource: "test",
+            status: "planned",
+            assignment: assignmentFor(runId, "backend", ["src"]),
+          },
+          {
+            name: "qa",
+            runner: "node",
+            readOnly: true,
+            owns: [],
+            dependsOn: ["backend"],
+            promptFile: path.join(runDir, "qa-assignment.json"),
+            prompt: "{}",
+            command: process.execPath,
+            args: [
+              "-e",
+              `require("fs").writeFileSync(${JSON.stringify(marker)}, "ran")`,
+            ],
+            skillSource: "test",
+            status: "planned",
+            assignment: assignmentFor(runId, "qa", []),
+          },
+        ],
+      };
+
+      const results = await executeRun({
+        projectRoot,
+        run,
+        runDir,
+        dryRun: false,
+      });
+      assert.deepEqual(
+        results.map((result) => result.status),
+        ["failed", "failed"],
+        scenario.name,
+      );
+      assert.equal(
+        await readFile(marker, "utf8").catch(() => undefined),
+        undefined,
+        scenario.name,
+      );
+    }
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("expired terminal worktrees are removed through recorded lifecycle metadata", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { mkdir, readFile, writeFile } = await import("node:fs/promises");
+  const { FileWorktreeLifecycleRepository } =
+    await import("../src/domains/runs/repositories/file-worktree-lifecycle-repository.js");
+  const { cleanupExpiredWorktrees } =
+    await import("../src/domains/runs/repositories/run-orchestrator.js");
+  const projectRoot = await mkdtemp(path.join(tmpdir(), "conduit-retention-"));
+  const stateDirectory = path.join(projectRoot, ".state");
+  const worktree = path.join(
+    path.dirname(projectRoot),
+    `${path.basename(projectRoot)}-worker`,
+  );
+  try {
+    execFileSync("git", ["-C", projectRoot, "init"]);
+    execFileSync("git", [
+      "-C",
+      projectRoot,
+      "config",
+      "user.email",
+      "test@example.com",
+    ]);
+    execFileSync("git", ["-C", projectRoot, "config", "user.name", "Test"]);
+    await writeFile(path.join(projectRoot, "README.md"), "base\n");
+    execFileSync("git", ["-C", projectRoot, "add", "README.md"]);
+    execFileSync("git", [
+      "-C",
+      projectRoot,
+      "-c",
+      "commit.gpgSign=false",
+      "commit",
+      "-m",
+      "init",
+    ]);
+    execFileSync("git", [
+      "-C",
+      projectRoot,
+      "worktree",
+      "add",
+      "-b",
+      "worker",
+      worktree,
+      "HEAD",
+    ]);
+    await mkdir(stateDirectory, { recursive: true });
+    const repository = new FileWorktreeLifecycleRepository(stateDirectory);
+    await repository.save({
+      runId: "expired",
+      status: "completed",
+      worktrees: [worktree],
+      completedAt: "2020-01-01T00:00:00.000Z",
+    });
+
+    await cleanupExpiredWorktrees(projectRoot, stateDirectory, 0);
+
+    assert.equal(
+      await readFile(path.join(worktree, "README.md"), "utf8").catch(
+        () => undefined,
+      ),
+      undefined,
+    );
+    assert.equal(
+      await repository
+        .listExpired(new Date())
+        .then((records) => records.length),
+      0,
+    );
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+    await rm(worktree, { recursive: true, force: true });
+  }
+});
+
+test("expired raw run diagnostics are removed while validated results remain", async () => {
+  const { mkdir, readFile, writeFile } = await import("node:fs/promises");
+  const { cleanupExpiredRunDiagnostics } =
+    await import("../src/domains/runs/repositories/run-orchestrator.js");
+  const stateDirectory = await mkdtemp(
+    path.join(tmpdir(), "conduit-diagnostics-"),
+  );
+  const runDirectory = path.join(stateDirectory, "runs", "old-run");
+  try {
+    await mkdir(runDirectory, { recursive: true });
+    await writeFile(
+      path.join(runDirectory, "terminal.json"),
+      '{"status":"completed","completedAt":"2020-01-01T00:00:00.000Z"}',
+    );
+    await writeFile(path.join(runDirectory, "backend.log"), "raw");
+    await writeFile(
+      path.join(runDirectory, "backend-agent-response.json"),
+      "{}",
+    );
+    await writeFile(path.join(runDirectory, "backend-result.json"), "{}");
+
+    await cleanupExpiredRunDiagnostics(stateDirectory, 0);
+
+    assert.equal(
+      await readFile(path.join(runDirectory, "backend.log"), "utf8").catch(
+        () => undefined,
+      ),
+      undefined,
+    );
+    assert.equal(
+      await readFile(path.join(runDirectory, "backend-result.json"), "utf8"),
+      "{}",
+    );
+  } finally {
+    await rm(stateDirectory, { recursive: true, force: true });
   }
 });

@@ -1,4 +1,11 @@
 import type { ArchitectEvent } from "@domains/refinement/types/architect-event.js";
+import type { Theme } from "@tui/theme.js";
+
+export interface ArchitectActivityProps extends ArchitectActivityViewModel {
+  readonly theme: Theme;
+  readonly featureId: string;
+  readonly running?: boolean;
+}
 
 export interface ArchitectActivityViewModel {
   readonly events: readonly ArchitectEvent[];

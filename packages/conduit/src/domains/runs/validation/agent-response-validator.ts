@@ -143,7 +143,13 @@ const globalPromotionProposalSchema = z
 export const agentResponseV1Schema = z
   .object({
     protocolVersion: z.literal("1.0"),
-    status: z.enum(["completed", "partial", "blocked", "needs_input", "failed"]),
+    status: z.enum([
+      "completed",
+      "partial",
+      "blocked",
+      "needs_input",
+      "failed",
+    ]),
     summary: boundedText(1, 2000),
     verdict: z
       .object({

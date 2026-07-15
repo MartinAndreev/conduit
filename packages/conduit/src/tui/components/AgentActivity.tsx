@@ -63,7 +63,9 @@ export function AgentActivity({
         <box flexDirection="row">
           <text content={`${indicatorFor(state, frame)} `} fg={color} />
           <text content={role} fg={theme.text.strong} />
-          <text content={`  ${runner}`} fg={theme.text.muted} />
+          {runner ? (
+            <text content={`  ${runner}`} fg={theme.text.muted} />
+          ) : null}
           <text content={`  ${message}`} fg={theme.text.default} />
           {elapsed ? (
             <text content={`  ${elapsed}`} fg={theme.text.muted} />

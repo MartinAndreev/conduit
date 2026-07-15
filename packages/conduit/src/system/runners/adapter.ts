@@ -1,5 +1,5 @@
 import type { RunnerEvent } from "../../domains/runs/types/runner-events.js";
-import type { RunnerOutputParser } from "./jsonl-parser.js";
+import type { RunnerOutputParser } from "./interfaces/output-parser.js";
 
 export type RunnerAvailability =
   | { readonly available: true }

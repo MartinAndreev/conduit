@@ -1,22 +1,47 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdirSync, readdirSync, symlinkSync } from "node:fs";
+import type { Dirent } from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcess, SpawnSyncReturns } from "node:child_process";
 import { resolveSkill } from "../../roles/repositories/skill-resolver.js";
 import type { Config } from "../../configuration/types/config.js";
-import type { Run, RunRole, RunResult } from "../types/run.js";
+import type {
+  Run,
+  RunRole,
+  RunResult,
+  TerminalRunStatus,
+} from "../types/run.js";
 import type { RunnerEvent } from "../types/runner-events.js";
 import type { RunEventRepository } from "../interfaces/run-event-repository.js";
 import type { RunProcessRegistry } from "./run-process-registry.js";
 import { localSpecKitRoleContract } from "@domains/features/providers/local-spec-kit-role-contract.js";
 import { agentResponseContractPrompt } from "../assets/agent-response-contract.js";
 import { redactSecrets } from "@system/storage/security/secret-redaction.js";
-import { configureFinalOutputCapture, runnerAdapter, supportedRunners } from "@system/runners/registry.js";
+import {
+  configureFinalOutputCapture,
+  runnerAdapter,
+  supportedRunners,
+} from "@system/runners/registry.js";
 import { parseAgentResponseV1 } from "../validation/agent-response-validator.js";
-import { roleKindForRole, validateAgentResponseForAssignment } from "../validation/agent-semantic-validator.js";
+import {
+  roleKindForRole,
+  validateAgentResponseForAssignment,
+} from "../validation/agent-semantic-validator.js";
+import { createAgentAssignmentV1 } from "../factories/agent-assignment-factory.js";
+import { validateAgentAssignmentV1 } from "../validation/agent-assignment-validator.js";
+import type { ConduitResultRecordRepository } from "../interfaces/conduit-result-record-repository.js";
+import { FileConduitResultRecordRepository } from "./file-conduit-result-record-repository.js";
+import { RunnerEventProvenance } from "../enums/runner-event-provenance.js";
+import { FileWorktreeLifecycleRepository } from "./file-worktree-lifecycle-repository.js";
+import {
+  ensureConduitStateGitIgnored,
+  ensureWorktreeRootGitIgnored,
+} from "@system/storage/factories/gitignore.js";
 
 const databaseEnvironmentKey =
   /^(?:TURSO_|LIBSQL_|DATABASE_(?:URL|TOKEN)$|CONDUIT_DB)/i;
+const dependencyDirectoryNames = new Set(["node_modules", "vendor"]);
 
 export function agentProcessEnvironment(
   environment: NodeJS.ProcessEnv = process.env,
@@ -44,7 +69,8 @@ export function commandForRole(
   const args = [...adapter.buildArgs(promptFile, role.model)];
   if (role.effort && args.length) {
     const last = args[args.length - 1];
-    args[args.length - 1] = `${last} Requested reasoning effort: ${role.effort}.`;
+    args[args.length - 1] =
+      `${last} Requested reasoning effort: ${role.effort}.`;
   }
   return [adapter.command, args];
 }
@@ -70,6 +96,56 @@ function assertDistinctOwnership(roles: RunRole[]): void {
   }
 }
 
+async function featurePacketSnapshot(
+  projectRoot: string,
+  specsDirectory: string,
+  featureId: string,
+): Promise<string> {
+  const specsRoot = path.resolve(projectRoot, specsDirectory);
+  const featureDirectories = await readdir(specsRoot, {
+    withFileTypes: true,
+  }).catch(() => []);
+  const featureDirectory = featureDirectories
+    .filter(
+      (entry) =>
+        entry.isDirectory() &&
+        (entry.name === featureId || entry.name.startsWith(`${featureId}-`)),
+    )
+    .sort((left, right) => left.name.localeCompare(right.name))[0];
+  if (!featureDirectory) {
+    return "The approved feature packet was not found when this assignment was planned.";
+  }
+
+  const root = path.join(specsRoot, featureDirectory.name);
+  const files: string[] = [];
+  const visit = async (directory: string): Promise<void> => {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries.sort((left, right) =>
+      left.name.localeCompare(right.name),
+    )) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await visit(entryPath);
+      } else if (entry.isFile()) {
+        files.push(entryPath);
+      }
+    }
+  };
+  await visit(root);
+
+  const sections: string[] = [];
+  for (const file of files) {
+    const content = await readFile(file, "utf8").catch(() => "");
+    if (!content || content.includes("\0")) {
+      continue;
+    }
+    sections.push(
+      `## ${path.relative(projectRoot, file)}\n\n${content.trim()}`,
+    );
+  }
+  return sections.join("\n\n---\n\n");
+}
+
 export async function planRun({
   projectRoot,
   config,
@@ -87,7 +163,29 @@ export async function planRun({
 }): Promise<{ run: Run; runDir: string }> {
   const runId = `${featureId}-${Date.now()}`;
   const runDir = path.join(projectRoot, config.stateDir, "runs", runId);
+  const stateDirectory = path.resolve(projectRoot, config.stateDir);
+  const configuredRoot =
+    !config.worktreeRoot || config.worktreeRoot === "../.conduit-worktrees"
+      ? path.join(config.stateDir, "worktrees")
+      : config.worktreeRoot;
+  const configuredWorktreeRoot = path.resolve(projectRoot, configuredRoot);
+  await ensureConduitStateGitIgnored(stateDirectory);
+  await ensureWorktreeRootGitIgnored(configuredWorktreeRoot);
+  await cleanupExpiredWorktrees(
+    projectRoot,
+    stateDirectory,
+    config.worktreeRetentionDays ?? 7,
+  );
+  await cleanupExpiredRunDiagnostics(
+    stateDirectory,
+    config.runDiagnosticsRetentionDays ?? 30,
+  );
   await mkdir(runDir, { recursive: true });
+  const packetSnapshot = await featurePacketSnapshot(
+    projectRoot,
+    config.specsDir,
+    featureId,
+  );
   const roles: RunRole[] = [];
   for (const name of roleNames) {
     const role = config.roles[name];
@@ -103,11 +201,37 @@ export async function planRun({
       content: "No project role guidance was loaded.",
       verified: false,
     }));
-    const promptFile = path.join(runDir, `${name}.md`);
+    const promptFile = path.join(runDir, `${name}-assignment.json`);
+    const contextFile = path.join(runDir, `${name}-context.md`);
     const roleDependencies = role.dependsOn ?? [];
-    const prompt = redactSecrets(
-      `${localSpecKitRoleContract(name, role.effort)}\n\n# Project role guidance (advisory)\n\n${skill.content}\n\n# Assignment (authoritative)\n\nFeature: ${featureId}\nRead the approved files in specs/${featureId}-*/ before changing code.\nOwned paths: ${(role.owns ?? ["none defined"]).join(", ")}\nRun dependencies: ${roleDependencies.length ? roleDependencies.join(", ") : "none"}\nDo not modify contracts or paths outside your ownership.\nReport tests run and unresolved integration risks.\n\n${agentResponseContractPrompt()}\n\nThe system role contract and assignment take precedence over project role guidance.`,
+    const context = redactSecrets(
+      `${localSpecKitRoleContract(name, role.effort)}\n\n# Project role guidance (advisory)\n\n${skill.content}\n\n# Assignment (authoritative)\n\nFeature: ${featureId}\nRead the approved feature packet snapshot below before changing code.\nOwned paths: ${(role.owns ?? ["none defined"]).join(", ")}\nRun dependencies: ${roleDependencies.length ? roleDependencies.join(", ") : "none"}\nDo not modify contracts or paths outside your ownership.\nReport tests run and unresolved integration risks.\n\n${agentResponseContractPrompt()}\n\nThe system role contract and assignment take precedence over project role guidance.\n\n# Approved feature packet snapshot (read-only)\n\n${packetSnapshot}`,
     );
+    const roleKind = roleKindForRole(name, role.roleKind);
+    const assignment = createAgentAssignmentV1({
+      assignmentId: `${runId}:${name}`,
+      role: name,
+      roleKind,
+      objective: `Complete only the approved ${name} work for feature ${featureId}. Read the complete packet snapshot in the context reference before acting and return exactly one AgentResponseV1 object.`,
+      ownedPaths: role.owns ?? [],
+      dependencies: roleDependencies,
+      contextReferences: [path.relative(projectRoot, contextFile)],
+      acceptanceCriteria: [
+        "Satisfy the approved acceptance criteria in the referenced packet snapshot.",
+        "Satisfy the approved test cases in the referenced packet snapshot.",
+      ],
+      contracts: [path.relative(projectRoot, contextFile)],
+      expectedCapabilities: [
+        role.readOnly ? "repository-read" : "workspace-write",
+      ],
+    });
+    const assignmentValidation = validateAgentAssignmentV1(assignment);
+    if (!assignmentValidation.valid)
+      throw new Error(
+        `Invalid assignment for ${name}: ${assignmentValidation.issues.map((item) => `${item.path}: ${item.message}`).join("; ")}`,
+      );
+    const prompt = `${JSON.stringify(assignment, null, 2)}\n`;
+    await writeFile(contextFile, context);
     await writeFile(promptFile, prompt);
     const [command, args] = commandForRole(role, promptFile);
     roles.push({
@@ -120,11 +244,14 @@ export async function planRun({
       dependsOn: roleDependencies,
       promptFile,
       prompt,
+      context,
+      contextFile,
       command,
       args,
       skillSource: skill.source,
       status: "planned",
       finalOutputFile: path.join(runDir, `${name}-agent-response.json`),
+      assignment,
     });
   }
   assertDistinctOwnership(roles);
@@ -134,18 +261,152 @@ export async function planRun({
     status: "planned",
     createdAt: new Date().toISOString(),
     roles,
+    stateDirectory,
+    worktreeRoot: configuredWorktreeRoot,
+    worktreeRetentionDays: config.worktreeRetentionDays ?? 7,
+    runDiagnosticsRetentionDays: config.runDiagnosticsRetentionDays ?? 30,
   };
   return { run, runDir };
 }
 
 function worktreePath(projectRoot: string, run: Run, role: RunRole): string {
   return path.join(
-    path.dirname(projectRoot),
-    ".conduit-worktrees",
+    run.worktreeRoot ?? path.join(projectRoot, ".conduit", "worktrees"),
     path.basename(projectRoot),
     run.id,
     role.name,
   );
+}
+
+export async function cleanupExpiredWorktrees(
+  projectRoot: string,
+  stateDirectory: string,
+  retentionDays: number,
+): Promise<void> {
+  const repository = new FileWorktreeLifecycleRepository(stateDirectory);
+  const cutoff = new Date(
+    Date.now() - Math.max(0, retentionDays) * 24 * 60 * 60 * 1_000,
+  );
+  for (const record of await repository.listExpired(cutoff)) {
+    let removed = true;
+    for (const worktree of record.worktrees) {
+      const result = spawnSync(
+        "git",
+        ["-C", projectRoot, "worktree", "remove", "--force", worktree],
+        { encoding: "utf8" },
+      );
+      if (
+        result.status !== 0 &&
+        !result.stderr.includes("is not a working tree")
+      ) {
+        removed = false;
+      }
+    }
+    if (removed) await repository.remove(record.runId);
+  }
+}
+
+export async function cleanupExpiredRunDiagnostics(
+  stateDirectory: string,
+  retentionDays: number,
+): Promise<void> {
+  const runsDirectory = path.join(stateDirectory, "runs");
+  const entries = await readdir(runsDirectory, { withFileTypes: true }).catch(
+    () => [],
+  );
+  const cutoff = Date.now() - Math.max(0, retentionDays) * 24 * 60 * 60 * 1_000;
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const runDirectory = path.join(runsDirectory, entry.name);
+    const terminal = await readFile(
+      path.join(runDirectory, "terminal.json"),
+      "utf8",
+    )
+      .then((content) => JSON.parse(content) as { completedAt: string })
+      .catch(() => undefined);
+    if (!terminal || new Date(terminal.completedAt).getTime() > cutoff) {
+      continue;
+    }
+    const artifacts = await readdir(runDirectory, {
+      withFileTypes: true,
+    }).catch(() => []);
+    for (const artifact of artifacts) {
+      if (!artifact.isFile()) continue;
+      if (
+        artifact.name.endsWith(".log") ||
+        artifact.name.endsWith("-context.md") ||
+        artifact.name.endsWith("-assignment.json") ||
+        artifact.name.endsWith("-agent-response.json")
+      ) {
+        await rm(path.join(runDirectory, artifact.name), { force: true });
+      }
+    }
+  }
+}
+
+function dependencyTreePaths(
+  projectRoot: string,
+  excludedDirectories: readonly string[],
+): string[] {
+  const dependencyTrees: string[] = [];
+  const exclusions = excludedDirectories.map((directory) =>
+    path.resolve(directory),
+  );
+  const visit = (directory: string): void => {
+    const resolvedDirectory = path.resolve(directory);
+    if (
+      exclusions.some(
+        (excluded) =>
+          resolvedDirectory === excluded ||
+          resolvedDirectory.startsWith(`${excluded}${path.sep}`),
+      )
+    ) {
+      return;
+    }
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      const entryPath = path.join(directory, entry.name);
+      if (dependencyDirectoryNames.has(entry.name)) {
+        dependencyTrees.push(entryPath);
+        continue;
+      }
+      if (
+        entry.name === ".git" ||
+        entry.name === ".conduit" ||
+        entry.name === "dist"
+      ) {
+        continue;
+      }
+      visit(entryPath);
+    }
+  };
+  visit(projectRoot);
+  return dependencyTrees;
+}
+
+function linkDependencyTrees(
+  projectRoot: string,
+  worktree: string,
+  excludedDirectories: readonly string[],
+): void {
+  for (const source of dependencyTreePaths(projectRoot, excludedDirectories)) {
+    const relativePath = path.relative(projectRoot, source);
+    const destination = path.join(worktree, relativePath);
+    mkdirSync(path.dirname(destination), { recursive: true });
+    symlinkSync(
+      source,
+      destination,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+  }
 }
 
 function addWorktree(projectRoot: string, run: Run, role: RunRole): string {
@@ -160,15 +421,51 @@ function addWorktree(projectRoot: string, run: Run, role: RunRole): string {
   if (head.status !== 0) return projectRoot;
   const target = worktreePath(projectRoot, run, role);
   const branch = `conduit/${run.id}/${role.name}`;
+  const disabledHooksDirectory = path.join(
+    run.stateDirectory ?? path.join(projectRoot, ".conduit"),
+    "hooks",
+    "disabled",
+  );
+  mkdirSync(disabledHooksDirectory, { recursive: true });
   const result: SpawnSyncReturns<string> = spawnSync(
     "git",
-    ["-C", projectRoot, "worktree", "add", "-b", branch, target, "HEAD"],
+    [
+      "-c",
+      `core.hooksPath=${disabledHooksDirectory}`,
+      "-C",
+      projectRoot,
+      "worktree",
+      "add",
+      "-b",
+      branch,
+      target,
+      "HEAD",
+    ],
     { encoding: "utf8" },
   );
   if (result.status !== 0)
     throw new Error(
       `Could not create worktree for ${role.name}: ${result.stderr.trim()}`,
     );
+  try {
+    linkDependencyTrees(
+      projectRoot,
+      target,
+      [target, run.stateDirectory, run.worktreeRoot].filter(
+        (directory): directory is string => Boolean(directory),
+      ),
+    );
+  } catch (cause) {
+    spawnSync(
+      "git",
+      ["-C", projectRoot, "worktree", "remove", "--force", target],
+      { encoding: "utf8" },
+    );
+    throw new Error(
+      `Could not provision dependencies for ${role.name}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause },
+    );
+  }
   return target;
 }
 
@@ -180,15 +477,37 @@ async function writeWorktreePrompt(
   const assignmentDir = path.join(cwd, ".conduit", "assignments");
   const promptFile = path.join(
     assignmentDir,
-    `${run.id}-${role.name}.md`,
+    `${run.id}-${role.name}-assignment.json`,
+  );
+  const contextFile = path.join(
+    assignmentDir,
+    `${run.id}-${role.name}-context.md`,
   );
   await mkdir(path.dirname(promptFile), { recursive: true });
+  if (!role.assignment)
+    throw new Error(`Run role ${role.name} is missing AgentAssignmentV1.`);
+  role.assignment = {
+    ...role.assignment,
+    contextReferences: [path.relative(cwd, contextFile)],
+    contracts: [path.relative(cwd, contextFile)],
+  };
+  const validation = validateAgentAssignmentV1(role.assignment);
+  if (!validation.valid)
+    throw new Error(
+      `Invalid worktree assignment for ${role.name}: ${validation.issues.map((item) => `${item.path}: ${item.message}`).join("; ")}`,
+    );
+  role.prompt = `${JSON.stringify(role.assignment, null, 2)}\n`;
+  await writeFile(contextFile, role.context ?? "");
   await writeFile(promptFile, role.prompt);
   const [command, args] = commandForRole(role, promptFile);
   role.command = command;
   role.args = args;
   role.worktreePromptFile = promptFile;
-  role.finalOutputFile = path.join(assignmentDir, `${run.id}-${role.name}-agent-response.json`);
+  role.contextFile = contextFile;
+  role.finalOutputFile = path.join(
+    assignmentDir,
+    `${run.id}-${role.name}-agent-response.json`,
+  );
 }
 
 function terminate(child: ChildProcess): void {
@@ -213,17 +532,87 @@ function terminate(child: ChildProcess): void {
   }, 3000).unref();
 }
 
+function roleResultStatus(
+  cancelled: boolean,
+  protocolCompleted: boolean,
+): RunResult["status"] {
+  if (cancelled) {
+    return "cancelled";
+  }
+  return protocolCompleted ? "completed" : "failed";
+}
+
+function terminalRunStatus(results: readonly RunResult[]): TerminalRunStatus {
+  if (results.some((result) => result.status === "cancelled")) {
+    return "cancelled";
+  }
+  if (results.every((result) => result.status === "completed")) {
+    return "completed";
+  }
+  return "failed";
+}
+
+function completionMessage(
+  status: TerminalRunStatus,
+  reviewerSelected: boolean,
+): string {
+  if (status !== "completed") {
+    return `Run ${status}`;
+  }
+  if (reviewerSelected) {
+    return "Flow finished: reviewer completed with no required fixes.";
+  }
+  return "Flow finished: all selected agents completed.";
+}
+
 function changedFiles(cwd: string): string[] {
-  const result: SpawnSyncReturns<string> = spawnSync(
+  const tracked: SpawnSyncReturns<string> = spawnSync(
     "git",
-    ["-C", cwd, "diff", "--name-only"],
+    ["-C", cwd, "diff", "--name-only", "HEAD"],
     {
       encoding: "utf8",
     },
   );
-  return result.status === 0
-    ? result.stdout.trim().split("\n").filter(Boolean)
-    : [];
+  const untracked: SpawnSyncReturns<string> = spawnSync(
+    "git",
+    ["-C", cwd, "ls-files", "--others", "--exclude-standard"],
+    { encoding: "utf8" },
+  );
+  const files = [
+    ...(tracked.status === 0 ? tracked.stdout.split("\n") : []),
+    ...(untracked.status === 0 ? untracked.stdout.split("\n") : []),
+  ];
+  return [...new Set(files)]
+    .filter(Boolean)
+    .filter((file) => !file.startsWith(".conduit/"));
+}
+
+function changedFileFingerprints(cwd: string): ReadonlyMap<string, string> {
+  return new Map(
+    changedFiles(cwd).map((file) => {
+      const diff = spawnSync(
+        "git",
+        ["-C", cwd, "diff", "--binary", "HEAD", "--", file],
+        { encoding: "utf8" },
+      );
+      if (diff.status === 0 && diff.stdout) return [file, diff.stdout];
+
+      const hash = spawnSync("git", ["-C", cwd, "hash-object", "--", file], {
+        encoding: "utf8",
+      });
+      return [file, hash.status === 0 ? hash.stdout.trim() : "missing"];
+    }),
+  );
+}
+
+function filesChangedSince(
+  cwd: string,
+  baseline: ReadonlyMap<string, string>,
+): string[] {
+  const finalState = changedFileFingerprints(cwd);
+  return [...finalState.entries()]
+    .filter(([file, fingerprint]) => baseline.get(file) !== fingerprint)
+    .map(([file]) => file);
 }
 
 interface ChangedFileStat {
@@ -292,13 +681,18 @@ function runProcess(
   onChange: (event: { summary: string; preview: string }) => void,
   eventRepository?: RunEventRepository,
   processRegistry?: RunProcessRegistry,
+  resultRepository?: ConduitResultRecordRepository,
+  featureId?: string,
   signal?: AbortSignal,
 ): Promise<RunResult> {
   const emitEvent = async (event: RunnerEvent) => {
+    emittedEvents.push(event);
     if (eventRepository) await eventRepository.append(event);
   };
+  const emittedEvents: RunnerEvent[] = [];
 
   return new Promise((resolve) => {
+    const initialChangedFiles = changedFileFingerprints(cwd);
     const args = configureFinalOutputCapture(
       role.runner,
       role.args,
@@ -312,6 +706,9 @@ function runProcess(
     });
     let output = "";
     let stdout = "";
+    let rawStdout = "";
+    let rawStderr = "";
+    let runnerFailureMessage: string | undefined;
     const adapter = runnerAdapter(role.runner);
     const stdoutParser = adapter?.createOutputParser?.(runId, role.name);
     const stderrParser = adapter?.createOutputParser?.(runId, role.name);
@@ -332,6 +729,7 @@ function runProcess(
     // Emit starting lifecycle event
     void emitEvent({
       type: "lifecycle",
+      provenance: RunnerEventProvenance.ConduitObserved,
       runId,
       roleId: role.name,
       timestamp: new Date().toISOString(),
@@ -355,6 +753,7 @@ function runProcess(
     // Emit running lifecycle event
     void emitEvent({
       type: "lifecycle",
+      provenance: RunnerEventProvenance.ConduitObserved,
       runId,
       roleId: role.name,
       timestamp: new Date().toISOString(),
@@ -379,6 +778,7 @@ function runProcess(
         for (const file of change.files) {
           void emitEvent({
             type: "file-change",
+            provenance: RunnerEventProvenance.ConduitObserved,
             runId,
             roleId: role.name,
             timestamp: new Date().toISOString(),
@@ -394,6 +794,7 @@ function runProcess(
     }, 800);
     changeWatcher.unref();
     child.stdout?.on("data", (chunk: Buffer | string) => {
+      rawStdout += String(chunk);
       const sanitizedChunk = redactSecrets(String(chunk));
       const transcript = sanitizedChunk.trim();
       output += sanitizedChunk;
@@ -404,10 +805,17 @@ function runProcess(
           : `${role.name}: working`,
       );
       const parsedEvents = stdoutParser?.push(sanitizedChunk) ?? [];
-      if (parsedEvents.length) for (const event of parsedEvents) void emitEvent(event);
-      else
+      if (parsedEvents.length) {
+        for (const event of parsedEvents) {
+          if (event.type === "error" && event.payload.kind === "error") {
+            runnerFailureMessage = event.payload.message;
+          }
+          void emitEvent(event);
+        }
+      } else {
         void emitEvent({
           type: "tool-output",
+          provenance: RunnerEventProvenance.ConduitObserved,
           runId,
           roleId: role.name,
           timestamp: new Date().toISOString(),
@@ -418,8 +826,10 @@ function runProcess(
             truncated: transcript.length > 4_000,
           },
         });
+      }
     });
     child.stderr?.on("data", (chunk: Buffer | string) => {
+      rawStderr += String(chunk);
       const sanitizedChunk = redactSecrets(String(chunk));
       const transcript = sanitizedChunk.trim();
       output += sanitizedChunk;
@@ -429,10 +839,17 @@ function runProcess(
           : `${role.name}: working`,
       );
       const parsedEvents = stderrParser?.push(sanitizedChunk) ?? [];
-      if (parsedEvents.length) for (const event of parsedEvents) void emitEvent(event);
-      else
+      if (parsedEvents.length) {
+        for (const event of parsedEvents) {
+          if (event.type === "error" && event.payload.kind === "error") {
+            runnerFailureMessage = event.payload.message;
+          }
+          void emitEvent(event);
+        }
+      } else {
         void emitEvent({
           type: "tool-output",
+          provenance: RunnerEventProvenance.ConduitObserved,
           runId,
           roleId: role.name,
           timestamp: new Date().toISOString(),
@@ -443,10 +860,12 @@ function runProcess(
             truncated: transcript.length > 4_000,
           },
         });
+      }
     });
     child.on("error", (error: Error) => {
       void emitEvent({
         type: "error",
+        provenance: RunnerEventProvenance.ConduitObserved,
         runId,
         roleId: role.name,
         timestamp: new Date().toISOString(),
@@ -482,6 +901,7 @@ function runProcess(
         for (const file of finalChange.files) {
           void emitEvent({
             type: "file-change",
+            provenance: RunnerEventProvenance.ConduitObserved,
             runId,
             roleId: role.name,
             timestamp: new Date().toISOString(),
@@ -494,50 +914,115 @@ function runProcess(
           });
         }
       }
-      const files = changedFiles(cwd);
+      const files = filesChangedSince(cwd, initialChangedFiles);
       const finalParserEvents = [
         ...(stdoutParser?.flush() ?? []),
         ...(stderrParser?.flush() ?? []),
       ];
-      for (const event of finalParserEvents) void emitEvent(event);
+      for (const event of finalParserEvents) {
+        if (event.type === "error" && event.payload.kind === "error") {
+          runnerFailureMessage = event.payload.message;
+        }
+        void emitEvent(event);
+      }
       const capturedFinal = role.finalOutputFile
         ? await readFile(role.finalOutputFile, "utf8").catch(() => "")
         : "";
-      const finalResponseRaw = (capturedFinal.trim() || stdoutParser?.finalResponse || stderrParser?.finalResponse || stdout).trim();
+      const rawStdoutParser = adapter?.createOutputParser?.(runId, role.name);
+      const rawStderrParser = adapter?.createOutputParser?.(runId, role.name);
+      rawStdoutParser?.push(rawStdout);
+      rawStdoutParser?.flush();
+      rawStderrParser?.push(rawStderr);
+      rawStderrParser?.flush();
+      const finalResponseRaw = (
+        capturedFinal.trim() ||
+        rawStdoutParser?.finalResponse ||
+        rawStderrParser?.finalResponse ||
+        rawStdout
+      ).trim();
       const structural = finalResponseRaw
         ? parseAgentResponseV1(finalResponseRaw)
-        : { valid: false, issues: [{ path: "$", message: "missing AgentResponseV1 final response" }] };
-      const semantic = structural.valid && structural.value
-        ? validateAgentResponseForAssignment(structural.value, {
-            roleKind: roleKindForRole(role.name),
-            ownedPaths: role.owns,
-          })
-        : structural;
-      const protocolCompleted = Boolean(code === 0 && structural.valid && semantic.valid && structural.value?.status === "completed");
-      const status: RunResult["status"] = cancelled ? "cancelled" : protocolCompleted ? "completed" : "failed";
-      if (!structural.valid || !semantic.valid || structural.value?.status !== "completed") {
-        const failures = [...structural.issues, ...semantic.issues].map((item) => `${item.path}: ${item.message}`).join("; ") || `AgentResponseV1 status ${structural.value?.status ?? "missing"}`;
+        : {
+            valid: false,
+            issues: [
+              { path: "$", message: "missing AgentResponseV1 final response" },
+            ],
+          };
+      const semantic =
+        structural.valid && structural.value
+          ? validateAgentResponseForAssignment(structural.value, {
+              roleKind: role.assignment?.roleKind ?? roleKindForRole(role.name),
+              ownedPaths: role.owns,
+              observedChangedFiles: files,
+              readOnly: role.readOnly,
+            })
+          : structural;
+      if (role.finalOutputFile && capturedFinal)
+        await writeFile(role.finalOutputFile, redactSecrets(capturedFinal));
+      const protocolCompleted = Boolean(
+        code === 0 &&
+        structural.valid &&
+        semantic.valid &&
+        structural.value?.status === "completed",
+      );
+      const status = roleResultStatus(cancelled, protocolCompleted);
+      if (runnerFailureMessage) {
         void emitEvent({
           type: "error",
+          provenance: RunnerEventProvenance.ConduitObserved,
           runId,
           roleId: role.name,
           timestamp: new Date().toISOString(),
           payload: {
             kind: "error",
-            code: "AGENT_PROTOCOL_INVALID",
-            message: `Run ${runId} role ${role.name} runner ${role.runner} did not return a semantically complete AgentResponseV1: ${failures}. Remediation: return exactly one valid AgentResponseV1 JSON object. Sanitized raw response is in ${logFile}.`,
-            recoverable: true,
+            code: "RUNNER_EXECUTION_FAILED",
+            message: runnerFailureMessage,
+            recoverable: false,
           },
         });
-      }
-      if (structural.valid) {
-        void emitEvent({
-          type: "activity",
-          runId,
-          roleId: role.name,
-          timestamp: new Date().toISOString(),
-          payload: { kind: "activity", message: `${role.name}: final AgentResponseV1 received` },
-        });
+      } else {
+        let validationFailure:
+          { code: string; message: string; recoverable: boolean } | undefined;
+        if (!structural.valid) {
+          const failures = structural.issues
+            .map((item) => `${item.path}: ${item.message}`)
+            .join("; ");
+          validationFailure = {
+            code: "AGENT_PROTOCOL_INVALID",
+            message: `The agent did not return a valid AgentResponseV1 object: ${failures}. Sanitized output: ${logFile}.`,
+            recoverable: true,
+          };
+        } else if (!semantic.valid) {
+          const failures = semantic.issues
+            .map((item) => `${item.path}: ${item.message}`)
+            .join("; ");
+          validationFailure = {
+            code: "AGENT_RESPONSE_INVALID",
+            message: `The agent response violated its assignment policy: ${failures}. Sanitized output: ${logFile}.`,
+            recoverable: true,
+          };
+        } else if (structural.value?.status !== "completed") {
+          const responseStatus = structural.value?.status ?? "missing";
+          const summary = structural.value?.summary ?? "No summary provided.";
+          validationFailure = {
+            code: "AGENT_RESPONSE_INCOMPLETE",
+            message: `The agent returned ${responseStatus}: ${summary}`,
+            recoverable: true,
+          };
+        }
+        if (validationFailure) {
+          await emitEvent({
+            type: "error",
+            provenance: RunnerEventProvenance.ConduitObserved,
+            runId,
+            roleId: role.name,
+            timestamp: new Date().toISOString(),
+            payload: {
+              kind: "error",
+              ...validationFailure,
+            },
+          });
+        }
       }
       onProgress(
         `${role.name}: ${status}${files.length ? ` · ${files.length} file${files.length === 1 ? "" : "s"} changed` : ""}`,
@@ -550,8 +1035,9 @@ function runProcess(
           : status === "cancelled"
             ? "cancelled"
             : "failed";
-      void emitEvent({
+      await emitEvent({
         type: "lifecycle",
+        provenance: RunnerEventProvenance.ConduitObserved,
         runId,
         roleId: role.name,
         timestamp: new Date().toISOString(),
@@ -563,8 +1049,9 @@ function runProcess(
       });
 
       // Emit result event
-      void emitEvent({
+      await emitEvent({
         type: "result",
+        provenance: RunnerEventProvenance.ConduitObserved,
         runId,
         roleId: role.name,
         timestamp: new Date().toISOString(),
@@ -576,6 +1063,50 @@ function runProcess(
         },
       });
 
+      const resultRecord =
+        structural.valid && structural.value
+          ? {
+              recordVersion: "1.0" as const,
+              runId,
+              featureId: featureId ?? "unknown",
+              taskId: null,
+              assignmentId:
+                role.assignment?.assignmentId ?? `${runId}:${role.name}`,
+              role: role.name,
+              runner: role.runner,
+              model: role.model ?? null,
+              receivedAt: new Date().toISOString(),
+              process: {
+                exitCode: code ?? -1,
+                acceptable: code === 0 && !cancelled,
+                cancelled,
+              },
+              observedChangedFiles: files,
+              conduitObservedEvents: emittedEvents.filter(
+                (event) =>
+                  event.provenance === RunnerEventProvenance.ConduitObserved,
+              ),
+              runnerReportedEvents: emittedEvents.filter(
+                (event) =>
+                  event.provenance === RunnerEventProvenance.RunnerReported,
+              ),
+              agentClaimedEvents: emittedEvents.filter(
+                (event) =>
+                  event.provenance === RunnerEventProvenance.AgentClaimed,
+              ),
+              protocolValidation: {
+                valid: structural.valid,
+                issues: structural.issues,
+              },
+              semanticValidation: {
+                valid: semantic.valid,
+                issues: semantic.issues,
+              },
+              response: structural.value,
+            }
+          : undefined;
+      if (resultRecord) await resultRepository?.save(resultRecord);
+
       resolve({
         role: role.name,
         status,
@@ -583,6 +1114,7 @@ function runProcess(
         output,
         stdout,
         files,
+        resultRecord,
       });
     });
   });
@@ -632,10 +1164,14 @@ export async function executeRun({
   eventRepository?: RunEventRepository;
   processRegistry?: RunProcessRegistry;
 }): Promise<RunResult[]> {
+  const resultRepository = new FileConduitResultRecordRepository(
+    path.dirname(runDir),
+  );
   // Emit system-level starting event
   if (eventRepository) {
     await eventRepository.append({
       type: "lifecycle",
+      provenance: RunnerEventProvenance.ConduitObserved,
       runId: run.id,
       roleId: "system",
       timestamp: new Date().toISOString(),
@@ -671,6 +1207,8 @@ export async function executeRun({
       onChange,
       eventRepository,
       processRegistry,
+      resultRepository,
+      run.featureId,
       signal,
     );
   };
@@ -683,6 +1221,7 @@ export async function executeRun({
       );
       await eventRepository?.append({
         type: "error",
+        provenance: RunnerEventProvenance.ConduitObserved,
         runId: run.id,
         roleId: role.name,
         timestamp: new Date().toISOString(),
@@ -695,6 +1234,7 @@ export async function executeRun({
       });
       await eventRepository?.append({
         type: "lifecycle",
+        provenance: RunnerEventProvenance.ConduitObserved,
         runId: run.id,
         roleId: role.name,
         timestamp: new Date().toISOString(),
@@ -732,6 +1272,7 @@ export async function executeRun({
       terminalByRole.set(role.name, result);
       await eventRepository?.append({
         type: "lifecycle",
+        provenance: RunnerEventProvenance.ConduitObserved,
         runId: run.id,
         roleId: role.name,
         timestamp: new Date().toISOString(),
@@ -750,49 +1291,57 @@ export async function executeRun({
     }
   }
   const reviewerSelected = run.roles.some((role) => role.name === "reviewer");
-  run.status = results.some((result) => result.status === "cancelled")
-    ? "cancelled"
-    : results.every((result) => result.status === "completed")
-      ? "completed"
-      : "failed";
+  const terminalStatus = terminalRunStatus(results);
+  run.status = terminalStatus;
+  const worktrees = run.roles
+    .map((role) => role.worktree)
+    .filter((worktree): worktree is string => Boolean(worktree));
+  if (run.stateDirectory && worktrees.length > 0) {
+    await new FileWorktreeLifecycleRepository(run.stateDirectory).save({
+      runId: run.id,
+      status: terminalStatus,
+      worktrees,
+      completedAt: new Date().toISOString(),
+    });
+  }
+  await writeFile(
+    path.join(runDir, "terminal.json"),
+    `${JSON.stringify({ status: run.status, completedAt: new Date().toISOString() }, null, 2)}\n`,
+  );
   for (const role of run.roles)
     role.status =
       (results.find((result) => result.role === role.name)
         ?.status as RunRole["status"]) ?? "failed";
-  const successfulRun = run.status === "completed";
-  const completionMessage = successfulRun
-    ? reviewerSelected
-      ? "Flow finished: reviewer completed with no required fixes."
-      : "Flow finished: all selected agents completed."
-    : `Run ${run.status}`;
+  const successfulRun = terminalStatus === "completed";
+  const runCompletionMessage = completionMessage(
+    terminalStatus,
+    reviewerSelected,
+  );
 
   // Emit system-level completion event
   if (eventRepository) {
     await eventRepository.append({
       type: "lifecycle",
+      provenance: RunnerEventProvenance.ConduitObserved,
       runId: run.id,
       roleId: "system",
       timestamp: new Date().toISOString(),
       payload: {
         kind: "lifecycle",
-        state:
-          run.status === "completed"
-            ? "completed"
-            : run.status === "cancelled"
-              ? "cancelled"
-              : "failed",
-        message: completionMessage,
+        state: terminalStatus,
+        message: runCompletionMessage,
       },
     });
     if (successfulRun) {
       await eventRepository.append({
         type: "activity",
+        provenance: RunnerEventProvenance.ConduitObserved,
         runId: run.id,
         roleId: "system",
         timestamp: new Date().toISOString(),
         payload: {
           kind: "activity",
-          message: completionMessage,
+          message: runCompletionMessage,
         },
       });
     }

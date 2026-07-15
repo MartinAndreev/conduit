@@ -9,7 +9,11 @@ test("builds subscription CLI commands for each supported runner", () => {
   ]);
   assert.deepEqual(commandForRole({ runner: "codex" }, "/tmp/task.md"), [
     "codex",
-    ["exec", "Read /tmp/task.md and perform only your assigned task."],
+    [
+      "exec",
+      "--json",
+      "Read /tmp/task.md and perform only your assigned task.",
+    ],
   ]);
   assert.deepEqual(commandForRole({ runner: "pi" }, "/tmp/task.md"), [
     "pi",
@@ -40,6 +44,7 @@ test("builds subscription CLI commands for each supported runner", () => {
       "codex",
       [
         "exec",
+        "--json",
         "Read /tmp/task.md and perform only your assigned task. Requested reasoning effort: xhigh.",
       ],
     ],

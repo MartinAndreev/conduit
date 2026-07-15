@@ -10,6 +10,7 @@ import type {
   RevisionStatus,
 } from "../types/revision.js";
 import { parseQuestions } from "../helpers/question-parser.js";
+import { extractArchitectEvents } from "../helpers/architect-event-parser.js";
 
 function toRevision(
   row: RefinementDatabase["refinement_revisions"],
@@ -161,32 +162,37 @@ export class TursoRefinementRevisionRepository implements RefinementRevisionRepo
     transcript: string,
   ): Promise<void> {
     const sanitized = redactSecrets(transcript.trim());
+    const events = extractArchitectEvents(sanitized);
     await this.database.transaction().execute(async (transaction) => {
       await transaction
         .updateTable("refinement_revisions")
-        .set({ transcript: sanitized, updated_at: new Date().toISOString() })
+        .set({ transcript: null, updated_at: new Date().toISOString() })
         .where("feature_id", "=", featureIdOf(revision))
         .where("revision_id", "=", revision.id)
         .execute();
-      const latest = await transaction
+      let latest = await transaction
         .selectFrom("refinement_events")
         .select((expression) =>
           expression.fn.max<number>("sequence").as("sequence"),
         )
         .where("feature_id", "=", featureIdOf(revision))
         .executeTakeFirst();
-      await transaction
-        .insertInto("refinement_events")
-        .values({
-          feature_id: featureIdOf(revision),
-          sequence: (latest?.sequence ?? 0) + 1,
-          event_type: "activity",
-          timestamp: new Date().toISOString(),
-          content: sanitized.slice(0, 8_000),
-          files_json: null,
-          diff: null,
-        })
-        .execute();
+      for (const event of events) {
+        const sequence = (latest?.sequence ?? 0) + 1;
+        await transaction
+          .insertInto("refinement_events")
+          .values({
+            feature_id: featureIdOf(revision),
+            sequence,
+            event_type: event.type,
+            timestamp: event.timestamp,
+            content: event.content.slice(0, 2_000),
+            files_json: event.files ? JSON.stringify(event.files) : null,
+            diff: event.diff?.slice(0, 256_000) ?? null,
+          })
+          .execute();
+        latest = { sequence };
+      }
     });
   }
 

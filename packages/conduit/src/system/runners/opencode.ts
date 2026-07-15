@@ -26,7 +26,6 @@ export class OpenCodeAdapter implements RunnerAdapter {
     return args;
   }
 
-
   createOutputParser(runId: string, roleId: string): JsonLineOutputParser {
     return new JsonLineOutputParser(
       (line) => this.parseOutput(`${line}\n`, runId, roleId),

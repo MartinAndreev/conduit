@@ -9,6 +9,8 @@ import {
   redactStorageDiagnostic,
   resolveGlobalDatabasePaths,
   resolveProjectDatabasePaths,
+  ensureConduitStateGitIgnored,
+  ensureWorktreeRootGitIgnored,
 } from "../src/system/storage/index.js";
 
 test("persistence-foundation resolves default project database path", () => {
@@ -21,6 +23,43 @@ test("persistence-foundation resolves XDG global database path", () => {
   const paths = resolveGlobalDatabasePaths({ XDG_DATA_HOME: "/tmp/xdg" });
   assert.equal(paths.directory, "/tmp/xdg/conduit");
   assert.equal(paths.databasePath, "/tmp/xdg/conduit/global.db");
+});
+
+test("custom state directories ignore every runtime artifact class", async () => {
+  const root = await mkdtemp(join(tmpdir(), "conduit-ignore-"));
+  const stateDirectory = join(root, ".conduit-state");
+  try {
+    await ensureConduitStateGitIgnored(stateDirectory);
+    const ignore = await readFile(join(stateDirectory, ".gitignore"), "utf8");
+    for (const pattern of [
+      "runs/",
+      "cache/",
+      "assignments/",
+      "worktrees/",
+      "worktree-metadata/",
+      "hooks/",
+      "legacy-archive/",
+      "state.db.lock",
+      "backups/",
+      "*.db-wal",
+      "*.db-shm",
+      "*.lock",
+    ]) {
+      assert.ok(ignore.split(/\r?\n/).includes(pattern), pattern);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a configurable worktree root ignores its complete checkout contents", async () => {
+  const root = await mkdtemp(join(tmpdir(), "conduit-worktree-ignore-"));
+  try {
+    await ensureWorktreeRootGitIgnored(root);
+    assert.equal(await readFile(join(root, ".gitignore"), "utf8"), "*\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("persistence-foundation project lock prevents a second owner", async () => {

@@ -1,9 +1,5 @@
 export type AgentStatus =
-  | "completed"
-  | "partial"
-  | "blocked"
-  | "needs_input"
-  | "failed";
+  "completed" | "partial" | "blocked" | "needs_input" | "failed";
 
 export type AgentVerdictDecision =
   | "approved"
@@ -13,14 +9,41 @@ export type AgentVerdictDecision =
   | "needs_changes"
   | "inconclusive";
 
-export type AgentRoleKind =
-  | "implementation"
-  | "reviewer"
-  | "research"
-  | "architect"
-  | "qa"
-  | "documentation"
-  | "custom";
+import type { AgentRoleKindValue } from "../../roles/enums/agent-role-kind.js";
+
+export type AgentRoleKind = AgentRoleKindValue;
+
+export interface AgentAssignmentSecurityV1 {
+  readonly databaseEnvironmentRemoved: true;
+  readonly databaseAccessForbidden: true;
+  readonly memoryActivationForbidden: true;
+  readonly secretReportingForbidden: true;
+}
+
+export interface AgentAssignmentSizeLimitsV1 {
+  readonly responseBytes: number;
+  readonly summaryCharacters: number;
+  readonly collectionItems: number;
+}
+
+export interface AgentAssignmentV1 {
+  readonly assignmentId: string;
+  readonly role: string;
+  readonly roleKind: AgentRoleKind;
+  readonly objective: string;
+  readonly ownedPaths: readonly string[];
+  readonly forbiddenPaths: readonly string[];
+  readonly dependencies: readonly string[];
+  readonly contextReferences: readonly string[];
+  readonly acceptanceCriteria: readonly string[];
+  readonly contracts: readonly string[];
+  readonly requiredVerification: readonly string[];
+  readonly expectedCapabilities: readonly string[];
+  readonly requiredResponseFields: readonly string[];
+  readonly outputSchemaRef: "agent-response-v1.schema.json";
+  readonly security: AgentAssignmentSecurityV1;
+  readonly sizeLimits: AgentAssignmentSizeLimitsV1;
+}
 
 export interface AgentVerdictV1 {
   readonly decision: AgentVerdictDecision;
@@ -134,6 +157,39 @@ export interface AgentAssignmentPolicyV1 {
   readonly ownedPaths: readonly string[];
   readonly requiredVerification?: readonly string[];
   readonly expectedArtifacts?: readonly string[];
+  readonly observedChangedFiles?: readonly string[];
+  readonly readOnly?: boolean;
+}
+
+export interface AgentProcessResultV1 {
+  readonly exitCode: number;
+  readonly acceptable: boolean;
+  readonly cancelled: boolean;
+}
+
+export interface AgentValidationMetadataV1 {
+  readonly valid: boolean;
+  readonly issues: readonly ValidationIssue[];
+}
+
+export interface ConduitResultRecordV1 {
+  readonly recordVersion: "1.0";
+  readonly runId: string;
+  readonly featureId: string;
+  readonly taskId: string | null;
+  readonly assignmentId: string;
+  readonly role: string;
+  readonly runner: string;
+  readonly model: string | null;
+  readonly receivedAt: string;
+  readonly process: AgentProcessResultV1;
+  readonly observedChangedFiles: readonly string[];
+  readonly conduitObservedEvents: readonly import("./runner-events.js").RunnerEvent[];
+  readonly runnerReportedEvents: readonly import("./runner-events.js").RunnerEvent[];
+  readonly agentClaimedEvents: readonly import("./runner-events.js").RunnerEvent[];
+  readonly protocolValidation: AgentValidationMetadataV1;
+  readonly semanticValidation: AgentValidationMetadataV1;
+  readonly response: AgentResponseV1;
 }
 
 export interface ValidationIssue {

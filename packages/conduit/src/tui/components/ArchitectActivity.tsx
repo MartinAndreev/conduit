@@ -1,20 +1,12 @@
-import type { ArchitectEvent } from "@domains/refinement/types/architect-event.js";
-import type { Theme } from "../theme.js";
 import { AgentActivity } from "@tui/components/AgentActivity.js";
 import { SplitDiff } from "@tui/components/SplitDiff.js";
-
-interface ArchitectActivityProps {
-  readonly theme: Theme;
-  readonly events: readonly ArchitectEvent[];
-  readonly uniqueFiles: readonly string[];
-  readonly expandedIndex: number | null;
-  readonly loading: boolean;
-  readonly error: string | null;
-  readonly selectedDiff: string | undefined;
-  readonly featureId: string;
-  readonly selectedFileIndex: number;
-  readonly running?: boolean;
-}
+import type { ArchitectActivityProps } from "@tui/types/architect-activity.js";
+import {
+  architectActivityCopy,
+  architectActivitySummary,
+  architectCurrentActivity,
+  architectRunningStatus,
+} from "@tui/helpers/architect-activity-presentation.js";
 
 export function ArchitectActivity({
   theme,
@@ -31,7 +23,7 @@ export function ArchitectActivity({
   if (loading)
     return (
       <box width="100%" height="100%" backgroundColor={theme.surface.base}>
-        <text content="Loading architect activity..." fg={theme.text.muted} />
+        <text content={architectActivityCopy.loading} fg={theme.text.muted} />
       </box>
     );
   if (error)
@@ -41,6 +33,11 @@ export function ArchitectActivity({
       </box>
     );
   const expanded = expandedIndex === null ? undefined : events[expandedIndex];
+  const latest = events.at(-1);
+  const latestTime = latest
+    ? new Date(latest.timestamp).toLocaleTimeString()
+    : undefined;
+  const currentMessage = architectCurrentActivity(featureId, latest?.content);
   return (
     <box
       width="100%"
@@ -51,23 +48,22 @@ export function ArchitectActivity({
     >
       <AgentActivity
         role="architect"
-        runner="runner pending"
-        message={`Refining feature ${featureId}`}
+        message={currentMessage}
         state={running ? "working" : "completed"}
         mascotRole="architect"
       />
       {running && (
         <text
-          content="Architect is refining the packet. Activity will appear as its transcript is captured."
+          content={architectRunningStatus(latestTime)}
           fg={theme.action.attention}
         />
       )}
       <text
-        content="Keys: ↑/↓ select a changed file · Enter open/close its diff · Esc close an open diff · Esc again or q cancels refinement and exits"
+        content={architectActivityCopy.keyboardHelp}
         fg={theme.text.muted}
       />
       <text
-        content={`Changed files: ${uniqueFiles.length} | Events: ${events.length}`}
+        content={architectActivitySummary(uniqueFiles.length, events.length)}
         fg={theme.text.strong}
       />
       <box width="100%" flexGrow={1} flexDirection="row" marginTop={1}>
@@ -78,7 +74,10 @@ export function ArchitectActivity({
           padding={1}
           marginRight={1}
         >
-          <text content="Changed files" fg={theme.text.strong} />
+          <text
+            content={architectActivityCopy.changedFilesHeading}
+            fg={theme.text.strong}
+          />
           {uniqueFiles.map((file, index) => (
             <text
               key={file}
@@ -99,7 +98,16 @@ export function ArchitectActivity({
           paddingTop={1}
           backgroundColor={theme.surface.raised}
         >
-          <text content="Activity" fg={theme.text.strong} />
+          <text
+            content={architectActivityCopy.heading}
+            fg={theme.text.strong}
+          />
+          {events.length === 0 && (
+            <text
+              content={architectActivityCopy.emptyActivity}
+              fg={theme.text.muted}
+            />
+          )}
           {events.slice(-8).map((event, index) => (
             <text
               key={`${event.timestamp}-${index}`}

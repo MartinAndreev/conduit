@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFile, readdir } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { mkdir, readFile, readdir, rename } from "node:fs/promises";
+import { basename, dirname, join, relative } from "node:path";
 import { createTursoKysely } from "../adapters/kysely-turso-dialect.js";
 import type { DatabaseConnection } from "../interfaces/database.js";
 import type { LegacyImportDatabase } from "../interfaces/import-database.js";
@@ -18,6 +18,7 @@ import { TursoReviewResultRepository } from "../../../domains/runs/repositories/
 import { TursoRunRecoveryRepository } from "../../../domains/runs/repositories/turso-run-recovery-repository.js";
 import type { RefinementDraft } from "../../../domains/refinement/types/draft.js";
 import type { RunnerEvent } from "../../../domains/runs/types/runner-events.js";
+import { RunnerEventProvenance } from "../../../domains/runs/enums/runner-event-provenance.js";
 import type { ReviewResult } from "../../../domains/runs/types/review.js";
 import type { Run } from "../../../domains/runs/types/run.js";
 import type { RefinementRevision } from "../../../domains/refinement/types/revision.js";
@@ -62,6 +63,18 @@ export class LegacyFileImporter implements LegacyImportRunner {
     let importedRecords = 0;
     let skippedImports = 0;
 
+    const archive = async (sourcePath: string): Promise<void> => {
+      const stateRelativePath = relative(this.stateDirectory, sourcePath);
+      if (stateRelativePath.startsWith("..")) return;
+      const destination = join(
+        this.stateDirectory,
+        "legacy-archive",
+        stateRelativePath,
+      );
+      await mkdir(dirname(destination), { recursive: true });
+      await rename(sourcePath, destination);
+    };
+
     const processFile = async (
       sourcePath: string,
       consume: (content: string) => Promise<number>,
@@ -73,10 +86,7 @@ export class LegacyFileImporter implements LegacyImportRunner {
         .select(["source_checksum", "status"])
         .where("source_path", "=", sourcePath)
         .executeTakeFirst();
-      if (
-        existing?.status === "succeeded" &&
-        existing.source_checksum === sourceChecksum
-      ) {
+      if (existing?.status === "succeeded") {
         skippedImports += 1;
         return;
       }
@@ -103,6 +113,7 @@ export class LegacyFileImporter implements LegacyImportRunner {
             }),
           )
           .execute();
+        await archive(sourcePath);
       } catch (error) {
         skippedImports += 1;
         await database
@@ -194,6 +205,7 @@ export class LegacyFileImporter implements LegacyImportRunner {
           const sanitized = redactSecrets(content);
           await events.append({
             type: "tool-output",
+            provenance: RunnerEventProvenance.ConduitObserved,
             runId,
             roleId: artifactName.replace(/\.(?:log|patch|diff)$/, ""),
             timestamp: new Date().toISOString(),

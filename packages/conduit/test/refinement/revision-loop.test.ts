@@ -170,12 +170,13 @@ test("failed architect startup is persisted for research resume", async () => {
 
     assert.equal(result.success, false);
     assert.equal((await repository.getLatest(feature))?.status, "failed");
-    assert.match(
-      await readFile(
+    assert.equal(result.error?.message, "runner unavailable");
+    await assert.rejects(
+      readFile(
         path.join(feature.directory, "revisions", "001", "architect-run.md"),
         "utf8",
       ),
-      /analysis/,
+      { code: "ENOENT" },
     );
   } finally {
     await rm(root, { recursive: true, force: true });

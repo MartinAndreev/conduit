@@ -198,7 +198,7 @@ export class CompositeCredentialStore implements CredentialStore {
       if (this.primary.initialize) {
         await this.primary.initialize();
       }
-      this.useFallback = false;
+      this.useFallback = this.primary.isAvailable?.() === false;
     } catch {
       this.useFallback = true;
     }

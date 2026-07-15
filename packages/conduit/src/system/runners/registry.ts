@@ -23,6 +23,26 @@ export function configureFinalOutputCapture(
     : args;
 }
 
+export function captureFinalResponse(
+  runner: string,
+  runId: string,
+  roleId: string,
+  stdout: string,
+  stderr: string,
+  capturedOutput: string,
+): string {
+  if (capturedOutput.trim()) return capturedOutput.trim();
+  const adapter = adapters[runner];
+  const stdoutParser = adapter?.createOutputParser?.(runId, roleId);
+  const stderrParser = adapter?.createOutputParser?.(runId, roleId);
+  stdoutParser?.push(stdout);
+  stdoutParser?.flush();
+  stderrParser?.push(stderr);
+  stderrParser?.flush();
+  return (
+    stdoutParser?.finalResponse ?? stderrParser?.finalResponse ?? stdout.trim()
+  );
+}
 
 export function runnerAdapter(runner: string): RunnerAdapter | undefined {
   return adapters[runner];

@@ -21,6 +21,12 @@ import { redactSecrets } from "@system/storage/security/secret-redaction.js";
 import { agentResponseContractPrompt } from "../assets/agent-response-contract.js";
 import { parseAgentResponseV1 } from "../validation/agent-response-validator.js";
 import { validateAgentResponseForAssignment } from "../validation/agent-semantic-validator.js";
+import {
+  captureFinalResponse,
+  configureFinalOutputCapture,
+} from "@system/runners/registry.js";
+import { createAgentAssignmentV1 } from "../factories/agent-assignment-factory.js";
+import { validateAgentAssignmentV1 } from "../validation/agent-assignment-validator.js";
 
 export interface FinalReviewDependencies {
   loadConfig: (projectRoot: string) => Promise<Config>;
@@ -111,30 +117,38 @@ function parseReviewOutput(output: string): {
           message: `Reviewer did not return valid AgentResponseV1: ${structural.issues.map((item) => `${item.path}: ${item.message}`).join("; ")}`,
         },
       ],
-      followUp: "Reviewer must return exactly one valid AgentResponseV1 JSON object.",
+      followUp:
+        "Reviewer must return exactly one valid AgentResponseV1 JSON object.",
     };
   }
   const semantic = validateAgentResponseForAssignment(structural.value, {
     roleKind: "reviewer",
     ownedPaths: [],
   });
-  const findings: ReviewFinding[] = structural.value.findings.map((finding) => ({
-    severity: finding.severity === "critical" ? "error" : finding.severity,
-    file: finding.path,
-    line: finding.line,
-    message: finding.message,
-  }));
+  const findings: ReviewFinding[] = structural.value.findings.map(
+    (finding) => ({
+      severity: finding.severity === "critical" ? "error" : finding.severity,
+      file: finding.path,
+      line: finding.line,
+      message: finding.message,
+    }),
+  );
   if (!semantic.valid) {
     findings.push({
       severity: "warning",
       message: `Reviewer response failed semantic policy: ${semantic.issues.map((item) => `${item.path}: ${item.message}`).join("; ")}`,
     });
   }
-  const approved = semantic.valid && structural.value.status === "completed" && structural.value.verdict?.decision === "approved";
+  const approved =
+    semantic.valid &&
+    structural.value.status === "completed" &&
+    structural.value.verdict?.decision === "approved";
   return {
     decision: approved ? "approved" : "rejected",
     findings,
-    followUp: approved ? undefined : (structural.value.verdict?.rationale ?? "Manual review required"),
+    followUp: approved
+      ? undefined
+      : (structural.value.verdict?.rationale ?? "Manual review required"),
   };
 }
 
@@ -200,29 +214,76 @@ export function createFinalReviewHandler(
       );
 
       // Invoke the configured reviewer runner. Review policy stays provider-neutral.
-      const promptFile = path.join(
+      const contextFile = path.join(
         command.projectRoot,
         config.stateDir,
         "runs",
         command.runId,
-        "review-prompt.md",
+        "review-context.md",
+      );
+      const promptFile = path.join(
+        path.dirname(contextFile),
+        "review-assignment.json",
+      );
+      const outputFile = path.join(
+        path.dirname(contextFile),
+        "review-agent-response.json",
       );
       await (
         await import("node:fs/promises")
-      ).writeFile(promptFile, redactSecrets(prompt));
+      ).writeFile(contextFile, redactSecrets(prompt));
 
       const reviewer = config.roles.reviewer;
       if (!reviewer)
         throw new Error("No reviewer role is configured for final review.");
+      const assignment = createAgentAssignmentV1({
+        assignmentId: `${command.runId}:final-review`,
+        role: "reviewer",
+        roleKind: "reviewer",
+        objective: `Independently review feature ${command.featureId} and return an approved or rejected AgentResponseV1 verdict grounded in the referenced packet and diffs.`,
+        ownedPaths: [],
+        contextReferences: [path.relative(command.projectRoot, contextFile)],
+        acceptanceCriteria: [
+          "Trace every approved acceptance criterion to authoritative evidence.",
+          "Reject when any material concern or required evidence remains.",
+        ],
+        contracts: [`specs/${command.featureId}-*/contracts/README.md`],
+        expectedCapabilities: ["repository-read"],
+      });
+      const assignmentValidation = validateAgentAssignmentV1(assignment);
+      if (!assignmentValidation.valid)
+        throw new Error(
+          `Invalid final-review assignment: ${assignmentValidation.issues.map((item) => `${item.path}: ${item.message}`).join("; ")}`,
+        );
+      await (
+        await import("node:fs/promises")
+      ).writeFile(promptFile, `${JSON.stringify(assignment, null, 2)}\n`);
       const [reviewCommand, reviewArgs] = commandForRole(reviewer, promptFile);
-      const reviewResult = spawnSync(reviewCommand, reviewArgs, {
+      const capturedArgs = configureFinalOutputCapture(
+        reviewer.runner,
+        reviewArgs,
+        outputFile,
+      );
+      const reviewResult = spawnSync(reviewCommand, capturedArgs, {
         cwd: command.projectRoot,
         encoding: "utf8",
         timeout: 120_000,
         env: agentProcessEnvironment(),
       });
 
-      const output = reviewResult.stdout ?? "";
+      const capturedOutput = await readFile(outputFile, "utf8").catch(() => "");
+      if (capturedOutput)
+        await (
+          await import("node:fs/promises")
+        ).writeFile(outputFile, redactSecrets(capturedOutput));
+      const output = captureFinalResponse(
+        reviewer.runner,
+        command.runId,
+        "reviewer",
+        reviewResult.stdout ?? "",
+        reviewResult.stderr ?? "",
+        capturedOutput,
+      );
       const { decision, findings, followUp } = parseReviewOutput(output);
 
       // Persist review result
@@ -254,8 +315,8 @@ export function createFinalReviewHandler(
       return {
         success: false,
         error: {
-          code: "CODEX_REVIEW_ERROR",
-          message: `Failed to run Codex review: ${error instanceof Error ? error.message : String(error)}`,
+          code: "RUNNER_REVIEW_ERROR",
+          message: `Failed to run the configured reviewer: ${error instanceof Error ? error.message : String(error)}`,
           cause: error,
         },
       };

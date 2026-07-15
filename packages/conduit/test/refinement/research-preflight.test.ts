@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createStartResearchRefinementHandler } from "@domains/refinement/handlers/start-research-refinement-handler.js";
+import { createAgentAssignmentV1 } from "@domains/runs/factories/agent-assignment-factory.js";
 
 test("research preflight saves a visible report before architect refinement", async () => {
   const projectRoot = await mkdtemp(
@@ -11,7 +12,8 @@ test("research preflight saves a visible report before architect refinement", as
   );
   const featureDirectory = path.join(projectRoot, "specs", "001-example");
   const runDir = path.join(projectRoot, ".conduit", "runs", "research");
-  const promptFile = path.join(runDir, "researcher.md");
+  const promptFile = path.join(runDir, "researcher-assignment.json");
+  const contextFile = path.join(runDir, "researcher-context.md");
   await mkdir(featureDirectory, { recursive: true });
   await mkdir(runDir, { recursive: true });
   try {
@@ -52,11 +54,23 @@ test("research preflight saves a visible report before architect refinement", as
               owns: [],
               dependsOn: [],
               promptFile,
-              prompt: "# Researcher",
+              prompt: "{}",
+              context: "# Researcher",
+              contextFile,
               command: "codex",
               args: ["exec", "Read the researcher prompt."],
               skillSource: "file:researcher.md",
               status: "planned",
+              assignment: createAgentAssignmentV1({
+                assignmentId: "research:researcher",
+                role: "researcher",
+                roleKind: "research",
+                objective: "Research the feature.",
+                ownedPaths: [],
+                contextReferences: [path.relative(projectRoot, contextFile)],
+                acceptanceCriteria: ["Return evidence."],
+                contracts: ["specs"],
+              }),
             },
           ],
         },
@@ -73,7 +87,7 @@ test("research preflight saves a visible report before architect refinement", as
         ]);
         assert.equal(
           run.roles[0]?.finalOutputFile,
-          path.join(runDir, "researcher-output.md"),
+          path.join(runDir, "researcher-agent-response.json"),
         );
         assert.doesNotMatch(
           run.roles[0]?.prompt ?? "",
@@ -84,7 +98,8 @@ test("research preflight saves a visible report before architect refinement", as
           {
             role: "researcher",
             status: "completed",
-            stdout: '{"protocolVersion":"1.0","status":"completed","summary":"Researched auth context.","verdict":null,"artifacts":[],"findings":[{"severity":"info","category":"fact","message":"src/auth.ts owns login.","path":"src/auth.ts","evidence":["src/auth.ts"]}],"verification":[],"decisions":[],"blockers":[],"questions":[],"risks":[],"evidence":[{"kind":"path","reference":"src/auth.ts"}],"memoryProposals":[],"globalPromotionProposals":[]}',
+            stdout:
+              '{"protocolVersion":"1.0","status":"completed","summary":"Researched auth context.","verdict":null,"artifacts":[],"findings":[{"severity":"info","category":"fact","message":"src/auth.ts owns login.","path":"src/auth.ts","evidence":["src/auth.ts"]}],"verification":[],"decisions":[],"blockers":[],"questions":[],"risks":[],"evidence":[{"kind":"path","reference":"src/auth.ts"}],"memoryProposals":[],"globalPromotionProposals":[]}',
           },
         ];
       },
@@ -142,11 +157,8 @@ test("research preflight saves a visible report before architect refinement", as
       assert.equal(result.data.reportFile, "conduit://research/001");
       assert.match(savedReport ?? "", /Findings/);
     }
-    assert.match(await readFile(promptFile, "utf8"), /research assignment/i);
-    assert.match(
-      await readFile(promptFile, "utf8"),
-      /research report delivery/i,
-    );
+    assert.match(await readFile(promptFile, "utf8"), /"roleKind": "research"/);
+    assert.match(await readFile(contextFile, "utf8"), /AgentResponseV1/);
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
   }

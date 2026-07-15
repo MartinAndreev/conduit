@@ -9,6 +9,8 @@ import { createSaveDraftHandler } from "../../src/domains/refinement/handlers/sa
 import { createGetDraftHandler } from "../../src/domains/refinement/handlers/get-draft-handler.js";
 import { createApproveRefinementHandler } from "../../src/domains/refinement/handlers/approve-refinement-handler.js";
 import { createGetArchitectEventsHandler } from "../../src/domains/refinement/handlers/get-architect-events-handler.js";
+import { extractArchitectEvents } from "../../src/domains/refinement/helpers/architect-event-parser.js";
+import { LiveArchitectEventRepository } from "../../src/domains/refinement/repositories/live-architect-event-repository.js";
 import { CommandBus } from "../../src/system/bus/command-bus.js";
 import { QueryBus } from "../../src/system/bus/query-bus.js";
 
@@ -342,6 +344,100 @@ pnpm lint`;
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
+});
+
+test("architect transcript line parsers recognize each supported token", () => {
+  const events = extractArchitectEvents(
+    `analysis
+codex
+apply patch
+patch: completed
+exec
+pnpm test`,
+    "2026-01-01T00:00:00.000Z",
+  );
+
+  assert.deepEqual(
+    events.map(({ type, content }) => ({ type, content })),
+    [
+      { type: "activity", content: "Analyzing project context" },
+      { type: "activity", content: "Refining feature specification" },
+      { type: "patch", content: "Applying specification patch" },
+      { type: "lifecycle", content: "Patch completed" },
+      { type: "tool-call", content: "pnpm test" },
+    ],
+  );
+});
+
+test("architect activity collapses repeated transport markers", () => {
+  const events = extractArchitectEvents(
+    "analysis\nanalysis\nanalysis\n",
+    "2026-01-01T00:00:00.000Z",
+  );
+
+  assert.deepEqual(
+    events.map(({ type, content }) => ({ type, content })),
+    [{ type: "activity", content: "Analyzing project context" }],
+  );
+});
+
+test("architect activity exposes emitted reasoning summaries and commands", () => {
+  const events = extractArchitectEvents(
+    [
+      JSON.stringify({ type: "thread.started" }),
+      JSON.stringify({
+        type: "item.completed",
+        item: { type: "reasoning", text: "Checking contract coverage" },
+      }),
+      JSON.stringify({
+        type: "item.started",
+        item: { type: "command_execution", command: "pnpm test" },
+      }),
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          type: "command_execution",
+          command: "pnpm test",
+          status: "completed",
+        },
+      }),
+    ].join("\n"),
+    "2026-01-01T00:00:00.000Z",
+  );
+
+  assert.deepEqual(
+    events.map(({ type, content }) => ({ type, content })),
+    [
+      { type: "lifecycle", content: "Architect session started" },
+      { type: "thought", content: "Checking contract coverage" },
+      { type: "tool-call", content: "pnpm test" },
+      { type: "tool-output", content: "pnpm test · completed" },
+    ],
+  );
+});
+
+test("live architect events take precedence over stale canonical history", async () => {
+  let canonicalReads = 0;
+  const repository = new LiveArchitectEventRepository(
+    {
+      loadEvents: async () => [
+        {
+          type: "activity",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          content: "Analyzing project context",
+        },
+      ],
+    },
+    {
+      loadEvents: async () => {
+        canonicalReads += 1;
+        return [];
+      },
+    },
+  );
+
+  assert.equal((await repository.loadEvents("007")).length, 1);
+  assert.equal(canonicalReads, 0);
 });
 
 test("getArchitectEvents deduplicates repeated transcript patches", async () => {

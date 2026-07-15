@@ -126,13 +126,11 @@ export class FileRefinementRevisionRepository implements RefinementRevisionRepos
   }
 
   async recordRun(
-    revision: RefinementRevision,
-    transcript: string,
+    _revision: RefinementRevision,
+    _transcript: string,
   ): Promise<void> {
-    await writeFile(
-      path.join(revision.directory, "architect-run.md"),
-      `# Architect run\n\n\`\`\`text\n${transcript.trim()}\n\`\`\`\n`,
-    );
+    // Raw diagnostics stay in the configured run directory and expire by TTL.
+    // Only approved human-readable refinement artifacts belong under specs/.
   }
 
   private async writeMetadata(revision: RefinementRevision): Promise<void> {

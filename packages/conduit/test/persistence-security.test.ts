@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { TursoDraftRepository } from "../src/domains/refinement/repositories/turso-draft-repository.js";
 import { TursoResearchReportRepository } from "../src/domains/refinement/repositories/turso-research-report-repository.js";
 import { TursoRunEventRepository } from "../src/domains/runs/repositories/turso-run-event-repository.js";
+import { RunnerEventProvenance } from "../src/domains/runs/enums/runner-event-provenance.js";
 import {
   GlobalDatabaseFactory,
   ProjectDatabaseFactory,
@@ -31,6 +32,7 @@ test("seeded secrets are absent from project database and backups", async () => 
     );
     await new TursoRunEventRepository(connection).append({
       type: "tool-output",
+      provenance: RunnerEventProvenance.ConduitObserved,
       runId: "run-1",
       roleId: "backend",
       timestamp: "2026-01-01T00:00:00.000Z",

@@ -45,7 +45,7 @@ const archive = releases.filter((entry) => entry.id !== featured?.id).slice(0, 2
               <p>{featured.data.description}</p>
             </div>
             <a class="release-read-link" href={`${base}releases/${featured.id}/`}>
-              Read announcement <span aria-hidden="true">↗</span>
+              {featured.data.type === "announcement" ? "Read announcement" : "Read release notes"} <span aria-hidden="true">↗</span>
             </a>
           </div>
         </section>
@@ -98,4 +98,3 @@ const archive = releases.filter((entry) => entry.id !== featured?.id).slice(0, 2
     }
   </main>
 </SiteLayout>
-

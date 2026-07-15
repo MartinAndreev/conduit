@@ -1,1 +1,1 @@
-export const conduitVersion = "0.2.22";
+export const conduitVersion = "0.5.4";

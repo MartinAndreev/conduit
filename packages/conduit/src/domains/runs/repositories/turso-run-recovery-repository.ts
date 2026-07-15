@@ -17,6 +17,17 @@ function recoveryState(run: Run): RunRecoveryState {
   return "running";
 }
 
+function compactRecoveryRun(run: Run): Run {
+  return {
+    ...run,
+    roles: run.roles.map((role) => ({
+      ...role,
+      prompt: "",
+      context: undefined,
+    })),
+  };
+}
+
 export class TursoRunRecoveryRepository implements RunRecoveryRepository {
   private readonly database;
 
@@ -34,7 +45,7 @@ export class TursoRunRecoveryRepository implements RunRecoveryRepository {
         `Run ${run.id} snapshot was updated by another operation.`,
       );
     }
-    const sanitized = redactPersistedValue(run);
+    const sanitized = redactPersistedValue(compactRecoveryRun(run));
     const now = new Date().toISOString();
     const version = (existing?.version ?? 0) + 1;
     const values: RunsDatabase["run_snapshots"] = {

@@ -16,7 +16,7 @@ export function formatArchitectRun({
   const lines = [
     "Conduit · Refining feature " + featureId,
     "",
-    "› ○ architect     codex",
+    "› ○ architect",
   ];
   if (transcriptVisible) {
     lines.push("    ── captured transcript (tail) ──");
@@ -51,7 +51,7 @@ export function formatArchitectRun({
     "",
     completed
       ? "Status: refinement completed"
-      : "Status: Codex is working · dashboard opens when complete · q hides this view",
+      : "Status: Architect is working · dashboard opens when complete · q hides this view",
   );
   return lines.join("\n");
 }

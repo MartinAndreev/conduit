@@ -14,8 +14,8 @@ const pages = {
   home: "index.html",
   docs: "docs/index.html",
   releases: "releases/index.html",
-  currentRelease: "releases/v0-5-2/index.html",
-  previousRelease: "releases/v0-5-1/index.html",
+  currentRelease: "releases/v0-5-4/index.html",
+  previousRelease: "releases/v0-5-2/index.html",
   roadmap: "roadmap/index.html",
 };
 
@@ -56,18 +56,19 @@ test("shared navigation is ordered and marks the active page", async () => {
 
 test("release archive and entries render published content", async () => {
   const archive = await readPage(pages.releases);
+  assert.match(archive, /Conduit v0\.5\.4: reliable agent runs/u);
+  assert.match(archive, /href="\/releases\/v0-5-4\/"/u);
   assert.match(archive, /Conduit v0\.5\.2: reliable refinement handoffs/u);
   assert.match(archive, /href="\/releases\/v0-5-2\/"/u);
-  assert.match(archive, /Conduit v0\.5\.1: a durable local foundation/u);
-  assert.match(archive, /href="\/releases\/v0-5-1\/"/u);
+  assert.match(archive, /Read release notes/u);
 
   const currentRelease = await readPage(pages.currentRelease);
-  assert.match(currentRelease, /Research that survives retries/u);
+  assert.match(currentRelease, /Structured agent contracts/u);
   assert.match(currentRelease, /property="og:type" content="article"/u);
   assert.doesNotMatch(currentRelease, /draft:\s*true/iu);
 
   const previousRelease = await readPage(pages.previousRelease);
-  assert.match(previousRelease, /embedded Turso database/u);
+  assert.match(previousRelease, /Research that survives retries/u);
 });
 
 test("roadmap preserves approved phases, priorities, and ordering", async () => {

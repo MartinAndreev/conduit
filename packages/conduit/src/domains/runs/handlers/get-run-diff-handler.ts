@@ -3,7 +3,7 @@ import type {
   GetRunDiffQuery,
   GetRunDiffReadModel,
 } from "../interfaces/queries/get-run-diff.js";
-import type { DiffReader } from "../repositories/worktree-diff-reader.js";
+import type { DiffReader } from "../interfaces/diff-reader.js";
 import type { RunRecoveryRepository } from "../interfaces/run-recovery-repository.js";
 
 export function createGetRunDiffHandler(

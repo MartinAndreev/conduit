@@ -1,6 +1,7 @@
 import path from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import type { Config } from "@domains/configuration/types/config.js";
+import { defaultConfig } from "@domains/configuration/repositories/project-config.js";
 import type { Feature } from "@domains/features/types/feature.js";
 import type {
   StartArchitectRefinementCommand,
@@ -33,6 +34,7 @@ export interface StartArchitectRefinementDependencies {
   readonly projectRoleGuidance?: (config: Config) => Promise<string>;
   readonly runArchitect: (params: {
     projectRoot: string;
+    runner: string;
     prompt: string;
     logFile: string;
   }) => Promise<{ logFile: string }>;
@@ -51,6 +53,8 @@ export function createStartArchitectRefinementHandler(
     try {
       const preferences = command.preferences ?? DEFAULT_ARCHITECT_PREFERENCES;
       const config = await deps.loadConfig(deps.projectRoot);
+      const architectRunner =
+        config.roles.architect?.runner ?? defaultConfig.roles.architect.runner;
       const guidance = deps.projectRoleGuidance
         ? await deps.projectRoleGuidance(config).catch(() => "")
         : "";
@@ -77,10 +81,10 @@ export function createStartArchitectRefinementHandler(
       );
       await mkdir(path.dirname(logFile), { recursive: true });
       await writeFile(logFile, "analysis\n");
-      await deps.revisionRepository.recordRun(revision, "analysis\n");
       const questionsFile = path.join(path.dirname(logFile), "questions.md");
       const result = await deps.runArchitect({
         projectRoot: deps.projectRoot,
+        runner: architectRunner,
         prompt: redactSecrets(
           deps.refinementPrompt(
             feature,

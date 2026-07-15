@@ -5,14 +5,22 @@ import { redactPersistedValue } from "@system/storage/security/secret-redaction.
 import type { RunsDatabase } from "../interfaces/database-schema.js";
 import type { RunEventRepository } from "../interfaces/run-event-repository.js";
 import type { RunnerEvent } from "../types/runner-events.js";
+import { RunnerEventProvenance } from "../enums/runner-event-provenance.js";
 
 function toEvent(row: Selectable<RunsDatabase["run_events"]>): RunnerEvent {
+  const stored = JSON.parse(row.payload_json) as
+    RunnerEvent["payload"] | Pick<RunnerEvent, "provenance" | "payload">;
+  const wrapped =
+    typeof stored === "object" && stored !== null && "payload" in stored;
   return {
     type: row.event_type as RunnerEvent["type"],
+    provenance: wrapped
+      ? stored.provenance
+      : RunnerEventProvenance.ConduitObserved,
     runId: row.run_id,
     roleId: row.role_id,
     timestamp: row.timestamp,
-    payload: JSON.parse(row.payload_json) as RunnerEvent["payload"],
+    payload: wrapped ? stored.payload : stored,
   };
 }
 
@@ -41,7 +49,10 @@ export class TursoRunEventRepository implements RunEventRepository {
           sequence: (latest?.sequence ?? 0) + 1,
           event_type: event.type,
           timestamp: event.timestamp,
-          payload_json: JSON.stringify(event.payload),
+          payload_json: JSON.stringify({
+            provenance: event.provenance,
+            payload: event.payload,
+          }),
         })
         .execute();
     });

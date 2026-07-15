@@ -1,6 +1,6 @@
 {
   "name": "conduit-orchestrator",
-  "version": "0.2.22",
+  "version": "0.5.4",
   "description": "Spec-driven, local-first orchestration for coding agents.",
   "license": "MIT",
   "type": "module",

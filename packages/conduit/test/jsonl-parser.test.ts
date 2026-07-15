@@ -1,6 +1,7 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import type { RunnerEvent } from "../src/domains/runs/types/runner-events.js";
+import { RunnerEventProvenance } from "../src/domains/runs/enums/runner-event-provenance.js";
 import {
   extractFinalResponse,
   JsonLineOutputParser,
@@ -9,6 +10,7 @@ import {
 function activity(message: string): RunnerEvent {
   return {
     type: "activity",
+    provenance: RunnerEventProvenance.RunnerReported,
     runId: "run",
     roleId: "role",
     timestamp: "2026-01-01T00:00:00.000Z",
@@ -68,8 +70,14 @@ test("extractFinalResponse supports runner final field variants", () => {
     '{"protocolVersion":"1.0"}',
   );
   assert.equal(
-    extractFinalResponse({ role: "assistant", content: '{"status":"completed"}' }),
+    extractFinalResponse({
+      role: "assistant",
+      content: '{"status":"completed"}',
+    }),
     '{"status":"completed"}',
   );
-  assert.equal(extractFinalResponse({ type: "message", content: "plain" }), undefined);
+  assert.equal(
+    extractFinalResponse({ type: "message", content: "plain" }),
+    undefined,
+  );
 });

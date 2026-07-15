@@ -9,6 +9,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { LifecyclePayload } from "../src/domains/runs/types/runner-events.js";
+import { captureFinalResponse } from "../src/system/runners/registry.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -16,6 +17,11 @@ test("CodexAdapter has correct configuration", () => {
   const adapter = new CodexAdapter();
   assert.equal(adapter.name, "codex");
   assert.equal(adapter.command, "codex");
+  assert.deepEqual(adapter.buildArgs("assignment.json"), [
+    "exec",
+    "--json",
+    "Read assignment.json and perform only your assigned task.",
+  ]);
 });
 
 test("CodexAdapter owns final-output capture arguments", () => {
@@ -58,6 +64,67 @@ test("CodexAdapter handles malformed JSON gracefully", () => {
   assert.ok(events.length > 0);
   assert.equal(events[0].type, "activity");
   assert.equal(events[0].payload.kind, "activity");
+});
+
+test("CodexAdapter exposes emitted reasoning summaries and command progress", () => {
+  const adapter = new CodexAdapter();
+  const events = adapter.parseOutput(
+    [
+      JSON.stringify({
+        type: "item.completed",
+        item: { type: "reasoning", text: "Checking the packet contracts" },
+      }),
+      JSON.stringify({
+        type: "item.started",
+        item: { type: "command_execution", command: "pnpm test" },
+      }),
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          type: "command_execution",
+          command: "pnpm test",
+          aggregated_output: "231 tests passed",
+        },
+      }),
+    ].join("\n"),
+    "run-1",
+    "architect",
+  );
+
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["activity", "tool-call", "tool-output"],
+  );
+  assert.equal(
+    events[0]?.payload.kind === "activity"
+      ? events[0].payload.message
+      : undefined,
+    "Reasoning summary: Checking the packet contracts",
+  );
+});
+
+test("CodexAdapter preserves provider failures as runner errors", () => {
+  const adapter = new CodexAdapter();
+  const [event] = adapter.parseOutput(
+    `${JSON.stringify({
+      type: "error",
+      message: JSON.stringify({
+        type: "error",
+        status: 400,
+        error: {
+          type: "invalid_request_error",
+          message: "The configured model is not supported for this account.",
+        },
+      }),
+    })}\n`,
+    "run-1",
+    "backend",
+  );
+  assert.equal(event?.type, "error");
+  assert.equal(
+    event?.payload.kind === "error" ? event.payload.message : undefined,
+    "The configured model is not supported for this account.",
+  );
 });
 
 test("OpenCodeAdapter has correct configuration", () => {
@@ -176,4 +243,16 @@ ${JSON.stringify({ type: "final", content: finalResponse })}
 
   assert.ok(events.some((event) => event.type === "activity"));
   assert.match(parser.finalResponse ?? "", /"protocolVersion":"1.0"/);
+});
+
+test("registry capture accepts a direct AgentResponseV1 JSON object", () => {
+  const response = JSON.stringify({
+    protocolVersion: "1.0",
+    status: "completed",
+    summary: "done",
+  });
+  assert.equal(
+    captureFinalResponse("opencode", "run", "role", `${response}\n`, "", ""),
+    response,
+  );
 });

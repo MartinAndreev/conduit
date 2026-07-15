@@ -6,6 +6,8 @@ export type RunStatus =
   | "cancelled"
   | "awaiting-input";
 
+export type TerminalRunStatus = "completed" | "failed" | "cancelled";
+
 export interface RunRole {
   name: string;
   runner: string;
@@ -16,6 +18,8 @@ export interface RunRole {
   dependsOn: string[];
   promptFile: string;
   prompt: string;
+  context?: string;
+  contextFile?: string;
   command: string;
   args: string[];
   skillSource: string;
@@ -23,6 +27,7 @@ export interface RunRole {
   worktree?: string;
   worktreePromptFile?: string;
   finalOutputFile?: string;
+  assignment?: import("./agent-protocol.js").AgentAssignmentV1;
 }
 
 export interface Run {
@@ -31,6 +36,10 @@ export interface Run {
   status: RunStatus;
   createdAt: string;
   roles: RunRole[];
+  stateDirectory?: string;
+  worktreeRoot?: string;
+  worktreeRetentionDays?: number;
+  runDiagnosticsRetentionDays?: number;
 }
 
 export interface RunResult {
@@ -42,4 +51,5 @@ export interface RunResult {
   stdout?: string;
   files?: string[];
   command?: string[];
+  resultRecord?: import("./agent-protocol.js").ConduitResultRecordV1;
 }

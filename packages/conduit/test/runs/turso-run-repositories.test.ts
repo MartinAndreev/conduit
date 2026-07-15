@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { TursoRunEventRepository } from "../../src/domains/runs/repositories/turso-run-event-repository.js";
 import { TursoRunRecoveryRepository } from "../../src/domains/runs/repositories/turso-run-recovery-repository.js";
 import { ProjectDatabaseFactory } from "../../src/system/storage/factories/database-factories.js";
+import { RunnerEventProvenance } from "../../src/domains/runs/enums/runner-event-provenance.js";
 
 test("Turso run events keep deterministic order under concurrent appends", async () => {
   const projectRoot = await mkdtemp(join(tmpdir(), "conduit-events-db-"));
@@ -16,6 +17,7 @@ test("Turso run events keep deterministic order under concurrent appends", async
       Array.from({ length: 20 }, (_, index) =>
         repository.append({
           type: "activity",
+          provenance: RunnerEventProvenance.ConduitObserved,
           runId: "run-1",
           roleId: index % 2 ? "backend" : "frontend",
           timestamp: new Date(index).toISOString(),
@@ -61,6 +63,42 @@ test("Turso run snapshots reject stale versions and list recent runs", async () 
       (await repository.listSnapshots())[0]?.run.status,
       "completed",
     );
+    await connection.close();
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("Turso run snapshots exclude duplicated prompt and context bodies", async () => {
+  const projectRoot = await mkdtemp(join(tmpdir(), "conduit-compact-run-"));
+  try {
+    const connection = await new ProjectDatabaseFactory(projectRoot).open();
+    const repository = new TursoRunRecoveryRepository(connection);
+    await repository.saveSnapshot({
+      id: "run-compact",
+      featureId: "007",
+      status: "planned",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      roles: [
+        {
+          name: "backend",
+          runner: "codex",
+          readOnly: false,
+          owns: ["src"],
+          dependsOn: [],
+          promptFile: ".state/runs/run-compact/backend-assignment.json",
+          prompt: "duplicated assignment body",
+          context: "duplicated context body",
+          command: "codex",
+          args: [],
+          skillSource: "test",
+          status: "planned",
+        },
+      ],
+    });
+    const stored = await repository.loadSnapshot("run-compact");
+    assert.equal(stored?.run.roles[0]?.prompt, "");
+    assert.equal(stored?.run.roles[0]?.context, undefined);
     await connection.close();
   } finally {
     await rm(projectRoot, { recursive: true, force: true });

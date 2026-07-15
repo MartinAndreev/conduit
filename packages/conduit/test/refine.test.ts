@@ -101,11 +101,35 @@ test("architect refinement uses an existing story without reopening the form", a
 test("architect progress hides raw output but reports the active command", () => {
   assert.equal(
     architectProgressMessage("analysis\nexec\npnpm test --filter api\n"),
-    "Codex is running: pnpm test --filter api",
+    "Architect is running: pnpm test --filter api",
   );
   assert.equal(
     architectProgressMessage("apply patch\n"),
-    "Codex is applying the specification patch",
+    "Architect is applying the specification patch",
+  );
+  assert.equal(
+    architectProgressMessage(
+      `${JSON.stringify({
+        type: "item.completed",
+        item: {
+          type: "reasoning",
+          text: "Checking the packet contracts before editing",
+        },
+      })}\n`,
+    ),
+    "Architect reasoning: Checking the packet contracts before editing",
+  );
+  assert.equal(
+    architectProgressMessage(
+      `${JSON.stringify({
+        type: "item.started",
+        item: {
+          type: "command_execution",
+          command: "pnpm test --filter refinement",
+        },
+      })}\n`,
+    ),
+    "Architect is running: pnpm test --filter refinement",
   );
 });
 

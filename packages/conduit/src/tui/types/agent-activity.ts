@@ -3,8 +3,8 @@ export type AgentActivityState = "working" | "waiting" | "completed" | "failed";
 export interface AgentActivityProps {
   /** Human-readable role currently performing work. */
   readonly role: string;
-  /** Runner or model label, for example `opencode` or `codex`. */
-  readonly runner: string;
+  /** Optional configured runner or model label. */
+  readonly runner?: string;
   /** Short, changing description of the agent's current activity. */
   readonly message: string;
   readonly state?: AgentActivityState;

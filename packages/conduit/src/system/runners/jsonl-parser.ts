@@ -1,10 +1,5 @@
 import type { RunnerEvent } from "../../domains/runs/types/runner-events.js";
-
-export interface RunnerOutputParser {
-  push(chunk: string): readonly RunnerEvent[];
-  flush(): readonly RunnerEvent[];
-  readonly finalResponse: string | undefined;
-}
+import type { RunnerOutputParser } from "./interfaces/output-parser.js";
 
 export class JsonLineOutputParser implements RunnerOutputParser {
   private buffer = "";
@@ -55,6 +50,13 @@ export class JsonLineOutputParser implements RunnerOutputParser {
 export function extractFinalResponse(
   parsed: Record<string, unknown>,
 ): string | undefined {
+  if (
+    parsed.protocolVersion === "1.0" &&
+    typeof parsed.status === "string" &&
+    typeof parsed.summary === "string"
+  ) {
+    return JSON.stringify(parsed);
+  }
   for (const key of [
     "finalResponse",
     "final_response",

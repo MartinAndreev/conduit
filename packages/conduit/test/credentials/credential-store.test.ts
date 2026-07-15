@@ -59,6 +59,37 @@ test("CompositeCredentialStore uses fallback when primary initialization fails",
   }
 });
 
+test("CompositeCredentialStore uses fallback when the primary reports unavailable", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "cred-test-"));
+  try {
+    const fallback = new EncryptedFallbackStore(tempDir);
+    const unavailablePrimary = {
+      async initialize() {},
+      isAvailable: () => false,
+      async get() {
+        throw new Error("not available");
+      },
+      async set() {
+        throw new Error("not available");
+      },
+      async delete() {
+        throw new Error("not available");
+      },
+      async list() {
+        throw new Error("not available");
+      },
+    };
+    const composite = new CompositeCredentialStore(
+      unavailablePrimary,
+      fallback,
+    );
+    await composite.initialize();
+    assert.equal(composite.isUsingFallback(), true);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("EncryptedFallbackStore set and get round-trips credentials", async () => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "cred-test-"));
   try {

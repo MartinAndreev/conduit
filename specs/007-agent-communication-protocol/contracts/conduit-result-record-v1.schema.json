@@ -1,1 +1,134 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"ConduitResultRecordV1","type":"object","additionalProperties":false,"required":["recordVersion","runId","featureId","role","runner","model","receivedAt","process","observedChangedFiles","conduitObservedEvents","runnerReportedEvents","protocolValidation","semanticValidation","response"],"properties":{"recordVersion":{"const":"1.0"},"runId":{"type":"string"},"featureId":{"type":"string"},"taskId":{"type":["string","null"]},"role":{"type":"string"},"runner":{"type":"string"},"model":{"type":["string","null"]},"receivedAt":{"type":"string"},"process":{"type":"object"},"observedChangedFiles":{"type":"array","items":{"type":"string"}},"conduitObservedEvents":{"type":"array"},"runnerReportedEvents":{"type":"array"},"protocolValidation":{"type":"object"},"semanticValidation":{"type":"object"},"response":{"$ref":"agent-response-v1.schema.json"}}}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://conduit.local/schemas/conduit-result-record-v1.schema.json",
+  "title": "ConduitResultRecordV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "recordVersion",
+    "runId",
+    "featureId",
+    "taskId",
+    "assignmentId",
+    "role",
+    "runner",
+    "model",
+    "receivedAt",
+    "process",
+    "observedChangedFiles",
+    "conduitObservedEvents",
+    "runnerReportedEvents",
+    "agentClaimedEvents",
+    "protocolValidation",
+    "semanticValidation",
+    "response"
+  ],
+  "properties": {
+    "recordVersion": { "const": "1.0" },
+    "runId": { "$ref": "#/$defs/identifier" },
+    "featureId": { "$ref": "#/$defs/identifier" },
+    "taskId": {
+      "anyOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }]
+    },
+    "assignmentId": { "$ref": "#/$defs/identifier" },
+    "role": { "$ref": "#/$defs/identifier" },
+    "runner": { "$ref": "#/$defs/identifier" },
+    "model": {
+      "anyOf": [
+        { "type": "string", "minLength": 1, "maxLength": 200 },
+        { "type": "null" }
+      ]
+    },
+    "receivedAt": { "type": "string", "format": "date-time" },
+    "process": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exitCode", "acceptable", "cancelled"],
+      "properties": {
+        "exitCode": { "type": "integer", "minimum": -1, "maximum": 255 },
+        "acceptable": { "type": "boolean" },
+        "cancelled": { "type": "boolean" }
+      }
+    },
+    "observedChangedFiles": {
+      "type": "array",
+      "maxItems": 1000,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/path" }
+    },
+    "conduitObservedEvents": { "$ref": "#/$defs/events" },
+    "runnerReportedEvents": { "$ref": "#/$defs/events" },
+    "agentClaimedEvents": { "$ref": "#/$defs/events" },
+    "protocolValidation": { "$ref": "#/$defs/validation" },
+    "semanticValidation": { "$ref": "#/$defs/validation" },
+    "response": { "$ref": "agent-response-v1.schema.json" }
+  },
+  "$defs": {
+    "identifier": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+"
+    },
+    "events": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": { "$ref": "#/$defs/event" }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "provenance",
+        "runId",
+        "roleId",
+        "timestamp",
+        "payload"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "lifecycle",
+            "activity",
+            "tool-call",
+            "tool-output",
+            "file-change",
+            "patch",
+            "error",
+            "result"
+          ]
+        },
+        "provenance": {
+          "enum": ["conduit-observed", "runner-reported", "agent-claimed"]
+        },
+        "runId": { "$ref": "#/$defs/identifier" },
+        "roleId": { "$ref": "#/$defs/identifier" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "payload": { "type": "object" }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["valid", "issues"],
+      "properties": {
+        "valid": { "type": "boolean" },
+        "issues": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "message"],
+            "properties": {
+              "path": { "type": "string", "minLength": 1, "maxLength": 500 },
+              "message": { "type": "string", "minLength": 1, "maxLength": 2000 }
+            }
+          }
+        }
+      }
+    }
+  }
+}
