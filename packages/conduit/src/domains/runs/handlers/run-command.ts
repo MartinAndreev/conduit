@@ -8,6 +8,8 @@ import type { CommandRuntimeDependencies } from "../../../system/cli/command-sup
 import type { RunRecoveryRepository } from "../interfaces/run-recovery-repository.js";
 import type { RunEventRepository } from "../interfaces/run-event-repository.js";
 import type { RunProcessRegistry } from "../repositories/run-process-registry.js";
+import type { RuntimeEventRepository } from "../interfaces/runtime-event-repository.js";
+import type { ConduitResultRecordRepository } from "../interfaces/conduit-result-record-repository.js";
 
 type RunCommandDependencies = Pick<
   ApplicationDependencies,
@@ -24,6 +26,8 @@ type RunCommandDependencies = Pick<
     runRecoveryRepository?: RunRecoveryRepository;
     runEventRepository?: RunEventRepository;
     runProcessRegistry?: RunProcessRegistry;
+    runtimeEventRepository?: RuntimeEventRepository;
+    resultRecordRepository?: ConduitResultRecordRepository;
   };
 
 export async function runCommand(
@@ -110,6 +114,8 @@ export async function runCommand(
       dryRun,
       signal: controller.signal,
       eventRepository: dependencies.runEventRepository,
+      runtimeEventRepository: dependencies.runtimeEventRepository,
+      resultRepository: dependencies.resultRecordRepository,
       processRegistry: dependencies.runProcessRegistry,
       onRoleWorkspaceReady: persistSnapshot,
       onProgress: (message: string) => {

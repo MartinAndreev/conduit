@@ -97,6 +97,9 @@ export interface ApplicationDependencies {
     signal?: AbortSignal;
     eventRepository?: import("../../domains/runs/interfaces/run-event-repository.js").RunEventRepository;
     processRegistry?: import("../../domains/runs/repositories/run-process-registry.js").RunProcessRegistry;
+    resultRepository?: import("../../domains/runs/interfaces/conduit-result-record-repository.js").ConduitResultRecordRepository;
+    runtimeEventRepository?: import("../../domains/runs/interfaces/runtime-event-repository.js").RuntimeEventRepository;
+    communicationProviders?: readonly import("../communication/types/provider.js").AgentCommunicationProvider[];
   }) => Promise<RunResult[]>;
   latestRuns: (projectRoot: string, config: Config) => Promise<Run[]>;
   readRunRoleLog: (

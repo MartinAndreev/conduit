@@ -138,6 +138,16 @@ export class TursoRefinementRevisionRepository implements RefinementRevisionRepo
     await this.setText(revision, "answers", redactSecrets(answers.trim()));
   }
 
+  async readAnswers(revision: RefinementRevision): Promise<string> {
+    const row = await this.database
+      .selectFrom("refinement_revisions")
+      .select("answers")
+      .where("feature_id", "=", featureIdOf(revision))
+      .where("revision_id", "=", revision.id)
+      .executeTakeFirst();
+    return row?.answers ?? "";
+  }
+
   async recordReview(
     revision: RefinementRevision,
     decision: "approved" | "changes_requested",

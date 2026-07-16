@@ -3,7 +3,7 @@ import type { ChildProcess } from "node:child_process";
 export interface RunProcessEntry {
   readonly runId: string;
   readonly roleId: string;
-  readonly process: ChildProcess;
+  readonly process?: ChildProcess;
   readonly abortController: AbortController;
 }
 
@@ -41,7 +41,11 @@ export function createRunProcessRegistry(): RunProcessRegistry {
       let cancelled = false;
       for (const entry of runEntries) {
         entry.abortController.abort();
-        if (entry.process.exitCode === null && !entry.process.killed) {
+        if (
+          entry.process &&
+          entry.process.exitCode === null &&
+          !entry.process.killed
+        ) {
           try {
             entry.process.kill("SIGTERM");
           } catch {

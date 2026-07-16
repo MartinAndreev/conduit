@@ -67,6 +67,8 @@ export class RunsBootstrapService implements ApplicationBootstrapService {
           runDir,
           dryRun: false,
           eventRepository: repositories.runEvents,
+          resultRepository: repositories.resultRecords,
+          runtimeEventRepository: repositories.runtimeEvents,
           processRegistry,
           onRoleWorkspaceReady: persistSnapshot,
         })
@@ -122,6 +124,7 @@ export class RunsBootstrapService implements ApplicationBootstrapService {
           },
           repositories.reviews,
           repositories.recovery,
+          repositories.resultRecords,
         ) as CommandHandler,
       );
     }

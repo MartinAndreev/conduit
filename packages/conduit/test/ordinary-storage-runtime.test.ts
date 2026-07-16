@@ -25,7 +25,7 @@ test("embedded Turso opens and prepares statements under ordinary Node", async (
       projectMigrations: number;
       globalMigrations: number;
     };
-    assert.equal(result.projectMigrations, 4);
+    assert.equal(result.projectMigrations, 5);
     assert.equal(result.globalMigrations, 1);
   } finally {
     await rm(directory, { recursive: true, force: true });

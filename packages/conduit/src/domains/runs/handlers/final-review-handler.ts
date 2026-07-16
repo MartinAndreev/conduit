@@ -29,6 +29,7 @@ import {
 import { createAgentAssignmentV1 } from "../factories/agent-assignment-factory.js";
 import { validateAgentAssignmentV1 } from "../validation/agent-assignment-validator.js";
 import { FileConduitResultRecordRepository } from "../repositories/file-conduit-result-record-repository.js";
+import type { ConduitResultRecordRepository } from "../interfaces/conduit-result-record-repository.js";
 
 export interface FinalReviewDependencies {
   loadConfig: (projectRoot: string) => Promise<Config>;
@@ -173,6 +174,7 @@ export function createFinalReviewHandler(
   deps: FinalReviewDependencies,
   reviewRepository: ReviewResultRepository,
   recoveryRepository: RunRecoveryRepository,
+  injectedResultRepository?: ConduitResultRecordRepository,
 ): CommandHandler<FinalReviewCommand, FinalReviewResult> {
   return async (command) => {
     try {
@@ -203,9 +205,11 @@ export function createFinalReviewHandler(
       // Gather authoritative worktree diffs
       const diffs = new Map<string, string>();
       const ownershipWarnings = new Map<string, readonly ValidationIssue[]>();
-      const resultRepository = new FileConduitResultRecordRepository(
-        path.join(command.projectRoot, config.stateDir, "runs"),
-      );
+      const resultRepository =
+        injectedResultRepository ??
+        new FileConduitResultRecordRepository(
+          path.join(command.projectRoot, config.stateDir, "runs"),
+        );
       for (const role of run.roles) {
         const resultRecord = await resultRepository.load(run.id, role.name);
         if (resultRecord?.ownershipWarnings?.length) {

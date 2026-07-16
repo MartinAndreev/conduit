@@ -4,6 +4,7 @@ import type { CommandHandler } from "@system/bus/command-bus.js";
 import type { Config } from "@domains/configuration/types/config.js";
 import type { Feature } from "@domains/features/types/feature.js";
 import type { RefinementRevisionRepository } from "@domains/refinement/interfaces/revision-repository.js";
+import type { ClarificationQuestionRepository } from "@domains/refinement/interfaces/clarification-question-repository.js";
 import type {
   SubmitArchitectAnswersCommand,
   SubmitArchitectAnswersResult,
@@ -18,6 +19,7 @@ export function createSubmitArchitectAnswersHandler(deps: {
     featureId: string;
   }) => Promise<Feature>;
   repository: RefinementRevisionRepository;
+  clarificationQuestionRepository?: ClarificationQuestionRepository;
 }): CommandHandler<
   SubmitArchitectAnswersCommand,
   SubmitArchitectAnswersResult
@@ -42,6 +44,11 @@ export function createSubmitArchitectAnswersHandler(deps: {
       if (!revision || revision.id !== command.revisionId)
         throw new Error("The clarification revision is no longer current.");
       await deps.repository.saveAnswers(revision, command.answers);
+      await deps.clarificationQuestionRepository?.answerUnresolved(
+        feature.id,
+        revision.id,
+        command.answers,
+      );
       await appendFile(
         path.join(feature.directory, "clarifications.md"),
         `\n## ${revision.id}\n\n${command.answers.trim()}\n`,

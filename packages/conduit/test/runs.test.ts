@@ -22,11 +22,27 @@ test("builds subscription CLI commands for each supported runner", () => {
   ]);
   assert.deepEqual(commandForRole({ runner: "pi" }, "/tmp/task.md"), [
     "pi",
-    ["-p", "Read /tmp/task.md and perform only your assigned task."],
+    [
+      "--mode",
+      "json",
+      "--print",
+      "--no-extensions",
+      "--no-skills",
+      "--no-prompt-templates",
+      "--no-context-files",
+      "--no-session",
+      "Read /tmp/task.md and perform only your assigned task.",
+    ],
   ]);
   assert.deepEqual(commandForRole({ runner: "kilo" }, "/tmp/task.md"), [
     "kilo",
-    ["run", "Read /tmp/task.md and perform only your assigned task."],
+    [
+      "run",
+      "--pure",
+      "--format",
+      "json",
+      "Read /tmp/task.md and perform only your assigned task.",
+    ],
   ]);
   assert.deepEqual(
     commandForRole(

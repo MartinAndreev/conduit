@@ -27,6 +27,7 @@ test("migrations are ordered, checksummed, idempotent, and persistent", async ()
         "0003_refinement_state",
         "0004_runs_state",
         "0006_source_versions_primitives",
+        "0007_harness_runtime",
       ],
     );
     assert.ok(records.every((record) => record.checksum.length === 64));
@@ -46,7 +47,7 @@ test("migrations are ordered, checksummed, idempotent, and persistent", async ()
         .select(({ fn }) => fn.countAll<number>().as("count"))
         .executeTakeFirstOrThrow()
         .then(({ count }) => Number(count)),
-      4,
+      5,
     );
     await reopened.destroy();
     await second.close();

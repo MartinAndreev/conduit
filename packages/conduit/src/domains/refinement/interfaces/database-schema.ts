@@ -43,9 +43,22 @@ export interface ResearchReportsTable {
   version: number;
 }
 
+export interface ClarificationQuestionsTable {
+  question_id: string;
+  feature_id: string;
+  revision_id: string;
+  fingerprint: string;
+  question_json: string;
+  answer: string | null;
+  repeat_count: number;
+  created_at: string;
+  answered_at: string | null;
+}
+
 export interface RefinementDatabase {
   refinement_drafts: RefinementDraftsTable;
   refinement_revisions: RefinementRevisionsTable;
   refinement_events: RefinementEventsTable;
   research_reports: ResearchReportsTable;
+  clarification_questions: ClarificationQuestionsTable;
 }

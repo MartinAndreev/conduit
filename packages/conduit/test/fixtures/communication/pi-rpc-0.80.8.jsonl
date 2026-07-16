@@ -1,0 +1,7 @@
+{"id":1,"type":"response","command":"get_state","success":true,"data":{"model":{"id":"gpt-5.3-codex-spark","provider":"openai-codex"},"thinkingLevel":"low","isStreaming":false,"sessionId":"SESSION_REDACTED"}}
+{"id":2,"type":"response","command":"prompt","success":true}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"{\"protocolVersion\":\"1.0\",\"status\":\"completed\",\"summary\":\"fixture-ok\",\"verdict\":null,\"artifacts\":[],\"findings\":[],\"verification\":[],\"decisions\":[],\"blockers\":[],\"questions\":[],\"risks\":[],\"evidence\":[],\"memoryProposals\":[],\"globalPromotionProposals\":[]}"}],"provider":"openai-codex","model":"gpt-5.3-codex-spark","usage":{"input":1145,"output":88,"reasoning":19,"totalTokens":1233},"stopReason":"stop"}}
+{"type":"agent_settled"}
+{"id":3,"type":"response","command":"get_last_assistant_text","success":true,"data":{"text":"{\"protocolVersion\":\"1.0\",\"status\":\"completed\",\"summary\":\"fixture-ok\",\"verdict\":null,\"artifacts\":[],\"findings\":[],\"verification\":[],\"decisions\":[],\"blockers\":[],\"questions\":[],\"risks\":[],\"evidence\":[],\"memoryProposals\":[],\"globalPromotionProposals\":[]}"}}

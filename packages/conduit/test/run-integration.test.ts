@@ -21,6 +21,7 @@ import { roleKindForRole } from "../src/domains/runs/validation/agent-semantic-v
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { commandCommunicationProvider } from "./helpers/command-communication-provider.js";
 
 function assignmentFor(
   runId: string,
@@ -426,11 +427,27 @@ test("commandForRole builds correct args for all runners", async () => {
   ]);
   assert.deepEqual(commandForRole({ runner: "pi" }, "/tmp/p.md"), [
     "pi",
-    ["-p", "Read /tmp/p.md and perform only your assigned task."],
+    [
+      "--mode",
+      "json",
+      "--print",
+      "--no-extensions",
+      "--no-skills",
+      "--no-prompt-templates",
+      "--no-context-files",
+      "--no-session",
+      "Read /tmp/p.md and perform only your assigned task.",
+    ],
   ]);
   assert.deepEqual(commandForRole({ runner: "kilo" }, "/tmp/p.md"), [
     "kilo",
-    ["run", "Read /tmp/p.md and perform only your assigned task."],
+    [
+      "run",
+      "--pure",
+      "--format",
+      "json",
+      "Read /tmp/p.md and perform only your assigned task.",
+    ],
   ]);
 });
 
@@ -510,7 +527,7 @@ test("WorktreeDiffReader reports untracked agent-created files", async () => {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
-});
+}, 15_000);
 
 test("WorktreeDiffReader reports files in an unborn repository", async () => {
   const { WorktreeDiffReader } =
@@ -533,7 +550,7 @@ test("WorktreeDiffReader reports files in an unborn repository", async () => {
   }
 });
 
-test("executeRun retains an unborn repository workspace for diff queries", async () => {
+test("executeRun refuses an unborn repository rather than exposing project state", async () => {
   const { executeRun } =
     await import("../src/domains/runs/repositories/run-orchestrator.js");
   const { chmod, mkdir, writeFile } = await import("node:fs/promises");
@@ -574,6 +591,7 @@ test("executeRun retains an unborn repository workspace for diff queries", async
     await writeFile(
       path.join(binDir, "codex"),
       `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "codex-cli 0.144.4"; exit 0; fi
 if ! mkdir .conduit/test-agent-lock 2>/dev/null; then
   exit 91
 fi
@@ -638,15 +656,19 @@ printf '%s\n' '${JSON.stringify(response)}'
     });
 
     assert.equal(
-      results.every((result) => result.status === "completed"),
+      results.every(
+        (result) =>
+          result.status === "failed" &&
+          result.error?.includes("requires a committed Git HEAD"),
+      ),
       true,
       JSON.stringify(results),
     );
     assert.equal(
-      run.roles.every((role) => role.worktree === projectRoot),
+      run.roles.every((role) => role.worktree === undefined),
       true,
     );
-    assert.equal(workspaceReadyCalls, 2);
+    assert.equal(workspaceReadyCalls, 0);
   } finally {
     process.env.PATH = previousPath;
     await rm(projectRoot, { recursive: true, force: true });
@@ -670,12 +692,19 @@ test("executeRun persists role worktrees before agent completion and emits flow 
     execFileSync("git", ["-C", projectRoot, "config", "user.name", "Test"], {
       encoding: "utf8",
     });
-    await import("node:fs/promises").then(({ writeFile }) =>
-      writeFile(path.join(projectRoot, "README.md"), "base\n"),
-    );
-    execFileSync("git", ["-C", projectRoot, "add", "README.md"], {
-      encoding: "utf8",
+    await import("node:fs/promises").then(async ({ mkdir, writeFile }) => {
+      await writeFile(path.join(projectRoot, "README.md"), "base\n");
+      await mkdir(path.join(projectRoot, ".conduit"), { recursive: true });
+      await writeFile(
+        path.join(projectRoot, ".conduit", ".gitignore"),
+        "runs/\nstate.db\n",
+      );
     });
+    execFileSync(
+      "git",
+      ["-C", projectRoot, "add", "README.md", ".conduit/.gitignore"],
+      { encoding: "utf8" },
+    );
     execFileSync(
       "git",
       ["-C", projectRoot, "-c", "commit.gpgSign=false", "commit", "-m", "init"],
@@ -703,6 +732,7 @@ test("executeRun persists role worktrees before agent completion and emits flow 
       writeFile(
         path.join(binDir, "codex"),
         `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "codex-cli 0.144.4"; exit 0; fi
 mkdir -p src
 mkdir -p dist node_modules/.vite/vitest test-results
 printf 'created\n' > src/generated.ts
@@ -739,7 +769,7 @@ sleep 0.25
         },
         {
           name: "reviewer",
-          runner: "node",
+          runner: "codex",
           readOnly: true,
           owns: [],
           dependsOn: ["backend"],
@@ -765,6 +795,16 @@ sleep 0.25
       runDir,
       dryRun: false,
       eventRepository,
+      communicationProviders: [
+        commandCommunicationProvider(
+          Object.fromEntries(
+            run.roles.map((role) => [
+              role.name,
+              { command: role.command, args: role.args },
+            ]),
+          ),
+        ),
+      ],
     });
 
     let persistedWorktree = "";
@@ -788,6 +828,15 @@ sleep 0.25
         "utf8",
       ),
       "ready",
+    );
+    await assert.rejects(
+      readFile(path.join(persistedWorktree, ".conduit", ".gitignore")),
+    );
+    assert.doesNotMatch(
+      execFileSync("git", ["-C", persistedWorktree, "status", "--short"], {
+        encoding: "utf8",
+      }),
+      /\.conduit/,
     );
     assert.equal(
       results.every((result) => result.status === "completed"),
@@ -856,6 +905,28 @@ test("executeRun follows configured role dependency groups", async () => {
   const { mkdir, readFile } = await import("node:fs/promises");
   const projectRoot = await mkdtemp(path.join(tmpdir(), "conduit-flow-"));
   try {
+    const { execFileSync } = await import("node:child_process");
+    const { writeFile } = await import("node:fs/promises");
+    execFileSync("git", ["-C", projectRoot, "init"]);
+    execFileSync("git", [
+      "-C",
+      projectRoot,
+      "config",
+      "user.email",
+      "test@example.com",
+    ]);
+    execFileSync("git", ["-C", projectRoot, "config", "user.name", "Test"]);
+    await writeFile(path.join(projectRoot, "README.md"), "base\n");
+    execFileSync("git", ["-C", projectRoot, "add", "README.md"]);
+    execFileSync("git", [
+      "-C",
+      projectRoot,
+      "-c",
+      "commit.gpgSign=false",
+      "commit",
+      "-m",
+      "init",
+    ]);
     const runDir = path.join(projectRoot, ".conduit", "runs", "run-flow");
     await mkdir(runDir, { recursive: true });
     const marker = (name: string) => path.join(projectRoot, `${name}.done`);
@@ -868,12 +939,19 @@ test("executeRun follows configured role dependency groups", async () => {
         console.error("missing dependencies: " + missing.join(","));
         process.exit(1);
       }
+      if (${JSON.stringify(name)} === "frontend") {
+        fs.mkdirSync("src", { recursive: true });
+        fs.writeFileSync("src/generated.ts", "export const integrated = true;\\n");
+      }
+      if (${JSON.stringify(dependencies)}.includes("frontend") && !fs.existsSync("src/generated.ts")) {
+        console.error("frontend artifacts were not integrated");
+        process.exit(2);
+      }
       fs.writeFileSync(${JSON.stringify(projectRoot)} + "/" + ${JSON.stringify(name)} + ".done", "done");
       const review = '{"protocolVersion":"1.0","status":"completed","summary":"ok","verdict":{"decision":"approved","rationale":"ok"},"artifacts":[],"findings":[],"verification":[],"decisions":[],"blockers":[],"questions":[],"risks":[],"evidence":[],"memoryProposals":[],"globalPromotionProposals":[]}';
       const impl = '{"protocolVersion":"1.0","status":"completed","summary":"ok","verdict":null,"artifacts":[{"path":"src/generated.ts","category":"source","purpose":"test fixture evidence","action":"inspected"}],"findings":[],"verification":[{"operation":"test","outcome":"passed","summary":"ok"}],"decisions":[],"blockers":[],"questions":[],"risks":[],"evidence":[],"memoryProposals":[],"globalPromotionProposals":[]}';
-      const qa = impl;
-      const docs = impl;
-      const content = ${JSON.stringify(name)}.includes("reviewer") ? review : impl;
+      const frontend = '{"protocolVersion":"1.0","status":"completed","summary":"ok","verdict":null,"artifacts":[{"path":"src/generated.ts","category":"source","purpose":"dependency artifact","action":"created"}],"findings":[],"verification":[{"operation":"test","outcome":"passed","summary":"ok"}],"decisions":[],"blockers":[],"questions":[],"risks":[],"evidence":[],"memoryProposals":[],"globalPromotionProposals":[]}';
+      const content = ${JSON.stringify(name)} === "reviewer" ? review : ${JSON.stringify(name)} === "frontend" ? frontend : impl;
       console.log(content);
     `;
     const role = (
@@ -881,9 +959,9 @@ test("executeRun follows configured role dependency groups", async () => {
       dependsOn: string[] = [],
     ): Run["roles"][number] => ({
       name,
-      runner: "node",
-      readOnly: true,
-      owns: [],
+      runner: "codex",
+      readOnly: name !== "frontend",
+      owns: name === "frontend" ? ["src"] : [],
       dependsOn,
       promptFile: path.join(runDir, `${name}.md`),
       prompt: name,
@@ -891,7 +969,11 @@ test("executeRun follows configured role dependency groups", async () => {
       args: ["-e", script(name, dependsOn)],
       skillSource: "test",
       status: "planned" as const,
-      assignment: assignmentFor("run-flow", name, []),
+      assignment: assignmentFor(
+        "run-flow",
+        name,
+        name === "frontend" ? ["src"] : [],
+      ),
     });
     const run: Run = {
       id: "run-flow",
@@ -912,6 +994,16 @@ test("executeRun follows configured role dependency groups", async () => {
       run,
       runDir,
       dryRun: false,
+      communicationProviders: [
+        commandCommunicationProvider(
+          Object.fromEntries(
+            run.roles.map((role) => [
+              role.name,
+              { command: role.command, args: role.args },
+            ]),
+          ),
+        ),
+      ],
     });
 
     assert.deepEqual(
@@ -1023,7 +1115,7 @@ test("zero-exit invalid and incomplete responses block dependents", async () => 
         roles: [
           {
             name: "backend",
-            runner: "node",
+            runner: "codex",
             readOnly: true,
             owns: ["src"],
             dependsOn: [],
@@ -1037,7 +1129,7 @@ test("zero-exit invalid and incomplete responses block dependents", async () => 
           },
           {
             name: "qa",
-            runner: "node",
+            runner: "codex",
             readOnly: true,
             owns: [],
             dependsOn: ["backend"],
@@ -1060,6 +1152,16 @@ test("zero-exit invalid and incomplete responses block dependents", async () => 
         run,
         runDir,
         dryRun: false,
+        communicationProviders: [
+          commandCommunicationProvider(
+            Object.fromEntries(
+              run.roles.map((role) => [
+                role.name,
+                { command: role.command, args: role.args },
+              ]),
+            ),
+          ),
+        ],
       });
       assert.deepEqual(
         results.map((result) => result.status),

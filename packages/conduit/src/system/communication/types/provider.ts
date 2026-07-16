@@ -22,7 +22,9 @@ export interface CommunicationCapabilitySnapshot {
     | "correlated-event"
     | "jsonl-fallback"
     | "json-fallback";
-  readonly telemetry: Readonly<Record<string, "supported" | "unsupported" | "unknown">>;
+  readonly telemetry: Readonly<
+    Record<string, "supported" | "unsupported" | "unknown">
+  >;
 }
 
 export interface CommunicationProviderInspection {
@@ -47,13 +49,18 @@ export interface CreateCommunicationSessionInput {
   readonly runner: string;
   readonly modelProvider?: string;
   readonly model?: string;
+  readonly effort?: string;
   readonly nativeSessionId?: string;
   readonly signal?: AbortSignal;
 }
 
 export interface AgentCommunicationSession {
   readonly nativeSessionId?: string;
-  readonly events: AsyncGenerator<ConduitRuntimeEvent, NativeTerminalResult, void>;
+  readonly events: AsyncGenerator<
+    ConduitRuntimeEvent,
+    NativeTerminalResult,
+    void
+  >;
   start(): Promise<void>;
   submit(assignment: AgentAssignmentV1): Promise<void>;
   respondToPermission(response: PermissionResponse): Promise<void>;

@@ -72,6 +72,8 @@ import type { PromptFn } from "./helpers/prompt.js";
 import { verifyStorageRuntime } from "./system/storage/diagnostics/storage-doctor.js";
 import { TursoRunRecoveryRepository } from "./domains/runs/repositories/turso-run-recovery-repository.js";
 import { TursoRunEventRepository } from "./domains/runs/repositories/turso-run-event-repository.js";
+import { TursoRuntimeEventRepository } from "./domains/runs/repositories/turso-runtime-event-repository.js";
+import { TursoConduitResultRecordRepository } from "./domains/runs/repositories/turso-conduit-result-record-repository.js";
 import { createRunProcessRegistry } from "./domains/runs/repositories/run-process-registry.js";
 import type { DatabaseConnection } from "./system/storage/interfaces/database.js";
 import type { Config } from "./domains/configuration/types/config.js";
@@ -370,6 +372,10 @@ export function createProgram(
         ...handlers,
         runRecoveryRepository: new TursoRunRecoveryRepository(connection),
         runEventRepository: new TursoRunEventRepository(connection),
+        runtimeEventRepository: new TursoRuntimeEventRepository(connection),
+        resultRecordRepository: new TursoConduitResultRecordRepository(
+          connection,
+        ),
         runProcessRegistry: createRunProcessRegistry(),
       });
     });

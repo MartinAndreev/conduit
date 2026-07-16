@@ -74,7 +74,7 @@ const host = hosts[hostKey];
         interruptedMigrationRecovered: boolean;
       };
       assert.equal(diagnostic.binding, host!.binding);
-      assert.equal(diagnostic.projectMigrationCount, 4);
+      assert.equal(diagnostic.projectMigrationCount, 5);
       assert.equal(diagnostic.globalMigrationCount, 1);
       assert.equal(diagnostic.interruptedMigrationRecovered, true);
       for (const databasePath of [

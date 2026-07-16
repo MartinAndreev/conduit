@@ -20,6 +20,7 @@ export interface RefinementRevisionRepository {
     revision: RefinementRevision,
   ): Promise<readonly ClarificationQuestion[]>;
   saveAnswers(revision: RefinementRevision, answers: string): Promise<void>;
+  readAnswers(revision: RefinementRevision): Promise<string>;
   recordReview(
     revision: RefinementRevision,
     decision: "approved" | "changes_requested",

@@ -25,6 +25,7 @@ export interface RunRole {
   skillSource: string;
   status: RunStatus;
   worktree?: string;
+  integrationCommits?: string[];
   worktreePromptFile?: string;
   finalOutputFile?: string;
   assignment?: import("./agent-protocol.js").AgentAssignmentV1;
