@@ -234,3 +234,62 @@ Before implementation begins, the feature packet MUST add:
 - a plan separating baseline structured launch fixes from ACP/RPC drivers and TUI enrichment;
 - explicit task ownership and verification commands; and
 - test cases for configuration immutability, security, cancellation, fallback, ordering, and bounded output.
+
+## Amendment: Sessions, State Cleanup, and Database Authority
+
+This amendment completes Feature 008 as a session-oriented communication and state-cleanup feature rather than a launch-plan-only feature.
+
+### Universal communication boundary
+
+Conduit introduces `AgentCommunicationProvider` and `AgentCommunicationSession` as the runtime boundary. Orchestration and refinement code may depend on Feature 007 assignment/response contracts and Conduit-owned communication contracts only. They must not construct Codex/OpenCode/Pi/Kilo arguments, parse native JSON, branch on native protocol method names, or use raw transcripts as context.
+
+Each provider streams versioned `ConduitRuntimeEventV1` values through an async generator and returns `NativeTerminalResult` when the generator completes. Production consumers must call `next()` explicitly and await ordered event persistence before requesting the next event.
+
+### Provider matrix
+
+| Harness | Preferred provider | Fallback provider | Status |
+| --- | --- | --- | --- |
+| Codex | `CodexAppServerCommunicationProvider` (`app-server-v2`) | `CodexExecCommunicationProvider` (`exec-jsonl`) | app-server capability-gated; exec JSONL verified fallback |
+| OpenCode | `OpenCodeAcpCommunicationProvider` (`acp-stdio`) | `OpenCodeJsonCommunicationProvider` (`run-json`) | preferred capability-gated |
+| Pi | `PiRpcCommunicationProvider` (`rpc-stdio`) | `PiJsonCommunicationProvider` (`json`) | preferred capability-gated |
+| Kilo | `KiloAcpCommunicationProvider` (`acp-stdio`) | `KiloJsonCommunicationProvider` (`run-json`) | preferred capability-gated |
+
+Preferred and fallback providers are separate implementations. Provider selection is registry-owned. A provider may not switch transport after assignment acceptance. Fallback after negotiation is allowed only before assignment acceptance and before side effects.
+
+### Session lifecycle
+
+Native sessions are scoped to a feature-package lifecycle. New sessions are required for a new refinement, package hash change, harness/provider/model change, incompatible protocol change, missing or unverifiable native session, unrecoverable workspace, or explicit clean rerun. Clarification answers and review feedback continue the same verified refinement session when identity is unchanged. Approval closes the architect session and implementation roles receive independent sessions.
+
+If a stored native session is missing, Conduit marks it unavailable or superseded, creates a replacement with lineage metadata, rebuilds context from `state.db` and approved Git package artifacts only, and reports replacement rather than native continuation.
+
+### Package identity
+
+Feature package versions are identified by a deterministic SHA-256 package hash over approved package files and role ownership inputs. Paths are sorted, bytes are canonicalized with LF line endings, and mutable runtime data is excluded.
+
+### Database authority and legacy cleanup
+
+Mutable workflow state is canonical only in project `state.db`. Legacy files such as `questions.md`, `answers.md`, `research.md`, mutable `revision.json`, `review.md`, `run.json`, `events.json`, `terminal.json`, result JSON files, persistent architect launch/context/final-response files, and file-first event/result repositories are migration inputs only. Idempotent import records a checksum and deletes a source only after verified canonical persistence. No permanent legacy archive duplicate is created.
+
+### Clarification correctness
+
+When an architect returns `needs_input`, Conduit validates the Feature 007 response, fingerprints questions in the current refinement/package lineage, persists them transactionally, displays only unresolved questions, persists answers before continuation, and includes answered decisions explicitly in the next turn. A repeated answered question receives one automatic reminder. A second repetition fails with `REPEATED_CLARIFICATION_LOOP`.
+
+### Transcript policy
+
+Raw transcripts are optional diagnostics with defaults:
+
+```yaml
+diagnostics:
+  transcripts:
+    enabled: true
+    retentionDays: 7
+    maxTotalSizeMb: 250
+    maxFileSizeMb: 10
+    retainFailedRunsDays: 30
+```
+
+Transcripts are streamed append-only, capped per file and total budget, cleaned on startup and terminal run completion, and never parsed to rebuild TUI state or agent context.
+
+### Agent isolation
+
+Agents run in isolated workspaces that do not contain `.conduit`, `state.db`, transcripts, temporary launch files, or unrelated role worktrees. Prompts are not a security boundary. Conduit observes and integrates approved artifact changes through controlled database and Git-backed package mechanisms.

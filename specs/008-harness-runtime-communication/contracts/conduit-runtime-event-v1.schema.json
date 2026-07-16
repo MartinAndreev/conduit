@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "conduit-runtime-event-v1.schema.json",
+  "title": "ConduitRuntimeEventV1",
+  "type": "object",
+  "required": ["version", "sequence", "receivedAt", "context", "provenance", "type", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": "1.0" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "receivedAt": { "type": "string", "format": "date-time" },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "featureId": { "type": "string" },
+        "packageVersionId": { "type": "string" },
+        "packageHash": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "turnId": { "type": "string" },
+        "runId": { "type": "string" },
+        "roleId": { "type": "string" },
+        "role": { "type": "string" }
+      }
+    },
+    "provenance": {
+      "type": "string",
+      "enum": ["conduit-observed", "runner-reported", "agent-claimed"]
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "protocol-lifecycle",
+        "agent-activity",
+        "plan-update",
+        "tool-call",
+        "command",
+        "file-operation",
+        "permission",
+        "usage",
+        "warning",
+        "native-error",
+        "dropped-events",
+        "final-response-candidate",
+        "process-outcome",
+        "worktree-change"
+      ]
+    },
+    "payload": { "type": "object", "additionalProperties": true },
+    "native": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocol": { "type": "string" },
+        "protocolVersion": { "type": "string" },
+        "nativeType": { "type": "string" },
+        "nativeCorrelationId": { "type": "string" }
+      }
+    }
+  }
+}
