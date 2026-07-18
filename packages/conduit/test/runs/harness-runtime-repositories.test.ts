@@ -44,10 +44,21 @@ test("runtime events and authoritative result records round-trip through state.d
       payload: { state: "started", tool: "read" },
       native: { protocol: "exec-jsonl", nativeCorrelationId: "call-1" },
     });
-    assert.equal(
-      (await events.loadByRole("run-1", "backend"))[0]?.native
-        ?.nativeCorrelationId,
-      "call-1",
+    await events.append({
+      version: "1.0",
+      sequence: 1,
+      receivedAt: "2026-07-16T00:00:00.500Z",
+      context: { runId: "run-1", roleId: "backend" },
+      provenance: "conduit-observed",
+      type: "protocol-lifecycle",
+      payload: { state: "session-restarted" },
+      native: { protocol: "exec-jsonl" },
+    });
+    const persistedEvents = await events.loadByRole("run-1", "backend");
+    assert.equal(persistedEvents[0]?.native?.nativeCorrelationId, "call-1");
+    assert.deepEqual(
+      persistedEvents.map((event) => event.sequence),
+      [1, 2],
     );
 
     const records = new TursoConduitResultRecordRepository(connection);

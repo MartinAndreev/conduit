@@ -1,9 +1,7 @@
 export type ConduitRuntimeEventVersion = "1.0";
 
 export type ConduitRuntimeEventProvenance =
-  | "conduit-observed"
-  | "runner-reported"
-  | "agent-claimed";
+  "conduit-observed" | "runner-reported" | "agent-claimed";
 
 export type ConduitRuntimeEventType =
   | "protocol-lifecycle"
@@ -53,10 +51,7 @@ export interface ConduitRuntimeEvent {
 }
 
 export type NativeTerminalStatus =
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "timed-out";
+  "completed" | "failed" | "cancelled" | "timed-out";
 
 export interface NativeTerminalResult {
   readonly status: NativeTerminalStatus;

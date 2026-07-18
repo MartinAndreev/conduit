@@ -10,6 +10,7 @@ import type { RunEventRepository } from "../interfaces/run-event-repository.js";
 import type { RunProcessRegistry } from "../repositories/run-process-registry.js";
 import type { RuntimeEventRepository } from "../interfaces/runtime-event-repository.js";
 import type { ConduitResultRecordRepository } from "../interfaces/conduit-result-record-repository.js";
+import { retainClaimedRoleWorkspaces } from "../services/retain-role-workspaces-service.js";
 
 type RunCommandDependencies = Pick<
   ApplicationDependencies,
@@ -28,6 +29,26 @@ type RunCommandDependencies = Pick<
     runProcessRegistry?: RunProcessRegistry;
     runtimeEventRepository?: RuntimeEventRepository;
     resultRecordRepository?: ConduitResultRecordRepository;
+    roleWorkspaceRepository?: import("../interfaces/role-workspace-repository.js").RoleWorkspaceRepository;
+    resumeRun?: (runId: string) => Promise<import("../types/run.js").Run>;
+    getResumeEligibility?: (
+      runId: string,
+    ) => Promise<import("../types/resume-eligibility.js").ResumeEligibility>;
+    getWorkspaceContinuity?: (
+      featureId: string,
+      roleNames: readonly string[],
+    ) => Promise<
+      import("../types/workspace-continuity.js").WorkspaceContinuity
+    >;
+    prepareStartNew?: (
+      run: import("../types/run.js").Run,
+      continuity: import("../types/workspace-continuity.js").WorkspaceContinuity,
+    ) => Promise<void>;
+    startFeatureRun?: (
+      command: import("../interfaces/commands/start-feature-run.js").StartFeatureRunCommand,
+    ) => Promise<
+      import("../interfaces/commands/start-feature-run.js").StartFeatureRunResult
+    >;
   };
 
 export async function runCommand(
@@ -46,6 +67,7 @@ export async function runCommand(
     startDashboard,
     readRunRoleLog,
     readRunRolePatch,
+    getResumeEligibility,
   } = defaultDependencies(dependencies);
   const projectRoot = resolveProject(options.project as string | undefined);
   const config = await loadConfig(projectRoot);
@@ -53,6 +75,58 @@ export async function runCommand(
     .split(",")
     .map((name: string) => name.trim())
     .filter(Boolean);
+  if (dependencies.startFeatureRun) {
+    if (options.continue && options.startNew)
+      throw new Error("Choose either --continue or --start-new, not both.");
+    const started = await dependencies.startFeatureRun({
+      type: "startFeatureRun",
+      featureId,
+      roleNames,
+      mode: options.continue ? "continue" : "start-new",
+      confirmDiscardRetained: options.confirmDiscardRetained === true,
+      waitForCompletion: true,
+      dryRun: Boolean(options.dryRun),
+      fetchSkills: Boolean(options.fetchSkills),
+    });
+    const results = [...(started.results ?? [])];
+    for (const result of results) {
+      output(
+        `${result.role}: ${result.status}${result.files?.length ? ` · ${result.files.length} file${result.files.length === 1 ? "" : "s"} changed` : ""}`,
+      );
+      for (const file of result.files ?? []) output(`  ${file}`);
+    }
+    return results;
+  }
+  const continuity = await dependencies.getWorkspaceContinuity?.(
+    featureId,
+    roleNames,
+  );
+  if (options.continue && options.startNew)
+    throw new Error("Choose either --continue or --start-new, not both.");
+  if (options.continue) {
+    if (continuity?.state !== "compatible-continue")
+      throw new Error(
+        continuity && "reason" in continuity
+          ? continuity.reason
+          : "No compatible retained run is available.",
+      );
+    if (!dependencies.resumeRun)
+      throw new Error("Resume command is unavailable.");
+    await dependencies.resumeRun(continuity.runId);
+    return [];
+  }
+  if (continuity?.state === "lease-conflict")
+    throw new Error(continuity.reason);
+  if (continuity && continuity.state !== "no-retained" && !options.startNew)
+    throw new Error(
+      "Retained role work exists; use --continue or --start-new with --confirm-discard-retained.",
+    );
+  if (
+    options.startNew &&
+    continuity?.state !== "no-retained" &&
+    options.confirmDiscardRetained !== true
+  )
+    throw new Error("--start-new requires --confirm-discard-retained.");
   const { run, runDir } = await progress("Preparing isolated agent runs", () =>
     planRun({
       projectRoot,
@@ -63,8 +137,31 @@ export async function runCommand(
       fetchSkills: options.fetchSkills as boolean | undefined,
     }),
   );
+  if (options.startNew && continuity && continuity.state !== "no-retained")
+    run.status = "failed";
   const snapshot = await dependencies.runRecoveryRepository?.saveSnapshot(run);
   let snapshotVersion = snapshot?.version;
+  if (options.startNew && continuity && continuity.state !== "no-retained") {
+    if (!dependencies.prepareStartNew)
+      throw new Error("Start Anew preparation is unavailable.");
+    try {
+      await dependencies.prepareStartNew(run, continuity);
+      run.status = "planned";
+      const advanced = await dependencies.runRecoveryRepository?.saveSnapshot(
+        run,
+        snapshotVersion,
+      );
+      snapshotVersion = advanced?.version;
+    } catch (cause) {
+      run.status = "failed";
+      if (dependencies.roleWorkspaceRepository)
+        await retainClaimedRoleWorkspaces(
+          run,
+          dependencies.roleWorkspaceRepository,
+        ).catch(() => undefined);
+      throw cause;
+    }
+  }
   let snapshotWrite = Promise.resolve();
   const persistSnapshot = (): Promise<void> => {
     const repository = dependencies.runRecoveryRepository;
@@ -118,6 +215,7 @@ export async function runCommand(
       resultRepository: dependencies.resultRecordRepository,
       processRegistry: dependencies.runProcessRegistry,
       onRoleWorkspaceReady: persistSnapshot,
+      roleWorkspaceRepository: dependencies.roleWorkspaceRepository,
       onProgress: (message: string) => {
         setText(`Agents · ${message}`);
         liveView?.updateStatus(message);
@@ -137,6 +235,13 @@ export async function runCommand(
     if (run.status === "cancelled")
       await dependencies.runRecoveryRepository?.markCancelled(run.id);
   } catch (error) {
+    run.status = "failed";
+    if (dependencies.roleWorkspaceRepository)
+      await retainClaimedRoleWorkspaces(
+        run,
+        dependencies.roleWorkspaceRepository,
+      ).catch(() => undefined);
+    await persistSnapshot().catch(() => undefined);
     await dependencies.runRecoveryRepository?.markInterrupted(
       run.id,
       error instanceof Error ? error.message : String(error),
@@ -162,6 +267,8 @@ export async function runCommand(
       selectedRunId: run.id,
       readRoleLog: readRunRoleLog,
       readRolePatch: readRunRolePatch,
+      onResumeRun: run.status === "failed" ? dependencies.resumeRun : undefined,
+      getResumeEligibility,
     });
   return results;
 }

@@ -2,12 +2,24 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
-const ROOT_FILES = ["story.md", "spec.md", "plan.md", "tasks.md", "test-cases.md"] as const;
+const ROOT_FILES = [
+  "story.md",
+  "spec.md",
+  "plan.md",
+  "tasks.md",
+  "test-cases.md",
+] as const;
 const CONTRACTS_DIR = "contracts";
 
 export interface FeaturePackageHashInput {
   readonly packageRoot: string;
   readonly ownershipFiles?: readonly string[];
+  readonly ownershipInputs?: readonly Readonly<{
+    role: string;
+    readOnly: boolean;
+    owns: readonly string[];
+    dependsOn: readonly string[];
+  }>[];
 }
 
 export interface FeaturePackageHashResult {
@@ -21,7 +33,10 @@ export async function hashFeaturePackage(
   input: FeaturePackageHashInput,
 ): Promise<FeaturePackageHashResult> {
   const root = path.resolve(input.packageRoot);
-  const discovered = await discoverPackageFiles(root, input.ownershipFiles ?? []);
+  const discovered = await discoverPackageFiles(
+    root,
+    input.ownershipFiles ?? [],
+  );
   const hash = createHash("sha256");
 
   for (const relativePath of discovered) {
@@ -32,6 +47,19 @@ export async function hashFeaturePackage(
     hash.update(normalizeLineEndings(bytes), "utf8");
     hash.update("\0");
   }
+  const ownershipInputs = [...(input.ownershipInputs ?? [])]
+    .map((role) => ({
+      role: role.role,
+      readOnly: role.readOnly,
+      owns: [...role.owns].sort((left, right) => left.localeCompare(right)),
+      dependsOn: [...role.dependsOn].sort((left, right) =>
+        left.localeCompare(right),
+      ),
+    }))
+    .sort((left, right) => left.role.localeCompare(right.role));
+  hash.update("ownership-inputs\0", "utf8");
+  hash.update(JSON.stringify(ownershipInputs), "utf8");
+  hash.update("\0");
 
   return {
     algorithm: "sha256",
@@ -54,7 +82,9 @@ async function discoverPackageFiles(
   const contractsRoot = path.join(root, CONTRACTS_DIR);
   if (await isDirectory(contractsRoot)) {
     for (const file of await walkFiles(contractsRoot)) {
-      candidates.add(path.join(CONTRACTS_DIR, path.relative(contractsRoot, file)));
+      candidates.add(
+        path.join(CONTRACTS_DIR, path.relative(contractsRoot, file)),
+      );
     }
   }
 
@@ -97,7 +127,11 @@ async function isDirectory(absolutePath: string): Promise<boolean> {
 
 function normalizeRelativePackagePath(value: string): string | undefined {
   const normalized = path.posix.normalize(value.replaceAll(path.sep, "/"));
-  if (normalized.startsWith("../") || normalized === ".." || path.isAbsolute(value)) {
+  if (
+    normalized.startsWith("../") ||
+    normalized === ".." ||
+    path.isAbsolute(value)
+  ) {
     return undefined;
   }
   return normalized;

@@ -11,3 +11,4 @@ packages/*/.astro/
 .conduit/state.db-wal
 .conduit/state.db-shm
 .idea/
+.pi-subagents/

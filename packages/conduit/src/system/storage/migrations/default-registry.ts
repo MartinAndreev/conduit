@@ -3,6 +3,7 @@ import { refinementStateMigration } from "../../../domains/refinement/migrations
 import { runsStateMigration } from "../../../domains/runs/migrations/runs-state-migration.js";
 import { sourceVersionsMigration } from "../../../domains/source/migrations/source-versions-migration.js";
 import { harnessRuntimeMigration } from "../../../domains/runs/migrations/harness-runtime-migration.js";
+import { roleWorkspaceMigration } from "../../../domains/runs/migrations/role-workspace-migration.js";
 import { OrderedMigrationRegistry } from "./migration-registry.js";
 import { systemProjectMigration } from "./system-migrations.js";
 
@@ -14,5 +15,6 @@ export function createDefaultMigrationRegistry(): OrderedMigrationRegistry {
   registry.register(runsStateMigration);
   registry.register(sourceVersionsMigration);
   registry.register(harnessRuntimeMigration);
+  registry.register(roleWorkspaceMigration);
   return registry;
 }

@@ -8,6 +8,19 @@ export type RunStatus =
 
 export type TerminalRunStatus = "completed" | "failed" | "cancelled";
 
+export type RunFailureKind =
+  | "missing-response"
+  | "structural-response"
+  | "semantic-response"
+  | "reported-noncompletion"
+  | "runner"
+  | "policy";
+
+export interface ReviewerWorkflowState {
+  correctionRound: number;
+  findingFingerprints: string[];
+}
+
 export interface RunRole {
   name: string;
   runner: string;
@@ -25,7 +38,20 @@ export interface RunRole {
   skillSource: string;
   status: RunStatus;
   worktree?: string;
+  worktreeHead?: string;
+  diffBaselineHead?: string;
+  workspaceRepositoryId?: string;
+  workspaceRoleKey?: string;
+  workspaceBranchName?: string;
+  workspaceAssignmentHash?: string;
+  workspaceLeaseOwner?: string;
+  workspaceFencingToken?: number;
+  linkedWorkspacePaths?: string[];
   integrationCommits?: string[];
+  pendingResumeCommits?: string[];
+  resumeObservedFiles?: string[];
+  resumeAttempt?: number;
+  lastFailureKind?: RunFailureKind;
   worktreePromptFile?: string;
   finalOutputFile?: string;
   assignment?: import("./agent-protocol.js").AgentAssignmentV1;
@@ -37,6 +63,10 @@ export interface Run {
   status: RunStatus;
   createdAt: string;
   roles: RunRole[];
+  startingHead?: string;
+  featurePackageHash?: string;
+  featurePackagePath?: string;
+  reviewerWorkflow?: ReviewerWorkflowState;
   stateDirectory?: string;
   worktreeRoot?: string;
   worktreeRetentionDays?: number;
@@ -53,4 +83,6 @@ export interface RunResult {
   files?: string[];
   command?: string[];
   resultRecord?: import("./agent-protocol.js").ConduitResultRecordV1;
+  retryable?: boolean;
+  failureKind?: RunFailureKind;
 }

@@ -17,4 +17,11 @@ test("Commander exposes Conduit commands", () => {
     "run",
     "status",
   ]);
+  const run = createProgram().commands.find(
+    (command) => command.name() === "run",
+  );
+  const flags = run?.options.map((option) => option.long);
+  assert.ok(flags?.includes("--continue"));
+  assert.ok(flags?.includes("--start-new"));
+  assert.ok(flags?.includes("--confirm-discard-retained"));
 });

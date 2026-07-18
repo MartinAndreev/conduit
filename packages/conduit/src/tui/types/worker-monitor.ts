@@ -1,6 +1,7 @@
 import type { RunnerEvent } from "@domains/runs/types/runner-events.js";
 import type { ChangedFile } from "@domains/runs/types/review.js";
 import type { Run } from "@domains/runs/types/run.js";
+import type { ResumeEligibility } from "@domains/runs/types/resume-eligibility.js";
 
 export interface RolePresentation {
   readonly roleId: string;
@@ -27,6 +28,11 @@ export interface WorkerMonitorViewModel {
   readonly expandedEventIndex: number | null;
   readonly scrollOffset: number;
   readonly cancelled: boolean;
+  readonly canResume: boolean;
+  readonly showRecovery: boolean;
+  readonly resumeEligibility: ResumeEligibility | undefined;
+  readonly resuming: boolean;
+  readonly resumeError: string | null;
   readonly focusMode: WorkerMonitorFocus;
   readonly transcriptExpanded: boolean;
   readonly fileDiffExpanded: boolean;
@@ -42,6 +48,7 @@ export interface WorkerMonitorState {
   readonly events: readonly RunnerEvent[];
   readonly roles: readonly RolePresentation[];
   readonly run: Run | undefined;
+  readonly resumeEligibility: ResumeEligibility | undefined;
   readonly selectedRoleIndex: number;
   readonly diff: string | undefined;
   readonly changedFiles: readonly ChangedFile[];
@@ -53,6 +60,8 @@ export interface WorkerMonitorState {
   readonly expandedEventIndex: number | null;
   readonly scrollOffset: number;
   readonly cancelled: boolean;
+  readonly resuming: boolean;
+  readonly resumeError: string | null;
   readonly focusMode: WorkerMonitorFocus;
   readonly transcriptExpanded: boolean;
   readonly fileDiffExpanded: boolean;
@@ -77,4 +86,8 @@ export type WorkerMonitorAction =
   | { type: "toggleTranscript" }
   | { type: "toggleFileDiff" }
   | { type: "scroll"; direction: "up" | "down" }
-  | { type: "cancel" };
+  | { type: "cancel" }
+  | { type: "resumeEligibilityLoaded"; eligibility: ResumeEligibility }
+  | { type: "resumeStarted" }
+  | { type: "resumeFinished" }
+  | { type: "resumeFailed"; message: string };

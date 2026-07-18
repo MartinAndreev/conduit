@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import type { AgentAssignmentV1 } from "../../../domains/runs/types/agent-protocol.js";
 import { redactSecrets } from "../../storage/security/secret-redaction.js";
+import { agentAssignmentPrompt } from "../services/agent-assignment-prompt.js";
 import { parseNativeEvent } from "../services/native-event-parser.js";
 import { agentResponseOutputSchema } from "../services/agent-response-output-schema.js";
 import type {
@@ -175,7 +176,7 @@ class CliJsonCommunicationSession implements AgentCommunicationSession {
       `${JSON.stringify(agentResponseOutputSchema)}\n`,
       { mode: 0o600 },
     );
-    const prompt = `Perform only this authoritative AgentAssignmentV1. Read its contextReferences inside the workspace. Return exactly one AgentResponseV1 JSON object as the final response.\n${JSON.stringify(assignment)}`;
+    const prompt = agentAssignmentPrompt(assignment);
     const args = this.options.buildArgs({
       prompt,
       model: this.input.model,

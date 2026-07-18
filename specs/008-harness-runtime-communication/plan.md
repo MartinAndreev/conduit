@@ -12,6 +12,13 @@
 8. Add bounded transcript diagnostics and startup/post-run cleanup. Transcripts are never context or read models.
 9. Isolate agent workspaces from `.conduit`, state databases, transcripts, temporary launch files, and unrelated worktrees.
 10. Remove obsolete compatibility branches after migration and restart tests pass.
+11. Separate reviewer turn completion from review-gate acceptance; only an approved verdict completes a reviewed workflow.
+12. Persist and path-route rejected or needs-changes findings to exactly one writable owner, then execute at most two correction and re-review rounds in the existing isolated worktrees.
+13. Fail closed on unroutable or repeated findings, no-change corrections, invalid turns, unavailable verification, and correction-limit exhaustion.
+14. Keep provider and Feature 007 wire contracts unchanged: every correction is a new validated assignment turn, with verified native continuation optional and lineage-linked replacement permitted.
+15. After approval, verify project and reviewer Git baselines and fast-forward the approved reviewer worktree into the project checkout; fail closed and retain worktrees when promotion is unsafe.
+16. Persist run identity and bounded reviewer/retry state, expose shared resume eligibility through CQRS, atomically claim failed snapshots, and make reviewer cleanup and project cleanliness checks language-independent.
+17. Replace ACP final-message JSON delivery with a process-scoped schema tool, validate inside the same native turn, privately capture only accepted `AgentResponseV1`, and preserve existing Feature 007 semantic validation after capture.
 
 ## Verification commands
 

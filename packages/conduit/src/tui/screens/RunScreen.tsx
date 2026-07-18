@@ -49,7 +49,7 @@ export function RunScreen({
   }, [queryBus, runId]);
 
   useKeyboard((event: { name: string }) => {
-    if (event.name === "r") setShowReview((prev) => !prev);
+    if (event.name === "v") setShowReview((prev) => !prev);
   });
 
   const review = reviewData?.review;
@@ -63,7 +63,7 @@ export function RunScreen({
     >
       {showReview && review ? (
         <box flexDirection="column" padding={1}>
-          <text content="r toggle review · q exit" fg={theme.text.muted} />
+          <text content="v toggle review · q exit" fg={theme.text.muted} />
           <ReviewResultPanel
             reviewId={review.reviewId}
             decision={review.decision}
@@ -93,6 +93,11 @@ export function RunScreen({
             loading={controller.loading}
             error={controller.error}
             cancelled={controller.cancelled}
+            canResume={controller.canResume}
+            showRecovery={controller.showRecovery}
+            resumeEligibility={controller.resumeEligibility}
+            resuming={controller.resuming}
+            resumeError={controller.resumeError}
             focusMode={controller.focusMode}
           />
         </box>

@@ -203,3 +203,70 @@ export const agentResponseOutputSchema = objectSchema(
     "globalPromotionProposals",
   ],
 );
+
+const toolFinding = {
+  ...finding,
+  properties: {
+    ...finding.properties,
+    evidence: text,
+    path: text,
+    line: { type: "integer", minimum: 1, maximum: 1_000_000 },
+    suggestedRemediation: text,
+  },
+} as const;
+
+const toolVerification = {
+  ...verification,
+  properties: {
+    ...verification.properties,
+    exitCode: { type: "integer", minimum: -1, maximum: 255 },
+    evidence: arrayOf(text),
+  },
+} as const;
+
+const toolDecision = {
+  ...decision,
+  properties: { ...decision.properties, affectedPaths: arrayOf(text) },
+} as const;
+
+const toolEvidence = {
+  ...evidence,
+  properties: { ...evidence.properties, summary: text },
+} as const;
+
+const toolMemoryProposal = {
+  ...memoryProposal,
+  properties: { ...memoryProposal.properties, evidence: arrayOf(text) },
+} as const;
+
+const toolGlobalPromotionProposal = {
+  ...globalPromotionProposal,
+  properties: { ...globalPromotionProposal.properties, evidence: text },
+} as const;
+
+export const agentResponseToolInputSchema = {
+  ...agentResponseOutputSchema,
+  properties: {
+    ...agentResponseOutputSchema.properties,
+    verdict: {
+      type: "string",
+      enum: [
+        "none",
+        "approved",
+        "rejected",
+        "passed",
+        "failed",
+        "needs_changes",
+        "inconclusive",
+      ],
+    },
+    verdictRationale: text,
+    findings: arrayOf(toolFinding),
+    verification: arrayOf(toolVerification),
+    decisions: arrayOf(toolDecision),
+    evidence: arrayOf(toolEvidence),
+    memoryProposals: arrayOf(toolMemoryProposal),
+    globalPromotionProposals: arrayOf(toolGlobalPromotionProposal),
+  },
+  required: [...agentResponseOutputSchema.required, "verdictRationale"],
+} as const;

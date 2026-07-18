@@ -3,6 +3,7 @@ import { createGetFeatureContentHandler } from "../../../domains/features/handle
 import { createGetFeatureHandler } from "../../../domains/features/handlers/get-feature-handler.js";
 import { createListFeaturesHandler } from "../../../domains/features/handlers/list-features-handler.js";
 import { createUpdateFeatureMetadataHandler } from "../../../domains/features/handlers/update-feature-metadata-handler.js";
+import { implementedFeatureIdsFromRuns } from "../../../domains/features/services/implemented-feature-lifecycle.js";
 import type { CommandHandler } from "../../bus/command-bus.js";
 import type { QueryHandler } from "../../bus/query-bus.js";
 import type {
@@ -12,7 +13,8 @@ import type {
 
 export class FeaturesBootstrapService implements ApplicationBootstrapService {
   register(context: ApplicationBootstrapContext): void {
-    const { commandBus, queryBus, dependencies, projectRoot } = context;
+    const { commandBus, queryBus, dependencies, projectRoot, repositories } =
+      context;
     commandBus.register(
       "updateFeatureMetadata",
       createUpdateFeatureMetadataHandler(
@@ -29,9 +31,18 @@ export class FeaturesBootstrapService implements ApplicationBootstrapService {
         }) as CommandHandler,
       );
 
+    const recovery = repositories.recovery;
     queryBus.register(
       "listFeatures",
-      createListFeaturesHandler(dependencies.featureProvider) as QueryHandler,
+      createListFeaturesHandler(
+        dependencies.featureProvider,
+        recovery
+          ? async () =>
+              implementedFeatureIdsFromRuns(
+                (await recovery.listSnapshots()).map(({ run }) => run),
+              )
+          : undefined,
+      ) as QueryHandler,
     );
     queryBus.register(
       "getFeature",

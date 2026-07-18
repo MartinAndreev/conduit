@@ -9,6 +9,7 @@ import { TursoRunRecoveryRepository } from "../../../domains/runs/repositories/t
 import { TursoConduitResultRecordRepository } from "../../../domains/runs/repositories/turso-conduit-result-record-repository.js";
 import { TursoRuntimeEventRepository } from "../../../domains/runs/repositories/turso-runtime-event-repository.js";
 import { TursoHarnessRuntimeStateRepository } from "../../../domains/runs/repositories/turso-harness-runtime-state-repository.js";
+import { TursoRoleWorkspaceRepository } from "../../../domains/runs/repositories/turso-role-workspace-repository.js";
 import { TursoSourceVersionRepository } from "../../../domains/source/repositories/turso-source-version-repository.js";
 import { InMemoryRunEventRepository } from "../../../domains/runs/repositories/in-memory-run-event-repository.js";
 import { InMemoryReviewResultRepository } from "../../../domains/runs/repositories/in-memory-review-result-repository.js";
@@ -85,6 +86,9 @@ export function createBootstrapComposition(
           : undefined,
         harnessRuntimeState: connection
           ? new TursoHarnessRuntimeStateRepository(connection)
+          : undefined,
+        roleWorkspaces: connection
+          ? new TursoRoleWorkspaceRepository(connection)
           : undefined,
         sourceVersions: connection
           ? new TursoSourceVersionRepository(connection)

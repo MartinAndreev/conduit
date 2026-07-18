@@ -3,7 +3,15 @@
   "$id": "conduit-runtime-event-v1.schema.json",
   "title": "ConduitRuntimeEventV1",
   "type": "object",
-  "required": ["version", "sequence", "receivedAt", "context", "provenance", "type", "payload"],
+  "required": [
+    "version",
+    "sequence",
+    "receivedAt",
+    "context",
+    "provenance",
+    "type",
+    "payload"
+  ],
   "additionalProperties": false,
   "properties": {
     "version": { "const": "1.0" },

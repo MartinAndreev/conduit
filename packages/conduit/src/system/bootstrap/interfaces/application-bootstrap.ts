@@ -19,6 +19,7 @@ import type { RunRecoveryRepository } from "../../../domains/runs/interfaces/run
 import type { RuntimeEventRepository } from "../../../domains/runs/interfaces/runtime-event-repository.js";
 import type { ConduitResultRecordRepository } from "../../../domains/runs/interfaces/conduit-result-record-repository.js";
 import type { HarnessRuntimeStateRepository } from "../../../domains/runs/interfaces/harness-runtime-state-repository.js";
+import type { RoleWorkspaceRepository } from "../../../domains/runs/interfaces/role-workspace-repository.js";
 import type { RunProcessRegistry } from "../../../domains/runs/repositories/run-process-registry.js";
 import type { Run, RunResult } from "../../../domains/runs/types/run.js";
 import type { CommandBus } from "../../bus/command-bus.js";
@@ -68,6 +69,7 @@ export interface BootstrapDependencies {
     processRegistry?: RunProcessRegistry;
     resultRepository?: ConduitResultRecordRepository;
     runtimeEventRepository?: RuntimeEventRepository;
+    roleWorkspaceRepository?: RoleWorkspaceRepository;
   }) => Promise<RunResult[]>;
   latestRuns: (projectRoot: string, config: Config) => Promise<Run[]>;
   configurationRepository: ConfigurationRepository;
@@ -110,6 +112,7 @@ export interface BootstrapRepositories {
   readonly resultRecords?: ConduitResultRecordRepository;
   readonly runtimeEvents?: RuntimeEventRepository;
   readonly harnessRuntimeState?: HarnessRuntimeStateRepository;
+  readonly roleWorkspaces?: RoleWorkspaceRepository;
   readonly sourceVersions?: SourceVersionRepository;
 }
 

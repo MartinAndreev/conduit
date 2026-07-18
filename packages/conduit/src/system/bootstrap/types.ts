@@ -58,6 +58,12 @@ export interface ApplicationDependencies {
       role: Run["roles"][number],
     ) => Promise<string>;
     readRolePatch: (role: Run["roles"][number]) => string | undefined;
+    onResumeRun?: (runId: string) => Promise<Run>;
+    getResumeEligibility?: (
+      runId: string,
+    ) => Promise<
+      import("../../domains/runs/types/resume-eligibility.js").ResumeEligibility
+    >;
   }) => Promise<void>;
   startArchitectRunView: (params: {
     featureId: string;
@@ -91,6 +97,8 @@ export interface ApplicationDependencies {
     run: Run;
     runDir: string;
     dryRun?: boolean;
+    resume?: boolean;
+    maxAutomaticRetries?: number;
     onProgress?: (message: string) => void;
     onChange?: (params: { summary: string; preview: string }) => void;
     onRoleWorkspaceReady?: () => Promise<void>;
@@ -100,6 +108,7 @@ export interface ApplicationDependencies {
     resultRepository?: import("../../domains/runs/interfaces/conduit-result-record-repository.js").ConduitResultRecordRepository;
     runtimeEventRepository?: import("../../domains/runs/interfaces/runtime-event-repository.js").RuntimeEventRepository;
     communicationProviders?: readonly import("../communication/types/provider.js").AgentCommunicationProvider[];
+    roleWorkspaceRepository?: import("../../domains/runs/interfaces/role-workspace-repository.js").RoleWorkspaceRepository;
   }) => Promise<RunResult[]>;
   latestRuns: (projectRoot: string, config: Config) => Promise<Run[]>;
   readRunRoleLog: (

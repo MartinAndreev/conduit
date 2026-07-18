@@ -40,9 +40,12 @@ test("candidate provider selection is external to provider implementation", () =
 
 test("communication stream consumer persists in order and returns terminal result", async () => {
   const persisted: number[] = [];
-  const terminal = await consumeCommunicationStream(fakeStream(), async (event) => {
-    persisted.push(event.sequence);
-  });
+  const terminal = await consumeCommunicationStream(
+    fakeStream(),
+    async (event) => {
+      persisted.push(event.sequence);
+    },
+  );
 
   assert.deepEqual(persisted, [1, 2]);
   assert.equal(terminal.status, "completed");
@@ -51,11 +54,14 @@ test("communication stream consumer persists in order and returns terminal resul
 
 test("communication stream consumer awaits persistence before next event", async () => {
   const checkpoints: string[] = [];
-  await consumeCommunicationStream(observedStream(checkpoints), async (event) => {
-    checkpoints.push(`persist-start-${event.sequence}`);
-    await Promise.resolve();
-    checkpoints.push(`persist-end-${event.sequence}`);
-  });
+  await consumeCommunicationStream(
+    observedStream(checkpoints),
+    async (event) => {
+      checkpoints.push(`persist-start-${event.sequence}`);
+      await Promise.resolve();
+      checkpoints.push(`persist-end-${event.sequence}`);
+    },
+  );
 
   assert.deepEqual(checkpoints, [
     "yield-1",

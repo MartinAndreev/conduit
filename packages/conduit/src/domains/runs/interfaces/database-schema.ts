@@ -86,6 +86,42 @@ export interface ResultRecordsTable {
   received_at: string;
 }
 
+export interface RoleWorkspaceSlotsTable {
+  repository_id: string;
+  role_key: string;
+  generation: number;
+  workspace_path: string;
+  owning_run_id: string;
+  state: string;
+  starting_head: string;
+  package_hash: string;
+  assignment_hash: string;
+  worktree_head: string | null;
+  branch_name: string;
+  lease_owner: string | null;
+  fencing_token: number;
+  leased_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RoleWorkspaceGenerationsTable {
+  repository_id: string;
+  role_key: string;
+  generation: number;
+  workspace_path: string;
+  owning_run_id: string;
+  starting_head: string;
+  package_hash: string;
+  assignment_hash: string;
+  branch_name: string;
+  branch_oid: string | null;
+  outcome: string | null;
+  promotion_oid: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
 export interface DiagnosticArtifactsTable {
   artifact_id: string;
   run_id: string | null;
@@ -108,5 +144,7 @@ export interface RunsDatabase {
   harness_turns: HarnessTurnsTable;
   runtime_events: RuntimeEventsTable;
   result_records: ResultRecordsTable;
+  role_workspace_slots: RoleWorkspaceSlotsTable;
+  role_workspace_generations: RoleWorkspaceGenerationsTable;
   diagnostic_artifacts: DiagnosticArtifactsTable;
 }

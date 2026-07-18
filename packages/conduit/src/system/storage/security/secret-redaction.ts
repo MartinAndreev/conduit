@@ -6,6 +6,11 @@ const SECRET_PATTERNS: readonly RegExp[] = [
 ];
 
 const SECRET_KEY = /(?:api[_-]?key|token|password|secret|private[_-]?key)/i;
+const NON_SECRET_TOKEN_KEY = /^workspaceFencingToken$/;
+
+function isSecretKey(key: string): boolean {
+  return SECRET_KEY.test(key) && !NON_SECRET_TOKEN_KEY.test(key);
+}
 
 function escapePattern(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -13,7 +18,7 @@ function escapePattern(value: string): string {
 
 function environmentSecrets(): readonly string[] {
   return Object.entries(process.env)
-    .filter(([key, value]) => SECRET_KEY.test(key) && (value?.length ?? 0) >= 8)
+    .filter(([key, value]) => isSecretKey(key) && (value?.length ?? 0) >= 8)
     .map(([, value]) => value!);
 }
 
@@ -40,7 +45,7 @@ export function redactPersistedValue<T>(value: T): T {
   if (value && typeof value === "object") {
     const redacted = Object.fromEntries(
       Object.entries(value).map(([key, item]) =>
-        SECRET_KEY.test(key)
+        isSecretKey(key)
           ? [key, "[REDACTED]"]
           : [key, redactPersistedValue(item)],
       ),

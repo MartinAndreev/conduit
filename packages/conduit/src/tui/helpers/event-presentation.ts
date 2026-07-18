@@ -6,6 +6,20 @@ const readOperationPattern =
 const writeOperationPattern =
   /(?:apply_patch|(?:^|\s)(?:cp|mkdir|mv|rm|touch|write)(?:\s|$))/i;
 
+export function canonicalMonitorRoleId(
+  roleId: string,
+  configuredRoleIds: readonly string[],
+): string {
+  if (configuredRoleIds.includes(roleId)) return roleId;
+  return (
+    configuredRoleIds.find(
+      (configured) =>
+        roleId.startsWith(`${configured}-resume-`) ||
+        roleId.startsWith(`${configured}-auto-retry-`),
+    ) ?? roleId
+  );
+}
+
 function operationPhase(operation: string): string {
   if (writeOperationPattern.test(operation)) {
     return "writing";

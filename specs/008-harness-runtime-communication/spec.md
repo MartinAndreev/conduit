@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed. This specification defines the next harness integration boundary. It does not amend the approved `AgentAssignmentV1`, `AgentResponseV1`, or `ConduitResultRecordV1` contracts from Feature 007 until corresponding versioned contracts and implementation tasks are approved.
+Approved. This specification defines the harness integration boundary. It does not amend the approved `AgentAssignmentV1`, `AgentResponseV1`, or `ConduitResultRecordV1` wire contracts from Feature 007.
 
 ## Problem
 
@@ -247,12 +247,12 @@ Each provider streams versioned `ConduitRuntimeEventV1` values through an async 
 
 ### Provider matrix
 
-| Harness | Preferred provider | Fallback provider | Status |
-| --- | --- | --- | --- |
-| Codex | `CodexAppServerCommunicationProvider` (`app-server-v2`) | `CodexExecCommunicationProvider` (`exec-jsonl`) | app-server capability-gated; exec JSONL verified fallback |
-| OpenCode | `OpenCodeAcpCommunicationProvider` (`acp-stdio`) | `OpenCodeJsonCommunicationProvider` (`run-json`) | preferred capability-gated |
-| Pi | `PiRpcCommunicationProvider` (`rpc-stdio`) | `PiJsonCommunicationProvider` (`json`) | preferred capability-gated |
-| Kilo | `KiloAcpCommunicationProvider` (`acp-stdio`) | `KiloJsonCommunicationProvider` (`run-json`) | preferred capability-gated |
+| Harness  | Preferred provider                                      | Fallback provider                                | Status                                                    |
+| -------- | ------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------- |
+| Codex    | `CodexAppServerCommunicationProvider` (`app-server-v2`) | `CodexExecCommunicationProvider` (`exec-jsonl`)  | app-server capability-gated; exec JSONL verified fallback |
+| OpenCode | `OpenCodeAcpCommunicationProvider` (`acp-stdio`)        | `OpenCodeJsonCommunicationProvider` (`run-json`) | preferred capability-gated                                |
+| Pi       | `PiRpcCommunicationProvider` (`rpc-stdio`)              | `PiJsonCommunicationProvider` (`json`)           | preferred capability-gated                                |
+| Kilo     | `KiloAcpCommunicationProvider` (`acp-stdio`)            | `KiloJsonCommunicationProvider` (`run-json`)     | preferred capability-gated                                |
 
 Preferred and fallback providers are separate implementations. Provider selection is registry-owned. A provider may not switch transport after assignment acceptance. Fallback after negotiation is allowed only before assignment acceptance and before side effects.
 
@@ -293,3 +293,27 @@ Transcripts are streamed append-only, capped per file and total budget, cleaned 
 ### Agent isolation
 
 Agents run in isolated workspaces that do not contain `.conduit`, `state.db`, transcripts, temporary launch files, or unrelated role worktrees. Prompts are not a security boundary. Conduit observes and integrates approved artifact changes through controlled database and Git-backed package mechanisms.
+
+## Amendment: Reviewer Correction Workflow
+
+A successful reviewer process and a successful review gate are distinct outcomes. A structurally and semantically valid reviewer response with `status: "completed"` completes the reviewer turn. Only `verdict.decision: "approved"` accepts the workflow. `needs_changes` and `rejected` are completed reviewer turns whose structured findings MUST be persisted before correction work is scheduled. `inconclusive`, `failed`, missing verdicts, blocked responses, and invalid responses fail closed and MUST NOT unlock workflow completion.
+
+Conduit MUST route correction work only from reviewer findings with repository-relative paths that resolve to exactly one writable role's approved ownership. Pathless, unowned, or ambiguously owned required findings stop the loop. Review feedback does not amend the feature packet, ownership, forbidden paths, or provider permissions.
+
+Correction is bounded to two rounds. Each correction and re-review uses a unique assignment ID and still requires one valid `AgentResponseV1`. An identical repeated review, a completed correction with no Conduit-observed changes, an unroutable finding, a failed correction turn, or exhaustion of the bound terminates the workflow as failed. The completion message MUST claim reviewer acceptance only after an approved verdict.
+
+Correction reuses the existing isolated role worktree when its identity and Git baseline remain verifiable. Each turn opens a provider session through the existing communication boundary; Conduit MAY continue a verified native session when supported, but MUST create a lineage-linked replacement when native continuation is unavailable. Logical workflow continuity is guaranteed by persisted structured results, normalized events, and approved Git artifacts, never by raw transcripts or assumed native chat state.
+
+Reviewer workspaces are disposable and language-independent. Conduit records the pre-turn reviewer HEAD, observes policy violations, then resets tracked changes and cleans all untracked and ignored output before accepting or reusing the workspace. It MUST NOT classify cleanup safety from language-, framework-, dependency-, build-, or cache-directory names.
+
+A role turn that has a missing final response or fails Conduit structural or semantic response validation is automatically retried in its verified isolated worktree up to two times before the role and run are marked failed. A valid `blocked`, `needs_input`, `partial`, or `failed` response is not a protocol-retry condition. Conduit MUST checkpoint observed failed-turn files without integrating them, include the exact bounded validation failure in the retry assignment, require a new valid `AgentResponseV1`, and integrate checkpoint lineage only after a successful retry. Independent runnable roles continue while the retry occurs. Protocol retries apply equally to initial, correction, and re-review turns and do not consume or reset reviewer correction rounds.
+
+New failed runs are resumable only when their persisted starting Git HEAD, feature-package path and hash, completed role result records and commits, failed-role workspaces, and recorded Git baselines remain verifiable. Legacy runs without provable identity metadata fail closed. Resume atomically claims one failed snapshot, preserves completed role results and commits, retries only failed roles in their existing isolated worktrees, and schedules only unfinished downstream roles. Every retry uses a unique assignment ID and opens a replacement provider session when native continuation is unavailable; structured prior state and the existing workspace provide continuity without replaying raw transcripts. Assignment prompts MUST resolve context references from the current role workspace and MUST NOT direct agents to parent or sibling worktrees. The CLI and TUI use the same eligibility query and resume command. They display checking, resumable, or non-resumable recovery state, preserved and retry role names, expose lowercase `[r] Resume failed run` only when eligibility passes, and reserve `Ctrl+R` for refinement editing.
+
+After an approved verdict, the workflow is complete only when Conduit promotes the verified reviewer worktree HEAD into the project checkout. Promotion MUST require the project HEAD to match the run's persisted starting HEAD, reject material tracked or untracked project changes, verify that the reviewer HEAD descends from the starting HEAD, disable repository hooks, and use a fast-forward-only merge. Only Conduit's exact configured runtime-state location may be exempted from project cleanliness checks; no project, language, dependency, build, or generated-output directory-name allowlist is permitted. A failed promotion leaves the isolated worktrees intact, marks the run failed, and reports recovery guidance; Conduit MUST NOT claim completion while approved files exist only in role worktrees.
+
+## Amendment: Tool-Submitted Agent Responses
+
+For a verified ACP provider, Conduit MUST expose a process-scoped `submit_agent_response` MCP tool whose input maps deterministically to `AgentResponseV1`. The transport uses a flat verdict enum and rationale rather than a nullable object, and one required evidence string for each finding or global promotion rather than a nested string array, because provider tool encoders may stringify union-valued arguments or omit nested arrays; Conduit converts those transport forms to the unchanged canonical response before validation. The tool validates the submitted value before capture and returns bounded field errors to the agent inside the same native turn. ACP prose, assistant-message JSON, and process exit zero are not response candidates when the tool is active; only the privately captured valid tool submission may enter Feature 007 structural and semantic validation.
+
+The MCP server is supplied only in the ACP `session/new` request, uses stdio, stores its capture in a mode-restricted Conduit temporary directory, and is removed when the communication session closes. Conduit MUST NOT run `mcp add`, modify user or project harness configuration, expose the capture path in prompts, or treat the tool submission as telemetry or independent evidence. Codex native output-schema capture and providers without an approved ephemeral tool transport retain their existing provider-owned final-response strategy.

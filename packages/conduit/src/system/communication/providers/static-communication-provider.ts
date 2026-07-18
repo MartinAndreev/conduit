@@ -35,7 +35,9 @@ export class StaticCommunicationProvider implements AgentCommunicationProvider {
       providerId: this.id,
       runner: this.options.runner,
       availability: { available: false, reason: "provider not negotiated" },
-      degradedReason: this.options.fallback ? "verified fallback provider" : undefined,
+      degradedReason: this.options.fallback
+        ? "verified fallback provider"
+        : undefined,
       capability: {
         protocol: this.options.protocol,
         bidirectional: !this.options.fallback,
@@ -64,7 +66,11 @@ export class StaticCommunicationProvider implements AgentCommunicationProvider {
 
 class UnstartedCommunicationSession implements AgentCommunicationSession {
   readonly nativeSessionId?: string;
-  readonly events: AsyncGenerator<ConduitRuntimeEvent, NativeTerminalResult, void>;
+  readonly events: AsyncGenerator<
+    ConduitRuntimeEvent,
+    NativeTerminalResult,
+    void
+  >;
 
   constructor(nativeSessionId: string | undefined) {
     this.nativeSessionId = nativeSessionId;

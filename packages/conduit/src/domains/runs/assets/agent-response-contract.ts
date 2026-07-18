@@ -57,6 +57,36 @@ const promptLines = [
   '  "evidence": ["bounded reference"] }.',
 ];
 
-export function agentResponseContractPrompt(): string {
-  return promptLines.join("\n");
+export function agentResponseContractPrompt(
+  delivery: "assistant-response" | "tool" = "assistant-response",
+): string {
+  if (delivery === "assistant-response") return promptLines.join("\n");
+  const toolShape = promptLines.slice(6).flatMap((line) => {
+    if (line === '  "verdict": null,')
+      return [
+        '  "verdict": "none | approved | rejected | passed | failed | needs_changes | inconclusive",',
+        '  "verdictRationale": "Empty only when verdict is none.",',
+      ];
+    if (line === '  "line": 1, "evidence": ["bounded reference"],')
+      return ['  "line": 1, "evidence": "one bounded reference",'];
+    if (line === '  "evidence": ["bounded reference"] }.')
+      return ['  "evidence": "one bounded reference" }.'];
+    if (line.startsWith("- verdict:"))
+      return [
+        '- verdict: "none | approved | rejected | passed | failed | needs_changes | inconclusive".',
+        '- verdictRationale: rationale text; use an empty string only with "none".',
+      ];
+    if (line === '  "rationale": "..." } or null.') return [];
+    return [line];
+  });
+  return [
+    promptLines[0],
+    "",
+    "Submit exactly one valid AgentResponseV1 through the required completion tool.",
+    "The tool transport uses the flat verdict and verdictRationale fields shown below; it converts them to the canonical verdict object or null.",
+    "Finding and global-promotion evidence use one required string in the tool transport; Conduit wraps it in the canonical evidence array.",
+    "Do not send a verdict object, null, or JSON encoded inside a string.",
+    "Do not print the response as prose or a JSON code block. The tool validates it before acceptance.",
+    ...toolShape,
+  ].join("\n");
 }

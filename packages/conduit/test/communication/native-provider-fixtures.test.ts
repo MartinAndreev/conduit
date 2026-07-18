@@ -7,6 +7,7 @@ import { CommunicationProviderId } from "../../src/system/communication/enums/co
 import { CliJsonCommunicationProvider } from "../../src/system/communication/providers/cli-json-communication-provider.js";
 import { consumeCommunicationStream } from "../../src/system/communication/services/consume-communication-stream.js";
 import { parseNativeEvent } from "../../src/system/communication/services/native-event-parser.js";
+import { agentResponseContractPrompt } from "../../src/domains/runs/assets/agent-response-contract.js";
 import { createAgentAssignmentV1 } from "../../src/domains/runs/factories/agent-assignment-factory.js";
 import { AgentRoleKind } from "../../src/domains/roles/enums/agent-role-kind.js";
 import { agentResponseOutputSchema } from "../../src/system/communication/services/agent-response-output-schema.js";
@@ -182,6 +183,7 @@ setTimeout(() => {
   );
   await chmod(executable, 0o755);
   try {
+    let submittedPrompt = "";
     const provider = new CliJsonCommunicationProvider({
       id: CommunicationProviderId.OpenCodeJson,
       runner: "opencode",
@@ -189,7 +191,10 @@ setTimeout(() => {
       executableCandidates: [executable],
       verifiedVersions: ["1.0.0"],
       finalResponseCapture: "json-fallback",
-      buildArgs: () => [],
+      buildArgs: ({ prompt }) => {
+        submittedPrompt = prompt;
+        return [];
+      },
     });
     const assignment = createAgentAssignmentV1({
       assignmentId: "run-1:backend",
@@ -219,6 +224,8 @@ setTimeout(() => {
     );
     await session.close();
     assert.equal(terminal.finalResponseCandidate, response);
+    assert.ok(submittedPrompt.includes(JSON.stringify(assignment)));
+    assert.ok(submittedPrompt.endsWith(agentResponseContractPrompt()));
     assert.deepEqual(
       events.map((event) => event.sequence),
       events.map((_, index) => index + 1),

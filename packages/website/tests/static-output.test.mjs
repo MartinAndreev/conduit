@@ -14,8 +14,8 @@ const pages = {
   home: "index.html",
   docs: "docs/index.html",
   releases: "releases/index.html",
-  currentRelease: "releases/v0-6-0/index.html",
-  previousRelease: "releases/v0-5-4/index.html",
+  currentRelease: "releases/v0-7-0/index.html",
+  previousRelease: "releases/v0-6-0/index.html",
   roadmap: "roadmap/index.html",
 };
 
@@ -58,21 +58,24 @@ test("release archive and entries render published content", async () => {
   const archive = await readPage(pages.releases);
   assert.match(
     archive,
+    /Conduit v0\.7\.0: resilient workspaces and dependable handoffs/u,
+  );
+  assert.match(archive, /href="\/releases\/v0-7-0\/"/u);
+  assert.match(
+    archive,
     /Conduit v0\.6\.0: safer updates and clearer workflows/u,
   );
   assert.match(archive, /href="\/releases\/v0-6-0\/"/u);
-  assert.match(archive, /Conduit v0\.5\.4: reliable agent runs/u);
-  assert.match(archive, /href="\/releases\/v0-5-4\/"/u);
   assert.match(archive, /Read release notes/u);
 
   const currentRelease = await readPage(pages.currentRelease);
-  assert.match(currentRelease, /Guided self-update/u);
-  assert.match(currentRelease, /Faster, safer worktree monitoring/u);
+  assert.match(currentRelease, /durable role workspaces/u);
+  assert.match(currentRelease, /Structured ACP response submission/u);
   assert.match(currentRelease, /property="og:type" content="article"/u);
   assert.doesNotMatch(currentRelease, /draft:\s*true/iu);
 
   const previousRelease = await readPage(pages.previousRelease);
-  assert.match(previousRelease, /Structured agent contracts/u);
+  assert.match(previousRelease, /Guided self-update/u);
 });
 
 test("roadmap preserves approved phases, priorities, and ordering", async () => {

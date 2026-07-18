@@ -4,9 +4,13 @@ import { createGetReviewResultHandler } from "../../../domains/runs/handlers/get
 import { createGetRunDiffHandler } from "../../../domains/runs/handlers/get-run-diff-handler.js";
 import { createGetRunEventsHandler } from "../../../domains/runs/handlers/get-run-events-handler.js";
 import { createGetRunHandler } from "../../../domains/runs/handlers/get-run-handler.js";
+import { createGetWorkspaceContinuityHandler } from "../../../domains/runs/handlers/get-workspace-continuity-handler.js";
+import { createGetRunResumeEligibilityHandler } from "../../../domains/runs/handlers/get-run-resume-eligibility-handler.js";
 import { createReviewRunHandler } from "../../../domains/runs/handlers/review-run-handler.js";
-import type { StartFeatureRunCommand } from "../../../domains/runs/interfaces/commands/start-feature-run.js";
+import { createResumeRunHandler } from "../../../domains/runs/handlers/resume-run-handler.js";
+import { createStartFeatureRunHandler } from "../../../domains/runs/handlers/start-feature-run-handler.js";
 import { WorktreeDiffReader } from "../../../domains/runs/repositories/worktree-diff-reader.js";
+import type { WorkspaceContinuity } from "../../../domains/runs/types/workspace-continuity.js";
 import type { CommandHandler } from "../../bus/command-bus.js";
 import type { Query, QueryHandler } from "../../bus/query-bus.js";
 import type {
@@ -26,72 +30,56 @@ export class RunsBootstrapService implements ApplicationBootstrapService {
     } = context;
     const executeRun = dependencies.executeRun;
 
-    if (projectRoot && executeRun) {
-      commandBus.register("startFeatureRun", (async (
-        command: StartFeatureRunCommand,
-      ) => {
-        const config = await dependencies.loadConfig(projectRoot);
-        const roleNames = [...command.roleNames];
-        if (!roleNames.length)
-          return {
-            success: false,
-            error: {
-              code: "NO_RUN_ROLES",
-              message: "Configure at least one role before starting a run.",
-            },
-          };
-        const { run, runDir } = await dependencies.planRun({
+    if (
+      projectRoot &&
+      executeRun &&
+      repositories.recovery &&
+      repositories.roleWorkspaces
+    ) {
+      const resumeRunHandler = createResumeRunHandler(repositories.recovery, {
+        projectRoot,
+        executeRun,
+        eventRepository: repositories.runEvents,
+        resultRepository: repositories.resultRecords,
+        runtimeEventRepository: repositories.runtimeEvents,
+        processRegistry,
+        roleWorkspaceRepository: repositories.roleWorkspaces,
+      });
+      commandBus.register("resumeRun", resumeRunHandler as CommandHandler);
+      commandBus.register(
+        "startFeatureRun",
+        createStartFeatureRunHandler({
           projectRoot,
-          config,
-          featureId: command.featureId,
-          roleNames,
           builtinRoot: dependencies.builtinRoleRoot ?? "",
-        });
-        const initialSnapshot = await repositories.recovery?.saveSnapshot(run);
-        let snapshotVersion = initialSnapshot?.version;
-        let snapshotWrite = Promise.resolve();
-        const persistSnapshot = (): Promise<void> => {
-          if (!repositories.recovery) return Promise.resolve();
-          snapshotWrite = snapshotWrite.then(async () => {
-            const persisted = await repositories.recovery?.saveSnapshot(
-              run,
-              snapshotVersion,
-            );
-            snapshotVersion = persisted?.version;
-          });
-          return snapshotWrite;
-        };
-        void executeRun({
-          projectRoot,
-          run,
-          runDir,
-          dryRun: false,
+          loadConfig: dependencies.loadConfig,
+          planRun: dependencies.planRun,
+          executeRun,
+          recoveryRepository: repositories.recovery,
+          roleWorkspaceRepository: repositories.roleWorkspaces,
           eventRepository: repositories.runEvents,
           resultRepository: repositories.resultRecords,
           runtimeEventRepository: repositories.runtimeEvents,
           processRegistry,
-          onRoleWorkspaceReady: persistSnapshot,
-        })
-          .then(async () => {
-            await persistSnapshot();
-            if (run.status === "cancelled")
-              await repositories.recovery?.markCancelled(run.id);
-          })
-          .catch(async (error) => {
-            await repositories.recovery?.markInterrupted(
-              run.id,
-              error instanceof Error ? error.message : String(error),
-            );
-          });
-        return { success: true, data: { runId: run.id } };
-      }) as CommandHandler);
+          getContinuity: async (featureId, roleNames) => {
+            const result = await queryBus.execute({
+              type: "getWorkspaceContinuity",
+              featureId,
+              roleNames,
+            });
+            if (!result.success) throw new Error(result.error.message);
+            return result.data as WorkspaceContinuity;
+          },
+          resumeRun: async (runId) =>
+            resumeRunHandler({ type: "resumeRun", runId }),
+        }) as CommandHandler,
+      );
     }
 
     queryBus.register("latestRuns", (async (
       query: Query & { projectRoot: string },
     ) => {
       if (repositories.recovery) {
-        const snapshots = await repositories.recovery.listSnapshots();
+        const snapshots = await repositories.recovery.listSnapshots(20);
         return { success: true, data: snapshots.map(({ run }) => run) };
       }
       const config = await dependencies.loadConfig(query.projectRoot);
@@ -114,6 +102,24 @@ export class RunsBootstrapService implements ApplicationBootstrapService {
       queryBus.register(
         "getRun",
         createGetRunHandler(repositories.recovery) as QueryHandler,
+      );
+      if (repositories.roleWorkspaces && projectRoot)
+        queryBus.register(
+          "getWorkspaceContinuity",
+          createGetWorkspaceContinuityHandler(
+            projectRoot,
+            repositories.recovery,
+            repositories.roleWorkspaces,
+            repositories.resultRecords,
+          ) as QueryHandler,
+        );
+      queryBus.register(
+        "getRunResumeEligibility",
+        createGetRunResumeEligibilityHandler(
+          repositories.recovery,
+          repositories.resultRecords,
+          repositories.roleWorkspaces,
+        ) as QueryHandler,
       );
       commandBus.register(
         "finalReview",

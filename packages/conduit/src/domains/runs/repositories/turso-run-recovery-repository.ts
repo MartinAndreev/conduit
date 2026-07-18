@@ -68,6 +68,42 @@ export class TursoRunRecoveryRepository implements RunRecoveryRepository {
     };
   }
 
+  async claimFailedRun(
+    runId: string,
+    expectedVersion: number,
+  ): Promise<RunSnapshot | undefined> {
+    const existing = await this.loadSnapshot(runId);
+    if (
+      !existing ||
+      existing.version !== expectedVersion ||
+      existing.run.status !== "failed"
+    )
+      return undefined;
+    const run: Run = { ...existing.run, status: "running" };
+    const sanitized = redactPersistedValue(compactRecoveryRun(run));
+    const now = new Date().toISOString();
+    const version = expectedVersion + 1;
+    const updated = await this.database
+      .updateTable("run_snapshots")
+      .set({
+        snapshot_json: JSON.stringify(sanitized),
+        status: "running",
+        version,
+        updated_at: now,
+      })
+      .where("run_id", "=", runId)
+      .where("status", "=", "failed")
+      .where("version", "=", expectedVersion)
+      .executeTakeFirst();
+    if (updated.numUpdatedRows !== 1n) return undefined;
+    return {
+      run: sanitized,
+      state: "running",
+      version,
+      updatedAt: now,
+    };
+  }
+
   async loadSnapshot(runId: string): Promise<RunSnapshot | undefined> {
     const row = await this.database
       .selectFrom("run_snapshots")
@@ -84,13 +120,13 @@ export class TursoRunRecoveryRepository implements RunRecoveryRepository {
     };
   }
 
-  async listSnapshots(limit = 20): Promise<readonly RunSnapshot[]> {
-    const rows = await this.database
+  async listSnapshots(limit?: number): Promise<readonly RunSnapshot[]> {
+    let query = this.database
       .selectFrom("run_snapshots")
       .selectAll()
-      .orderBy("updated_at", "desc")
-      .limit(limit)
-      .execute();
+      .orderBy("updated_at", "desc");
+    if (limit !== undefined) query = query.limit(limit);
+    const rows = await query.execute();
     return rows.map((row) => {
       const run = JSON.parse(row.snapshot_json) as Run;
       return {

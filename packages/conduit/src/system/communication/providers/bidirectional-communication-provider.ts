@@ -2,8 +2,11 @@ import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import path from "node:path";
 import type { AgentAssignmentV1 } from "../../../domains/runs/types/agent-protocol.js";
+import { conduitVersion } from "../../../generated/version.js";
 import { redactSecrets } from "../../storage/security/secret-redaction.js";
+import { agentAssignmentPrompt } from "../services/agent-assignment-prompt.js";
 import { parseNativeEvent } from "../services/native-event-parser.js";
+import { createAgentResponseToolRuntime } from "../services/agent-response-tool-runtime.js";
 import type {
   AgentCommunicationProvider,
   AgentCommunicationSession,
@@ -165,6 +168,8 @@ class BidirectionalCommunicationSession implements AgentCommunicationSession {
   private acpThoughts = new Map<string, string>();
   private pending = new Map<string | number, PendingRpcRequest>();
   private permissions = new Map<string, PendingPermissionRequest>();
+  private responseTool?: ReturnType<typeof createAgentResponseToolRuntime>;
+  private responseToolFollowups = 0;
 
   constructor(
     private readonly options: BidirectionalProviderOptions,
@@ -177,6 +182,8 @@ class BidirectionalCommunicationSession implements AgentCommunicationSession {
   async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
+    if (this.options.protocol === "acp-stdio")
+      this.responseTool = createAgentResponseToolRuntime();
     this.child = spawn(
       this.command,
       this.options.buildArgs({
@@ -217,7 +224,10 @@ class BidirectionalCommunicationSession implements AgentCommunicationSession {
     if (assignment.assignmentId !== this.input.assignment.assignmentId)
       throw new Error("Submitted assignment does not match session assignment");
     this.submitted = true;
-    const prompt = `Perform only this authoritative AgentAssignmentV1. Read its contextReferences inside the workspace. Return exactly one AgentResponseV1 JSON object as the final response.\n${JSON.stringify(assignment)}`;
+    const prompt = agentAssignmentPrompt(
+      assignment,
+      this.responseTool ? { toolName: this.responseTool.toolName } : undefined,
+    );
     if (this.options.protocol === "acp-stdio") {
       void this.request("session/prompt", {
         sessionId: this.nativeSessionId,
@@ -327,6 +337,8 @@ class BidirectionalCommunicationSession implements AgentCommunicationSession {
     const child = this.child;
     if (child?.stdin && !child.stdin.destroyed) child.stdin.end();
     if (child && child.exitCode === null) this.terminate(child, "SIGTERM");
+    this.responseTool?.cleanup();
+    this.responseTool = undefined;
   }
 
   private async startAcp(): Promise<void> {
@@ -334,7 +346,7 @@ class BidirectionalCommunicationSession implements AgentCommunicationSession {
       await this.request("initialize", {
         protocolVersion: 1,
         clientCapabilities: {},
-        clientInfo: { name: "conduit", version: "0.6.0" },
+        clientInfo: { name: "conduit", version: conduitVersion },
       }),
     );
     if (initialized?.protocolVersion !== 1)
@@ -342,11 +354,28 @@ class BidirectionalCommunicationSession implements AgentCommunicationSession {
     const session = record(
       await this.request("session/new", {
         cwd: path.resolve(this.input.workspaceRoot),
-        mcpServers: [],
+        mcpServers: this.responseTool ? [this.responseTool.mcpServer] : [],
       }),
     );
     if (typeof session?.sessionId !== "string")
       throw new Error("ACP did not return a session ID");
+    if (this.responseTool) {
+      for (
+        let attempt = 0;
+        attempt < 20 && !this.responseTool.ready();
+        attempt += 1
+      )
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      if (!this.responseTool.ready())
+        throw new Error(
+          "ACP did not initialize the required Conduit response submission tool.",
+        );
+      this.enqueue(
+        "protocol-lifecycle",
+        { state: "response-tool-ready" },
+        "conduit.response-tool",
+      );
+    }
     this.nativeSessionId = session.sessionId;
     const options = Array.isArray(session.configOptions)
       ? session.configOptions.map(record).filter(Boolean)
@@ -397,7 +426,52 @@ class BidirectionalCommunicationSession implements AgentCommunicationSession {
     this.flushAcpText();
     const result = record(value);
     const stopReason = String(result?.stopReason ?? "unknown");
-    const candidate = this.finalResponse.trim();
+    const candidate = this.responseTool?.read();
+    if (
+      !candidate &&
+      !this.cancelled &&
+      this.responseTool &&
+      this.responseToolFollowups < 1
+    ) {
+      this.responseToolFollowups += 1;
+      this.enqueue(
+        "warning",
+        {
+          code: "AGENT_RESPONSE_TOOL_RETRY",
+          message:
+            "ACP turn ended without an accepted response; requesting one bounded same-session completion retry.",
+        },
+        "conduit.response-tool",
+      );
+      void this.request("session/prompt", {
+        sessionId: this.nativeSessionId,
+        prompt: [
+          {
+            type: "text",
+            text: `Your previous action ended the turn without an accepted ${this.responseTool.toolName} call. Do not perform more repository work. Truthfully summarize the work and verification already completed, then call ${this.responseTool.toolName}. If verification failed or a permission was denied, report that evidence in the response instead of attempting another command. The tool call must be your final action.`,
+          },
+        ],
+      })
+        .then((followup) => this.completeAcpPrompt(followup))
+        .catch((error) => this.fail(error));
+      return;
+    }
+    if (candidate)
+      this.enqueue(
+        "final-response-candidate",
+        { message: "Validated AgentResponseV1 tool submission captured" },
+        "conduit.response-tool",
+      );
+    else
+      this.enqueue(
+        "warning",
+        {
+          code: "AGENT_RESPONSE_TOOL_MISSING",
+          message:
+            "ACP turn ended without an accepted conduit_submit_agent_response tool call.",
+        },
+        "conduit.response-tool",
+      );
     this.enqueue(
       "protocol-lifecycle",
       { state: "completed", stopReason },
@@ -405,7 +479,7 @@ class BidirectionalCommunicationSession implements AgentCommunicationSession {
     );
     this.finish({
       status: this.cancelled ? "cancelled" : "completed",
-      finalResponseCandidate: candidate || undefined,
+      finalResponseCandidate: candidate,
       nativeSessionId: this.nativeSessionId,
       diagnostics: [],
     });
@@ -581,6 +655,14 @@ class BidirectionalCommunicationSession implements AgentCommunicationSession {
     for (const text of this.acpMessages.values()) {
       const message = text.trim();
       if (!message) continue;
+      if (this.responseTool) {
+        this.enqueue(
+          "agent-activity",
+          { message: message.slice(0, 4_000) },
+          "agent_message",
+        );
+        continue;
+      }
       this.finalResponse = message.slice(0, finalResponseLimit);
       const finalCandidate = message.startsWith("{");
       this.enqueue(

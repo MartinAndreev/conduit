@@ -113,6 +113,7 @@ export class RefinementBootstrapService implements ApplicationBootstrapService {
         processRegistry,
         reportRepository: repositories.researchReports,
         recoveryRepository: repositories.recovery,
+        roleWorkspaceRepository: repositories.roleWorkspaces,
       }) as CommandHandler,
     );
     queryBus.register(

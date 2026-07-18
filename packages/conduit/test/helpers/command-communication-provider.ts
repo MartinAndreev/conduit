@@ -20,8 +20,12 @@ export interface TestRoleCommand {
   readonly args: readonly string[];
 }
 
+export type TestRoleCommandFactory = (
+  input: CreateCommunicationSessionInput,
+) => TestRoleCommand;
+
 export function commandCommunicationProvider(
-  commands: Readonly<Record<string, TestRoleCommand>>,
+  commands: Readonly<Record<string, TestRoleCommand | TestRoleCommandFactory>>,
 ): AgentCommunicationProvider {
   return {
     id: CommunicationProviderId.CodexExec,
@@ -59,7 +63,9 @@ class CommandSession implements AgentCommunicationSession {
 
   constructor(
     private readonly input: CreateCommunicationSessionInput,
-    private readonly commands: Readonly<Record<string, TestRoleCommand>>,
+    private readonly commands: Readonly<
+      Record<string, TestRoleCommand | TestRoleCommandFactory>
+    >,
   ) {
     this.events = this.stream();
   }
@@ -79,9 +85,11 @@ class CommandSession implements AgentCommunicationSession {
   > {
     if (!this.submitted)
       return { status: "failed", diagnostics: ["not submitted"] };
-    const planned = this.commands[this.input.assignment.role];
-    if (!planned)
+    const configured = this.commands[this.input.assignment.role];
+    if (!configured)
       return { status: "failed", diagnostics: ["missing test command"] };
+    const planned =
+      typeof configured === "function" ? configured(this.input) : configured;
     try {
       const result = await executeFile(planned.command, [...planned.args], {
         cwd: this.input.workspaceRoot,

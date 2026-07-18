@@ -19,16 +19,26 @@ export class TursoRuntimeEventRepository implements RuntimeEventRepository {
       throw new Error(
         "A runtime event requires Conduit-owned run and role IDs",
       );
-    await this.database
-      .insertInto("runtime_events")
-      .values({
-        run_id: runId,
-        role_id: roleId,
-        sequence: event.sequence,
-        event_json: JSON.stringify(event),
-        received_at: event.receivedAt,
-      })
-      .execute();
+    await this.database.transaction().execute(async (transaction) => {
+      const latest = await transaction
+        .selectFrom("runtime_events")
+        .select(({ fn }) => fn.max<number>("sequence").as("max_sequence"))
+        .where("run_id", "=", runId)
+        .where("role_id", "=", roleId)
+        .executeTakeFirst();
+      const sequence = (latest?.max_sequence ?? 0) + 1;
+      const persisted = { ...event, sequence };
+      await transaction
+        .insertInto("runtime_events")
+        .values({
+          run_id: runId,
+          role_id: roleId,
+          sequence,
+          event_json: JSON.stringify(persisted),
+          received_at: persisted.receivedAt,
+        })
+        .execute();
+    });
   }
 
   async loadByRole(

@@ -7,7 +7,7 @@ import { hashFeaturePackage } from "../../src/domains/features/services/feature-
 
 test("feature package hash is stable and ignores runtime state", async () => {
   await withPackage(async (root) => {
-    await writePackage(root, { spec: "# Spec\n", contract: "{\"a\":1}\n" });
+    await writePackage(root, { spec: "# Spec\n", contract: '{"a":1}\n' });
     const first = await hashFeaturePackage({ packageRoot: root });
     await mkdir(path.join(root, ".conduit"));
     await writeFile(path.join(root, ".conduit", "events.json"), "runtime");
@@ -39,7 +39,50 @@ test("feature package hash changes for material approved package changes", async
   });
 });
 
-async function withPackage(work: (root: string) => Promise<void>): Promise<void> {
+test("feature package hash includes normalized role ownership inputs", async () => {
+  await withPackage(async (root) => {
+    await writePackage(root, { spec: "# Spec\n", contract: "x\n" });
+    const first = await hashFeaturePackage({
+      packageRoot: root,
+      ownershipInputs: [
+        {
+          role: "worker",
+          readOnly: false,
+          owns: ["b", "a"],
+          dependsOn: ["qa"],
+        },
+      ],
+    });
+    const reordered = await hashFeaturePackage({
+      packageRoot: root,
+      ownershipInputs: [
+        {
+          role: "worker",
+          readOnly: false,
+          owns: ["a", "b"],
+          dependsOn: ["qa"],
+        },
+      ],
+    });
+    const changed = await hashFeaturePackage({
+      packageRoot: root,
+      ownershipInputs: [
+        {
+          role: "worker",
+          readOnly: false,
+          owns: ["a", "c"],
+          dependsOn: ["qa"],
+        },
+      ],
+    });
+    assert.equal(reordered.hash, first.hash);
+    assert.notEqual(changed.hash, first.hash);
+  });
+});
+
+async function withPackage(
+  work: (root: string) => Promise<void>,
+): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), "conduit-package-"));
   try {
     await work(root);
@@ -54,5 +97,8 @@ async function writePackage(
 ): Promise<void> {
   await mkdir(path.join(root, "contracts"), { recursive: true });
   await writeFile(path.join(root, "spec.md"), content.spec);
-  await writeFile(path.join(root, "contracts", "contract.json"), content.contract);
+  await writeFile(
+    path.join(root, "contracts", "contract.json"),
+    content.contract,
+  );
 }
