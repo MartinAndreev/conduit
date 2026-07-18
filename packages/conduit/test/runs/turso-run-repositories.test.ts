@@ -59,9 +59,40 @@ test("Turso run snapshots reject stale versions and list recent runs", async () 
       () => repository.saveSnapshot({ ...run, status: "failed" }, 1),
       /updated by another operation/,
     );
+    for (let index = 0; index < 25; index += 1)
+      await repository.saveSnapshot({
+        ...run,
+        id: `history-${index}`,
+        createdAt: `2026-01-${String(index + 2).padStart(2, "0")}T00:00:00.000Z`,
+      });
+    assert.equal((await repository.listSnapshots()).length, 26);
+    assert.equal((await repository.listSnapshots(20)).length, 20);
+    await connection.close();
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("Turso failed-run claim is atomic and rejects a second resume", async () => {
+  const projectRoot = await mkdtemp(join(tmpdir(), "conduit-claim-db-"));
+  try {
+    const connection = await new ProjectDatabaseFactory(projectRoot).open();
+    const repository = new TursoRunRecoveryRepository(connection);
+    const snapshot = await repository.saveSnapshot({
+      id: "run-claim",
+      featureId: "008",
+      status: "failed",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      roles: [],
+    });
+    const [first, second] = await Promise.all([
+      repository.claimFailedRun("run-claim", snapshot.version),
+      repository.claimFailedRun("run-claim", snapshot.version),
+    ]);
+    assert.equal([first, second].filter(Boolean).length, 1);
     assert.equal(
-      (await repository.listSnapshots())[0]?.run.status,
-      "completed",
+      (await repository.loadSnapshot("run-claim"))?.run.status,
+      "running",
     );
     await connection.close();
   } finally {

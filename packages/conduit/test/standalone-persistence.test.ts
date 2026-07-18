@@ -49,6 +49,21 @@ const host = hosts[hostKey];
       });
       await copyFile(built, executable);
       await chmod(executable, 0o755);
+      const responseCapture = join(directory, "agent-response.json");
+      const mcpOutput = execFileSync(executable, ["__agent-response-mcp"], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          CONDUIT_AGENT_RESPONSE_CAPTURE: responseCapture,
+        },
+        input: `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: "2025-06-18" },
+        })}\n`,
+      });
+      assert.equal(JSON.parse(mcpOutput).result.protocolVersion, "2025-06-18");
       execFileSync("git", ["init", "-q", projectRoot]);
       execFileSync(executable, ["init", projectRoot], { stdio: "pipe" });
       const output = execFileSync(
@@ -74,7 +89,7 @@ const host = hosts[hostKey];
         interruptedMigrationRecovered: boolean;
       };
       assert.equal(diagnostic.binding, host!.binding);
-      assert.equal(diagnostic.projectMigrationCount, 4);
+      assert.equal(diagnostic.projectMigrationCount, 6);
       assert.equal(diagnostic.globalMigrationCount, 1);
       assert.equal(diagnostic.interruptedMigrationRecovered, true);
       for (const databasePath of [

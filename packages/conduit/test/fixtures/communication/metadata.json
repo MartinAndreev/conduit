@@ -1,0 +1,82 @@
+{
+  "fixtures": [
+    {
+      "file": "codex-exec-0.144.4.jsonl",
+      "harness": "codex",
+      "version": "0.144.4",
+      "command": "codex exec --json --ephemeral --model gpt-5.3-codex-spark",
+      "protocol": "exec-jsonl",
+      "capturedAt": "2026-07-16",
+      "sanitized": true
+    },
+    {
+      "file": "opencode-acp-1.17.18.jsonl",
+      "harness": "opencode",
+      "version": "1.17.18",
+      "command": "opencode acp --pure --cwd <workspace>; ACP initialize/session/new/session/set_config_option/session/prompt",
+      "protocol": "acp-stdio-v1",
+      "capturedAt": "2026-07-16",
+      "sanitized": true
+    },
+    {
+      "file": "opencode-run-1.17.18.jsonl",
+      "harness": "opencode",
+      "version": "1.17.18",
+      "command": "opencode run --pure --format json --model opencode/gpt-5.6-luna --variant low",
+      "protocol": "run-json",
+      "capturedAt": "2026-07-16",
+      "sanitized": true
+    },
+    {
+      "file": "pi-rpc-0.80.8.jsonl",
+      "harness": "pi",
+      "version": "0.80.8",
+      "command": "pi --mode rpc --model openai-codex/gpt-5.3-codex-spark --thinking low --no-extensions --no-skills --no-prompt-templates --no-context-files --no-session",
+      "protocol": "rpc-stdio",
+      "capturedAt": "2026-07-16",
+      "sanitized": true
+    },
+    {
+      "file": "pi-json-0.80.8.jsonl",
+      "harness": "pi",
+      "version": "0.80.8",
+      "command": "pi --mode json --print --model openai-codex/gpt-5.3-codex-spark --thinking low --no-extensions --no-skills --no-prompt-templates --no-context-files --no-session",
+      "protocol": "json",
+      "capturedAt": "2026-07-16",
+      "sanitized": true
+    },
+    {
+      "file": "kilo-acp-7.4.9.jsonl",
+      "harness": "kilo",
+      "version": "7.4.9",
+      "command": "kilo acp --pure --cwd <workspace>; ACP initialize/session/new/session/set_config_option/session/prompt",
+      "protocol": "acp-stdio-v1",
+      "capturedAt": "2026-07-16",
+      "sanitized": true
+    },
+    {
+      "file": "kilo-run-7.4.9.jsonl",
+      "harness": "kilo",
+      "version": "7.4.9",
+      "command": "kilo run --pure --format json --model openai/gpt-5.6-luna --variant low",
+      "protocol": "run-json",
+      "capturedAt": "2026-07-16",
+      "sanitized": true
+    },
+    {
+      "file": "kilo-run-7.4.9-error.jsonl",
+      "harness": "kilo",
+      "version": "7.4.9",
+      "command": "kilo run --pure --format json --model kilo/openai/gpt-5.6-luna --variant low",
+      "protocol": "run-json",
+      "capturedAt": "2026-07-16",
+      "sanitized": true
+    }
+  ],
+  "notes": [
+    "Native IDs, workspace paths, response IDs, signatures, encrypted reasoning payloads, snapshots, and model catalogs were removed.",
+    "OpenCode and Kilo ACP communicate over JSON-RPC stdio; their internal loopback HTTP server is not Conduit's transport.",
+    "The Kilo error fixture preserves the observed unauthenticated hosted-model failure; the successful fixture uses the authenticated openai/gpt-5.6-luna model.",
+    "Codex app-server remains capability-gated because no captured app-server fixture is approved; Codex exec JSONL is the verified fallback."
+  ]
+}

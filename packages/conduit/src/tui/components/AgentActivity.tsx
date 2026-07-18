@@ -59,7 +59,7 @@ export function AgentActivity({
     <box flexDirection="row" alignItems="flex-start">
       {mascotRole ? <WorkflowMascotPreview role={mascotRole} /> : null}
       {mascotRole ? <text content="  " /> : null}
-      <box flexDirection="column">
+      <box flexDirection="column" marginTop={mascotRole ? 1 : 0}>
         <box flexDirection="row">
           <text content={`${indicatorFor(state, frame)} `} fg={color} />
           <text content={role} fg={theme.text.strong} />

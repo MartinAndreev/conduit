@@ -5,6 +5,10 @@ import type { BootstrapDependencies } from "../../src/system/bootstrap/applicati
 import type { ApplicationBootstrapService } from "../../src/system/bootstrap/application.js";
 import { InMemoryCredentialStore } from "../../src/domains/credentials/repositories/in-memory-store.js";
 import { LocalSpecKitProvider } from "../../src/domains/features/providers/local-spec-kit-provider.js";
+import { createListFeaturesHandler } from "../../src/domains/features/handlers/list-features-handler.js";
+import type { FeatureProvider } from "../../src/domains/features/interfaces/feature-provider.js";
+import { implementedFeatureIdsFromRuns } from "../../src/domains/features/services/implemented-feature-lifecycle.js";
+import type { Run } from "../../src/domains/runs/types/run.js";
 import { createPortraitRegistry } from "../../src/domains/roles/repositories/portrait-registry.js";
 import { createConfigurationRepository } from "../../src/domains/configuration/repositories/configuration-repository.js";
 import { UpdatesBootstrapService } from "../../src/domains/updates/services/updates-bootstrap-service.js";
@@ -247,6 +251,60 @@ test("unregistered query returns HANDLER_NOT_FOUND", async () => {
   if (!result.success) {
     assert.equal(result.error.code, "HANDLER_NOT_FOUND");
   }
+});
+
+test("implemented lifecycle requires reviewed completion and scans full history", () => {
+  const runs: Run[] = Array.from({ length: 25 }, (_, index) => ({
+    id: `run-${index}`,
+    featureId: `feature-${index}`,
+    status: "completed",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    roles: [
+      {
+        name: index === 24 ? "reviewer" : "researcher",
+        runner: "codex",
+        readOnly: true,
+        owns: [],
+        dependsOn: [],
+        promptFile: "",
+        prompt: "",
+        command: "",
+        args: [],
+        skillSource: "test",
+        status: "completed",
+      },
+    ],
+  }));
+  const implemented = implementedFeatureIdsFromRuns(runs);
+  assert.deepEqual([...implemented], ["feature-24"]);
+});
+
+test("listFeatures derives implemented lifecycle from canonical run state", async () => {
+  const provider = {
+    name: "test",
+    available: true,
+    listFeatures: async () => [
+      {
+        id: "001",
+        directory: "/tmp/specs/001-demo",
+        title: "Demo",
+        metadata: {
+          lifecycle: "in_progress" as const,
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      },
+    ],
+    getFeature: async () => undefined,
+    updateMetadata: async () => {},
+  } satisfies FeatureProvider;
+  const handler = createListFeaturesHandler(
+    provider,
+    async () => new Set(["001"]),
+  );
+  const result = await handler({ type: "listFeatures" });
+  assert.equal(result.success, true);
+  if (result.success)
+    assert.equal(result.data.features[0]?.metadata.lifecycle, "implemented");
 });
 
 test("listFeatures query returns features from provider", async () => {

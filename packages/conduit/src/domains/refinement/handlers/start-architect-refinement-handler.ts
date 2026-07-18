@@ -15,6 +15,7 @@ import { localSpecKitArchitectContract } from "@domains/features/providers/local
 import type { ResearchReportRepository } from "@domains/refinement/interfaces/research-report-repository.js";
 import { redactSecrets } from "@system/storage/security/secret-redaction.js";
 import type { RefinementRevision } from "@domains/refinement/types/revision.js";
+import type { ClarificationQuestionRepository } from "@domains/refinement/interfaces/clarification-question-repository.js";
 
 export interface StartArchitectRefinementDependencies {
   readonly projectRoot: string;
@@ -40,6 +41,7 @@ export interface StartArchitectRefinementDependencies {
   }) => Promise<{ logFile: string }>;
   readonly revisionRepository: RefinementRevisionRepository;
   readonly researchReportRepository?: ResearchReportRepository;
+  readonly clarificationQuestionRepository?: ClarificationQuestionRepository;
 }
 
 export function createStartArchitectRefinementHandler(
@@ -71,6 +73,8 @@ export function createStartArchitectRefinementHandler(
           ? await deps.revisionRepository.updateStatus(latest, "running")
           : await deps.revisionRepository.create(feature);
       activeRevision = revision;
+      const answeredDecisions =
+        await deps.revisionRepository.readAnswers(revision);
       const runId = `refine-${feature.id}-${Date.now()}`;
       const logFile = path.join(
         deps.projectRoot,
@@ -101,7 +105,7 @@ export function createStartArchitectRefinementHandler(
               )
               .join(
                 "\n",
-              )}${research.trim() ? `\n\n# Reviewed research context\n\n${research.trim()}` : ""}${guidance ? `\n\n# Project architect guidance (advisory)\n\n${guidance}` : ""}`,
+              )}${research.trim() ? `\n\n# Reviewed research context\n\n${research.trim()}` : ""}${answeredDecisions.trim() ? `\n\n# Answered clarification decisions (authoritative)\n\n${answeredDecisions.trim()}\n\nDo not repeat an answered question; apply the decision.` : ""}${guidance ? `\n\n# Project architect guidance (advisory)\n\n${guidance}` : ""}`,
             questionsFile,
           ),
         ),
@@ -113,7 +117,22 @@ export function createStartArchitectRefinementHandler(
       ]);
       await deps.revisionRepository.recordRun(revision, transcript);
       if (questions.trim()) {
-        await deps.revisionRepository.saveQuestions(revision, questions);
+        const parsedQuestions = await deps.revisionRepository.saveQuestions(
+          revision,
+          questions,
+        );
+        const clarification =
+          await deps.clarificationQuestionRepository?.record(
+            feature.id,
+            revision.id,
+            parsedQuestions,
+          );
+        if (
+          clarification?.reminders.length &&
+          !clarification.unresolved.length
+        ) {
+          return createStartArchitectRefinementHandler(deps)(command);
+        }
         await deps.revisionRepository.updateStatus(
           revision,
           "awaiting_clarification",

@@ -56,6 +56,7 @@ test("selecting the next file keeps an open diff preview expanded", () => {
     events: [],
     roles: [],
     run: undefined,
+    resumeEligibility: undefined,
     selectedRoleIndex: 0,
     diff: "diff",
     changedFiles: [
@@ -70,6 +71,8 @@ test("selecting the next file keeps an open diff preview expanded", () => {
     expandedEventIndex: null,
     scrollOffset: 0,
     cancelled: false,
+    resuming: false,
+    resumeError: null,
     focusMode: "files",
     transcriptExpanded: false,
     fileDiffExpanded: true,
@@ -79,6 +82,37 @@ test("selecting the next file keeps an open diff preview expanded", () => {
 
   assert.equal(next.selectedFileIndex, 1);
   assert.equal(next.fileDiffExpanded, true);
+});
+
+test("worker monitor reserves lowercase r for failed-run resume", () => {
+  const state: WorkerMonitorState = {
+    events: [],
+    roles: [],
+    run: undefined,
+    resumeEligibility: undefined,
+    selectedRoleIndex: 0,
+    diff: undefined,
+    changedFiles: [],
+    selectedFileIndex: 0,
+    totalAdditions: 0,
+    totalDeletions: 0,
+    loading: false,
+    error: null,
+    expandedEventIndex: null,
+    scrollOffset: 0,
+    cancelled: false,
+    resuming: false,
+    resumeError: null,
+    focusMode: "roles",
+    transcriptExpanded: false,
+    fileDiffExpanded: false,
+  };
+  assert.equal(monitorReducer(state, { type: "resumeStarted" }).resuming, true);
+  assert.equal(
+    monitorReducer(state, { type: "resumeFailed", message: "failed" })
+      .resumeError,
+    "failed",
+  );
 });
 
 test("controllers do not own renderer primitives or exported view contracts", async () => {
@@ -100,22 +134,55 @@ test("controllers do not own renderer primitives or exported view contracts", as
   }
 });
 
+test("role selection renders CQRS workspace continuity without infrastructure access", async () => {
+  const source = await readFile(
+    path.join(process.cwd(), "src/tui/screens/RoleRunSelectionScreen.tsx"),
+    "utf8",
+  );
+  assert.match(source, /getWorkspaceContinuity/);
+  assert.match(source, /compatible-continue/);
+  assert.match(source, /confirmDiscardRetained/);
+  assert.match(source, /\[y\] Confirm/);
+  assert.match(source, /for roles:/);
+  assert.match(source, /Cancel \(default\)/);
+  assert.match(source, /Retained workspace is leased · Esc Cancel/);
+  assert.ok(!source.includes("node:fs"));
+  assert.ok(!source.includes("node:child_process"));
+  assert.ok(!source.includes("state.db"));
+});
+
 test("one worker monitor screen owns the selected-file SplitDiff seam", async () => {
   const root = process.cwd();
-  const [screen, runScreen, splitDiff] = await Promise.all([
+  const [screen, runScreen, splitDiff, eventLog] = await Promise.all([
     readFile(
       path.join(root, "src/tui/components/WorkerMonitorScreen.tsx"),
       "utf8",
     ),
     readFile(path.join(root, "src/tui/screens/RunScreen.tsx"), "utf8"),
     readFile(path.join(root, "src/tui/components/SplitDiff.tsx"), "utf8"),
+    readFile(path.join(root, "src/tui/components/AgentEventLog.tsx"), "utf8"),
   ]);
   assert.equal(
     (screen.match(/export function WorkerMonitorScreen/g) ?? []).length,
     1,
   );
   assert.match(screen, /props\.fileDiffExpanded\s*&&\s*\(/);
+  assert.equal((screen.match(/props\.roles\.map/g) ?? []).length, 1);
+  assert.match(screen, /Logs \(\$\{props\.events\.length\}\)/);
+  assert.match(screen, /Files \(\$\{props\.changedFiles\.length\}\)/);
+  assert.match(eventLog, /ScrollBoxRenderable/);
+  assert.match(eventLog, /scrollbarOptions/);
   assert.ok(!runScreen.includes("<SplitDiff"));
+  assert.match(runScreen, /event\.name === "v"/);
+  assert.doesNotMatch(runScreen, /event\.name === "r"/);
+  assert.match(screen, /1 Roles {2}\| {2}2 Logs {2}\| {2}3 Files/);
+  assert.match(screen, /Enter Open {2}\| {2}Ctrl\+C Cancel/);
+  assert.match(screen, /r.*Resume/);
   assert.ok(splitDiff.includes("Select a changed file to view its diff."));
+  assert.match(splitDiff, /event\.name === "up"/);
+  assert.match(splitDiff, /event\.name === "down"/);
+  assert.match(splitDiff, /number \| `\$\{number\}%`/);
+  assert.match(screen, /patch lines/);
+  assert.match(screen, /height="100%"/);
   assert.ok(splitDiff.includes("return () =>"));
 });

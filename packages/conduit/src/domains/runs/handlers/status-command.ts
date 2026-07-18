@@ -3,6 +3,7 @@ import {
   resolveProject,
 } from "../../../system/cli/command-support.js";
 import type { Run } from "../types/run.js";
+import type { ResumeEligibility } from "../types/resume-eligibility.js";
 import type { ApplicationDependencies } from "../../../system/bootstrap/types.js";
 import type { CommandRuntimeDependencies } from "../../../system/cli/command-support.js";
 
@@ -14,7 +15,10 @@ type StatusCommandDependencies = Pick<
   | "readRunRoleLog"
   | "readRunRolePatch"
 > &
-  Partial<CommandRuntimeDependencies>;
+  Partial<CommandRuntimeDependencies> & {
+    resumeRun?: (runId: string) => Promise<Run>;
+    getResumeEligibility?: (runId: string) => Promise<ResumeEligibility>;
+  };
 
 export async function statusCommand(
   options: Record<string, unknown>,
@@ -27,6 +31,8 @@ export async function statusCommand(
     startDashboard,
     readRunRoleLog,
     readRunRolePatch,
+    resumeRun,
+    getResumeEligibility,
   } = defaultDependencies(dependencies);
   const projectRoot = resolveProject(options.project as string | undefined);
   const config = await loadConfig(projectRoot);
@@ -43,6 +49,8 @@ export async function statusCommand(
       selectedRunId: runs[0].id,
       readRoleLog: readRunRoleLog,
       readRolePatch: readRunRolePatch,
+      onResumeRun: resumeRun,
+      getResumeEligibility,
     });
     return runs;
   }

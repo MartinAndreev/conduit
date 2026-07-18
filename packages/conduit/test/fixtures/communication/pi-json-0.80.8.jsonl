@@ -1,0 +1,6 @@
+{"type":"session","version":3,"id":"SESSION_REDACTED","timestamp":"2026-07-16T16:07:43.355Z","cwd":"/workspace"}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"fixture-ok"}],"provider":"openai-codex","model":"gpt-5.3-codex-spark","usage":{"input":1079,"output":23,"cacheRead":0,"cacheWrite":0,"reasoning":15,"totalTokens":1102,"cost":{"total":0.00221025}},"stopReason":"stop"}}
+{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"fixture-ok"}],"usage":{"input":1079,"output":23,"totalTokens":1102}}}
+{"type":"agent_end","messages":[],"willRetry":false}

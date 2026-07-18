@@ -7,6 +7,7 @@ import {
   isUntrackedArtifactPath,
   untrackedArtifactGitExcludes,
 } from "../helpers/dependency-tree-paths.js";
+import { gitWorktreeRegistry } from "@system/git/services/git-worktree-registry-service.js";
 
 const CONDUIT_ARTIFACT_GLOBS = [".conduit", ".conduit/**"] as const;
 const MAX_CHANGED_FILES = 250;
@@ -14,17 +15,7 @@ const MAX_FILE_DIFF_BYTES = 256 * 1024;
 const MAX_TOTAL_DIFF_BYTES = 512 * 1024;
 
 function mainWorktreeFor(worktree: string): string | undefined {
-  const result = spawnSync(
-    "git",
-    ["-C", worktree, "worktree", "list", "--porcelain"],
-    {
-      encoding: "utf8",
-    },
-  );
-  const firstLine = result.stdout.split("\n", 1)[0];
-  return result.status === 0 && firstLine?.startsWith("worktree ")
-    ? firstLine.slice("worktree ".length)
-    : undefined;
+  return gitWorktreeRegistry.list(worktree)[0]?.workspacePath;
 }
 
 function addGitIgnoredPaths(
@@ -78,10 +69,10 @@ function buildArtifactMap(
 }
 
 export class WorktreeDiffReader implements DiffReader {
-  readDiff(worktree: string): RunDiffResult {
+  readDiff(worktree: string, baseline = "HEAD"): RunDiffResult {
     const numstatResult = spawnSync(
       "git",
-      ["-C", worktree, "diff", "--numstat", "HEAD"],
+      ["-C", worktree, "diff", "--numstat", baseline],
       { encoding: "utf8" },
     );
 
@@ -120,8 +111,8 @@ export class WorktreeDiffReader implements DiffReader {
               worktree,
               "diff",
               "--no-ext-diff",
-              "--unified=3",
-              "HEAD",
+              "--unified=999999",
+              baseline,
               "--",
               filePath,
             ],

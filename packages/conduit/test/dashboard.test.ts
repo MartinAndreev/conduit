@@ -45,6 +45,53 @@ test("dashboard keeps raw agent output collapsed until expanded", () => {
   );
 });
 
+test("dashboard shows lowercase resume control only for failed resumable runs", () => {
+  const run: Run = {
+    id: "failed-run",
+    featureId: "001",
+    status: "failed",
+    createdAt: "2025-01-01T00:00:00Z",
+    roles: [],
+  };
+  const dashboard = formatDashboard({
+    run,
+    selectedIndex: 0,
+    canResume: true,
+    resumeEligibility: {
+      state: "resumable",
+      preservedRoles: ["frontend", "qa"],
+      retryRoles: ["reviewer"],
+      reconstructRoles: [],
+    },
+  });
+  assert.match(dashboard, /\[r\] Resume failed run/);
+  assert.doesNotMatch(dashboard, /Ctrl\+R/);
+  assert.match(dashboard, /preserve: frontend, qa/);
+  assert.match(dashboard, /retry: reviewer/);
+  const unavailable = formatDashboard({
+    run,
+    selectedIndex: 0,
+    canResume: false,
+    resumeEligibility: {
+      state: "not-resumable",
+      reason: "Project revision changed.",
+      preservedRoles: [],
+      retryRoles: [],
+      reconstructRoles: [],
+    },
+  });
+  assert.doesNotMatch(unavailable, /\[r\]/);
+  assert.match(unavailable, /Project revision changed/);
+  assert.doesNotMatch(
+    formatDashboard({
+      run: { ...run, status: "completed" },
+      selectedIndex: 0,
+      canResume: false,
+    }),
+    /Resume failed run/,
+  );
+});
+
 test("dashboard splits a patch into selectable file previews", () => {
   const files = splitPatchFiles(
     "diff --git a/a.ts b/a.ts\n-a\n+b\ndiff --git a/b.ts b/b.ts\n-c\n+d\n",

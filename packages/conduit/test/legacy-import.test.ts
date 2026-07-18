@@ -78,11 +78,12 @@ test("startup blocks through schema and idempotent legacy import before use", as
       await readFile(draftPath, "utf8").catch(() => undefined),
       undefined,
     );
-    assert.ok(
+    assert.equal(
       await readFile(
         join(stateDirectory, "legacy-archive", "drafts", "001.json"),
         "utf8",
-      ),
+      ).catch(() => undefined),
+      undefined,
     );
   } finally {
     await rm(projectRoot, { recursive: true, force: true });

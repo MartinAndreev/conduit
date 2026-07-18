@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"SESSION_REDACTED"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"ITEM_REDACTED","type":"agent_message","text":"fixture-ok"}}
+{"type":"turn.completed","usage":{"input_tokens":11386,"cached_input_tokens":4224,"output_tokens":33,"reasoning_output_tokens":25}}

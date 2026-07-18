@@ -12,9 +12,14 @@ import type { DraftRepository } from "../../../domains/refinement/interfaces/dra
 import type { ArchitectEventRepository } from "../../../domains/refinement/interfaces/architect-event-repository.js";
 import type { RefinementRevisionRepository } from "../../../domains/refinement/interfaces/revision-repository.js";
 import type { ResearchReportRepository } from "../../../domains/refinement/interfaces/research-report-repository.js";
+import type { ClarificationQuestionRepository } from "../../../domains/refinement/interfaces/clarification-question-repository.js";
 import type { ReviewResultRepository } from "../../../domains/runs/interfaces/review-result-repository.js";
 import type { RunEventRepository } from "../../../domains/runs/interfaces/run-event-repository.js";
 import type { RunRecoveryRepository } from "../../../domains/runs/interfaces/run-recovery-repository.js";
+import type { RuntimeEventRepository } from "../../../domains/runs/interfaces/runtime-event-repository.js";
+import type { ConduitResultRecordRepository } from "../../../domains/runs/interfaces/conduit-result-record-repository.js";
+import type { HarnessRuntimeStateRepository } from "../../../domains/runs/interfaces/harness-runtime-state-repository.js";
+import type { RoleWorkspaceRepository } from "../../../domains/runs/interfaces/role-workspace-repository.js";
 import type { RunProcessRegistry } from "../../../domains/runs/repositories/run-process-registry.js";
 import type { Run, RunResult } from "../../../domains/runs/types/run.js";
 import type { CommandBus } from "../../bus/command-bus.js";
@@ -62,6 +67,9 @@ export interface BootstrapDependencies {
     signal?: AbortSignal;
     eventRepository?: RunEventRepository;
     processRegistry?: RunProcessRegistry;
+    resultRepository?: ConduitResultRecordRepository;
+    runtimeEventRepository?: RuntimeEventRepository;
+    roleWorkspaceRepository?: RoleWorkspaceRepository;
   }) => Promise<RunResult[]>;
   latestRuns: (projectRoot: string, config: Config) => Promise<Run[]>;
   configurationRepository: ConfigurationRepository;
@@ -97,9 +105,14 @@ export interface BootstrapRepositories {
   readonly architectEvents?: ArchitectEventRepository;
   readonly revisions?: RefinementRevisionRepository;
   readonly researchReports?: ResearchReportRepository;
+  readonly clarificationQuestions?: ClarificationQuestionRepository;
   readonly runEvents: RunEventRepository;
   readonly reviews: ReviewResultRepository;
   readonly recovery?: RunRecoveryRepository;
+  readonly resultRecords?: ConduitResultRecordRepository;
+  readonly runtimeEvents?: RuntimeEventRepository;
+  readonly harnessRuntimeState?: HarnessRuntimeStateRepository;
+  readonly roleWorkspaces?: RoleWorkspaceRepository;
   readonly sourceVersions?: SourceVersionRepository;
 }
 

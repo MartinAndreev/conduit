@@ -17,7 +17,7 @@ export class KiloAdapter implements RunnerAdapter {
   }
 
   buildArgs(promptFile: string, model?: string): readonly string[] {
-    const args = ["run"];
+    const args = ["run", "--pure", "--format", "json"];
     if (model) args.push("--model", model);
     args.push(`Read ${promptFile} and perform only your assigned task.`);
     return args;

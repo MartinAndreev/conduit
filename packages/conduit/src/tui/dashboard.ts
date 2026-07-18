@@ -1,5 +1,6 @@
 import type { Config } from "../domains/configuration/types/config.js";
 import type { Run } from "../domains/runs/types/run.js";
+import type { ResumeEligibility } from "../domains/runs/types/resume-eligibility.js";
 
 function summarizeLog(log: string): string {
   const tail = log.trim().split("\n").slice(-16).join("\n");
@@ -23,6 +24,10 @@ interface FormatDashboardParams {
   selectedPatch?: string;
   selectedTranscriptPatch?: string;
   selectedHasWorktree?: boolean;
+  canResume?: boolean;
+  resuming?: boolean;
+  resumeMessage?: string;
+  resumeEligibility?: ResumeEligibility;
 }
 
 export function formatDashboard({
@@ -35,12 +40,26 @@ export function formatDashboard({
   selectedPatch,
   selectedTranscriptPatch,
   selectedHasWorktree = false,
+  canResume = false,
+  resuming = false,
+  resumeMessage,
+  resumeEligibility,
 }: FormatDashboardParams): string {
   const lines = [
     "Conduit · Agent dashboard",
     `Feature ${run.featureId}  ·  ${run.status}`,
     "",
-    "↑/↓ select  ·  Enter expand/collapse  ·  q quit",
+    `↑/↓ select  ·  Enter expand/collapse${canResume ? `  ·  [r] ${resuming ? "Resuming…" : "Resume failed run"}` : ""}  ·  q quit`,
+    ...(resumeMessage ? [resumeMessage] : []),
+    ...(resumeEligibility
+      ? [
+          resumeEligibility.state === "resumable"
+            ? `Recovery verified · preserve: ${resumeEligibility.preservedRoles.join(", ") || "none"} · retry: ${resumeEligibility.retryRoles.join(", ")}`
+            : `Recovery unavailable · ${resumeEligibility.reason ?? "run identity could not be verified"}`,
+        ]
+      : run.status === "failed"
+        ? ["Recovery · checking eligibility…"]
+        : []),
     "",
   ];
   run.roles.forEach((role, index) => {
@@ -158,6 +177,8 @@ export async function startDashboard({
   selectedRunId,
   readRoleLog,
   readRolePatch,
+  onResumeRun,
+  getResumeEligibility,
 }: {
   projectRoot: string;
   config: Config;
@@ -170,13 +191,14 @@ export async function startDashboard({
     role: Run["roles"][number],
   ) => Promise<string>;
   readRolePatch: (role: Run["roles"][number]) => string | undefined;
+  onResumeRun?: (runId: string) => Promise<Run>;
+  getResumeEligibility?: (runId: string) => Promise<ResumeEligibility>;
 }): Promise<void> {
   if (!process.stdin.isTTY || !process.stdout.isTTY)
     throw new Error(
       "The dashboard requires an interactive terminal. Use `conduit status` for plain output.",
     );
-  const run =
-    runs.find((candidate) => candidate.id === selectedRunId) ?? runs[0];
+  let run = runs.find((candidate) => candidate.id === selectedRunId) ?? runs[0];
   if (!run) return;
   const {
     createCliRenderer,
@@ -213,6 +235,10 @@ export async function startDashboard({
     resolveClosed = resolve;
   });
   let syncingScrollbar = false;
+  let resuming = false;
+  let resumeMessage: string | undefined;
+  let resumeEligibility =
+    run.status === "failed" ? await getResumeEligibility?.(run.id) : undefined;
   const patchViewportSize = 8;
   const text = new TextRenderable(renderer, {
     id: "conduit-dashboard",
@@ -226,6 +252,11 @@ export async function startDashboard({
       selectedPatch,
       selectedTranscriptPatch,
       selectedHasWorktree: Boolean(run.roles[selectedIndex]?.worktree),
+      canResume:
+        resumeEligibility?.state === "resumable" && Boolean(onResumeRun),
+      resuming,
+      resumeMessage,
+      resumeEligibility,
     }),
     selectable: false,
     fg: "#D8D5C8",
@@ -244,6 +275,11 @@ export async function startDashboard({
       selectedPatch,
       selectedTranscriptPatch,
       selectedHasWorktree: Boolean(run.roles[selectedIndex]?.worktree),
+      canResume:
+        resumeEligibility?.state === "resumable" && Boolean(onResumeRun),
+      resuming,
+      resumeMessage,
+      resumeEligibility,
     });
     if (patch) {
       if (!diff) {
@@ -283,6 +319,35 @@ export async function startDashboard({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const onKeypress = async (key: any) => {
     if ((key.ctrl && key.name === "c") || key.name === "q") return close();
+    if (
+      !key.ctrl &&
+      key.name === "r" &&
+      resumeEligibility?.state === "resumable" &&
+      onResumeRun &&
+      !resuming
+    ) {
+      resuming = true;
+      resumeMessage = "Resuming failed and unfinished roles…";
+      refresh();
+      try {
+        run = await onResumeRun(run.id);
+        selectedIndex = Math.min(selectedIndex, run.roles.length - 1);
+        resumeEligibility =
+          run.status === "failed"
+            ? await getResumeEligibility?.(run.id)
+            : undefined;
+        resumeMessage =
+          run.status === "completed"
+            ? "Run resumed and completed."
+            : `Resume finished with status: ${run.status}.`;
+      } catch (cause) {
+        resumeMessage = `Resume failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+      } finally {
+        resuming = false;
+        refresh();
+      }
+      return;
+    }
     if (patchFiles.length && key.name === "up") {
       fileIndex = Math.max(0, fileIndex - 1);
       patch = patchFiles[fileIndex].diff;

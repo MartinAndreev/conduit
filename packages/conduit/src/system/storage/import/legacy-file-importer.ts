@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, rename } from "node:fs/promises";
-import { basename, dirname, join, relative } from "node:path";
+import { readFile, readdir, rm } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { createTursoKysely } from "../adapters/kysely-turso-dialect.js";
 import type { DatabaseConnection } from "../interfaces/database.js";
 import type { LegacyImportDatabase } from "../interfaces/import-database.js";
@@ -63,18 +63,6 @@ export class LegacyFileImporter implements LegacyImportRunner {
     let importedRecords = 0;
     let skippedImports = 0;
 
-    const archive = async (sourcePath: string): Promise<void> => {
-      const stateRelativePath = relative(this.stateDirectory, sourcePath);
-      if (stateRelativePath.startsWith("..")) return;
-      const destination = join(
-        this.stateDirectory,
-        "legacy-archive",
-        stateRelativePath,
-      );
-      await mkdir(dirname(destination), { recursive: true });
-      await rename(sourcePath, destination);
-    };
-
     const processFile = async (
       sourcePath: string,
       consume: (content: string) => Promise<number>,
@@ -88,6 +76,7 @@ export class LegacyFileImporter implements LegacyImportRunner {
         .executeTakeFirst();
       if (existing?.status === "succeeded") {
         skippedImports += 1;
+        await rm(sourcePath, { force: true });
         return;
       }
       try {
@@ -113,7 +102,7 @@ export class LegacyFileImporter implements LegacyImportRunner {
             }),
           )
           .execute();
-        await archive(sourcePath);
+        await rm(sourcePath, { force: true });
       } catch (error) {
         skippedImports += 1;
         await database

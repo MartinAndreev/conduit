@@ -1,6 +1,13 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createStartResearchRefinementHandler } from "@domains/refinement/handlers/start-research-refinement-handler.js";
@@ -15,9 +22,13 @@ test("research preflight saves a visible report before architect refinement", as
   const promptFile = path.join(runDir, "researcher-assignment.json");
   const contextFile = path.join(runDir, "researcher-context.md");
   await mkdir(featureDirectory, { recursive: true });
+  await mkdir(path.join(projectRoot, "src"), { recursive: true });
+  await writeFile(path.join(projectRoot, "src", "auth.ts"), "export {};\n");
   await mkdir(runDir, { recursive: true });
   try {
     let savedReport: string | undefined;
+    let isolatedWorkspace = "";
+    const snapshotStatuses: string[] = [];
     let signalReportSaved: () => void = () => {};
     const reportSaved = new Promise<void>((resolve) => {
       signalReportSaved = resolve;
@@ -39,43 +50,60 @@ test("research preflight saves a visible report before architect refinement", as
         },
       }),
       findFeature: async () => ({ id: "001", directory: featureDirectory }),
-      planRun: async () => ({
-        runDir,
-        run: {
-          id: "research",
-          featureId: "001",
-          status: "planned",
-          createdAt: new Date().toISOString(),
-          roles: [
-            {
-              name: "researcher",
-              runner: "codex",
-              readOnly: false,
-              owns: [],
-              dependsOn: [],
-              promptFile,
-              prompt: "{}",
-              context: "# Researcher",
-              contextFile,
-              command: "codex",
-              args: ["exec", "Read the researcher prompt."],
-              skillSource: "file:researcher.md",
-              status: "planned",
-              assignment: createAgentAssignmentV1({
-                assignmentId: "research:researcher",
-                role: "researcher",
-                roleKind: "research",
-                objective: "Research the feature.",
-                ownedPaths: [],
-                contextReferences: [path.relative(projectRoot, contextFile)],
-                acceptanceCriteria: ["Return evidence."],
-                contracts: ["specs"],
-              }),
-            },
-          ],
-        },
-      }),
-      executeRun: async ({ run }) => {
+      planRun: async (params) => {
+        assert.equal(params.sharedReadOnlyWorkspace, true);
+        return {
+          runDir,
+          run: {
+            id: "research",
+            featureId: "001",
+            status: "planned",
+            createdAt: new Date().toISOString(),
+            roles: [
+              {
+                name: "researcher",
+                runner: "codex",
+                readOnly: false,
+                owns: [],
+                dependsOn: [],
+                promptFile,
+                prompt: "{}",
+                context: "# Researcher",
+                contextFile,
+                command: "codex",
+                args: ["exec", "Read the researcher prompt."],
+                skillSource: "file:researcher.md",
+                status: "planned",
+                assignment: createAgentAssignmentV1({
+                  assignmentId: "research:researcher",
+                  role: "researcher",
+                  roleKind: "research",
+                  objective: "Research the feature.",
+                  ownedPaths: [],
+                  contextReferences: [path.relative(projectRoot, contextFile)],
+                  acceptanceCriteria: ["Return evidence."],
+                  contracts: ["specs"],
+                }),
+              },
+            ],
+          },
+        };
+      },
+      executeRun: async ({ run, sharedReadOnlyWorkspace }) => {
+        assert.equal(sharedReadOnlyWorkspace, true);
+        isolatedWorkspace = run.roles[0]?.worktree ?? "";
+        assert.notEqual(isolatedWorkspace, projectRoot);
+        assert.equal(
+          await readFile(
+            path.join(isolatedWorkspace, "src", "auth.ts"),
+            "utf8",
+          ),
+          "export {};\n",
+        );
+        await writeFile(
+          path.join(isolatedWorkspace, "agent-change.txt"),
+          "isolated\n",
+        );
         assert.equal(
           run.roles[0]?.readOnly,
           true,
@@ -94,6 +122,8 @@ test("research preflight saves a visible report before architect refinement", as
           /Write the final Markdown report to/,
         );
         await new Promise((resolve) => setTimeout(resolve, 5));
+        run.status = "completed";
+        run.roles[0]!.status = "completed";
         return [
           {
             role: "researcher",
@@ -131,12 +161,16 @@ test("research preflight saves a visible report before architect refinement", as
         load: async () => undefined,
       },
       recoveryRepository: {
-        saveSnapshot: async (run) => ({
-          run,
-          state: run.status === "completed" ? "complete" : "planned",
-          version: 1,
-          updatedAt: new Date().toISOString(),
-        }),
+        claimFailedRun: async () => undefined,
+        saveSnapshot: async (run) => {
+          snapshotStatuses.push(run.status);
+          return {
+            run,
+            state: run.status === "completed" ? "complete" : "planned",
+            version: 1,
+            updatedAt: new Date().toISOString(),
+          };
+        },
         loadSnapshot: async () => undefined,
         listSnapshots: async () => [],
         markInterrupted: async () => {},
@@ -157,6 +191,24 @@ test("research preflight saves a visible report before architect refinement", as
       assert.equal(result.data.reportFile, "conduit://research/001");
       assert.match(savedReport ?? "", /Findings/);
     }
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (!(await stat(isolatedWorkspace).catch(() => undefined))) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(
+      await readFile(path.join(projectRoot, "agent-change.txt"), "utf8").catch(
+        () => undefined,
+      ),
+      undefined,
+    );
+    assert.equal(
+      await readFile(
+        path.join(isolatedWorkspace, "agent-change.txt"),
+        "utf8",
+      ).catch(() => undefined),
+      undefined,
+    );
+    assert.deepEqual(snapshotStatuses, ["planned", "completed"]);
     assert.match(await readFile(promptFile, "utf8"), /"roleKind": "research"/);
     assert.match(await readFile(contextFile, "utf8"), /AgentResponseV1/);
   } finally {

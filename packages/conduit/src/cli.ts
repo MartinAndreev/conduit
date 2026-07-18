@@ -30,6 +30,28 @@ import {
 } from "./domains/roles/handlers/roles-command.js";
 import { runCommand } from "./domains/runs/handlers/run-command.js";
 import { statusCommand } from "./domains/runs/handlers/status-command.js";
+import { createResumeRunHandler } from "./domains/runs/handlers/resume-run-handler.js";
+import { createStartFeatureRunHandler } from "./domains/runs/handlers/start-feature-run-handler.js";
+import { createGetRunResumeEligibilityHandler } from "./domains/runs/handlers/get-run-resume-eligibility-handler.js";
+import { createGetWorkspaceContinuityHandler } from "./domains/runs/handlers/get-workspace-continuity-handler.js";
+import type {
+  StartFeatureRunCommand,
+  StartFeatureRunResult,
+} from "./domains/runs/interfaces/commands/start-feature-run.js";
+import type {
+  ResumeRunCommand,
+  ResumeRunResult,
+} from "./domains/runs/interfaces/commands/resume-run.js";
+import type {
+  GetRunResumeEligibilityQuery,
+  GetRunResumeEligibilityReadModel,
+} from "./domains/runs/interfaces/queries/get-run-resume-eligibility.js";
+import type {
+  GetWorkspaceContinuityQuery,
+  GetWorkspaceContinuityReadModel,
+} from "./domains/runs/interfaces/queries/get-workspace-continuity.js";
+import { CommandBus } from "./system/bus/command-bus.js";
+import { QueryBus } from "./system/bus/query-bus.js";
 import {
   refineCommand,
   collectRefinement,
@@ -72,10 +94,14 @@ import type { PromptFn } from "./helpers/prompt.js";
 import { verifyStorageRuntime } from "./system/storage/diagnostics/storage-doctor.js";
 import { TursoRunRecoveryRepository } from "./domains/runs/repositories/turso-run-recovery-repository.js";
 import { TursoRunEventRepository } from "./domains/runs/repositories/turso-run-event-repository.js";
+import { TursoRuntimeEventRepository } from "./domains/runs/repositories/turso-runtime-event-repository.js";
+import { TursoConduitResultRecordRepository } from "./domains/runs/repositories/turso-conduit-result-record-repository.js";
+import { TursoRoleWorkspaceRepository } from "./domains/runs/repositories/turso-role-workspace-repository.js";
 import { createRunProcessRegistry } from "./domains/runs/repositories/run-process-registry.js";
 import type { DatabaseConnection } from "./system/storage/interfaces/database.js";
 import type { Config } from "./domains/configuration/types/config.js";
 import { DefaultDatabaseLifecycle } from "./system/storage/repositories/database-lifecycle.js";
+import { runAgentResponseMcpServer } from "./system/communication/services/agent-response-mcp-server.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -96,6 +122,120 @@ async function migrateProjectStorage(projectRoot: string): Promise<void> {
     );
     await runner.run(onProgress);
   });
+}
+
+function createRunRecoveryDispatchers(input: {
+  projectRoot: string;
+  recoveryRepository: TursoRunRecoveryRepository;
+  runEventRepository: TursoRunEventRepository;
+  runtimeEventRepository: TursoRuntimeEventRepository;
+  resultRecordRepository: TursoConduitResultRecordRepository;
+  roleWorkspaceRepository: TursoRoleWorkspaceRepository;
+  processRegistry: ReturnType<typeof createRunProcessRegistry>;
+}) {
+  const commandBus = new CommandBus();
+  const queryBus = new QueryBus();
+  commandBus.register(
+    "resumeRun",
+    createResumeRunHandler(input.recoveryRepository, {
+      projectRoot: input.projectRoot,
+      executeRun,
+      eventRepository: input.runEventRepository,
+      runtimeEventRepository: input.runtimeEventRepository,
+      resultRepository: input.resultRecordRepository,
+      processRegistry: input.processRegistry,
+      roleWorkspaceRepository: input.roleWorkspaceRepository,
+    }),
+  );
+  queryBus.register(
+    "getWorkspaceContinuity",
+    createGetWorkspaceContinuityHandler(
+      input.projectRoot,
+      input.recoveryRepository,
+      input.roleWorkspaceRepository,
+      input.resultRecordRepository,
+    ),
+  );
+  queryBus.register(
+    "getRunResumeEligibility",
+    createGetRunResumeEligibilityHandler(
+      input.recoveryRepository,
+      input.resultRecordRepository,
+      input.roleWorkspaceRepository,
+    ),
+  );
+  commandBus.register(
+    "startFeatureRun",
+    createStartFeatureRunHandler({
+      projectRoot: input.projectRoot,
+      builtinRoot: path.join(root, "skills", "roles"),
+      loadConfig,
+      planRun,
+      executeRun,
+      recoveryRepository: input.recoveryRepository,
+      roleWorkspaceRepository: input.roleWorkspaceRepository,
+      eventRepository: input.runEventRepository,
+      resultRepository: input.resultRecordRepository,
+      runtimeEventRepository: input.runtimeEventRepository,
+      processRegistry: input.processRegistry,
+      getContinuity: async (featureId, roleNames) => {
+        const result = await queryBus.execute<
+          GetWorkspaceContinuityQuery,
+          GetWorkspaceContinuityReadModel
+        >({ type: "getWorkspaceContinuity", featureId, roleNames });
+        if (!result.success) throw new Error(result.error.message);
+        return result.data;
+      },
+      resumeRun: async (runId) =>
+        commandBus.dispatch<ResumeRunCommand, ResumeRunResult>({
+          type: "resumeRun",
+          runId,
+        }),
+    }),
+  );
+  return {
+    startFeatureRun: async (command: StartFeatureRunCommand) => {
+      const result = await commandBus.dispatch<
+        StartFeatureRunCommand,
+        StartFeatureRunResult
+      >(command);
+      if (!result.success) throw new Error(result.error.message);
+      return result.data;
+    },
+    resumeRun: async (runId: string) => {
+      const result = await commandBus.dispatch<
+        ResumeRunCommand,
+        ResumeRunResult
+      >({ type: "resumeRun", runId });
+      if (!result.success) throw new Error(result.error.message);
+      const resumed = await input.recoveryRepository.loadSnapshot(runId);
+      if (!resumed) throw new Error(`Run ${runId} disappeared after resume.`);
+      return resumed.run;
+    },
+    getWorkspaceContinuity: async (
+      featureId: string,
+      roleNames: readonly string[],
+    ) => {
+      const result = await queryBus.execute<
+        GetWorkspaceContinuityQuery,
+        GetWorkspaceContinuityReadModel
+      >({ type: "getWorkspaceContinuity", featureId, roleNames });
+      if (!result.success) throw new Error(result.error.message);
+      return result.data;
+    },
+    getResumeEligibility: async (runId: string) => {
+      const result = await queryBus.execute<
+        GetRunResumeEligibilityQuery,
+        GetRunResumeEligibilityReadModel
+      >({
+        type: "getRunResumeEligibility",
+        projectRoot: input.projectRoot,
+        runId,
+      });
+      if (!result.success) throw new Error(result.error.message);
+      return result.data;
+    },
+  };
 }
 
 async function withProjectStorage<T>(
@@ -362,15 +502,46 @@ export function createProgram(
         "--compact",
         "use a compact spinner instead of the live worker dashboard",
       )
-      .option("--fetch-skills", "fetch verified remote skills when needed"),
+      .option("--fetch-skills", "fetch verified remote skills when needed")
+      .option("--continue", "continue the compatible retained run")
+      .option("--start-new", "start anew using the selected role slots")
+      .option(
+        "--confirm-discard-retained",
+        "confirm destructive removal of retained worktree checkouts",
+      ),
   ).action(async (featureId: string, options: Record<string, unknown>) => {
     const projectRoot = (options.project as string) || process.cwd();
     await withProjectStorage(projectRoot, async (connection) => {
+      const recoveryRepository = new TursoRunRecoveryRepository(connection);
+      const runEventRepository = new TursoRunEventRepository(connection);
+      const runtimeEventRepository = new TursoRuntimeEventRepository(
+        connection,
+      );
+      const resultRecordRepository = new TursoConduitResultRecordRepository(
+        connection,
+      );
+      const processRegistry = createRunProcessRegistry();
+      const roleWorkspaceRepository = new TursoRoleWorkspaceRepository(
+        connection,
+      );
+      const recoveryDispatchers = createRunRecoveryDispatchers({
+        projectRoot,
+        recoveryRepository,
+        runEventRepository,
+        runtimeEventRepository,
+        resultRecordRepository,
+        roleWorkspaceRepository,
+        processRegistry,
+      });
       await runCommand(featureId, options, {
         ...handlers,
-        runRecoveryRepository: new TursoRunRecoveryRepository(connection),
-        runEventRepository: new TursoRunEventRepository(connection),
-        runProcessRegistry: createRunProcessRegistry(),
+        runRecoveryRepository: recoveryRepository,
+        runEventRepository,
+        runtimeEventRepository,
+        resultRecordRepository,
+        roleWorkspaceRepository,
+        runProcessRegistry: processRegistry,
+        startFeatureRun: recoveryDispatchers.startFeatureRun,
       });
     });
   });
@@ -386,10 +557,32 @@ export function createProgram(
     const projectRoot = (options.project as string) || process.cwd();
     await withProjectStorage(projectRoot, async (connection) => {
       const recoveryRepository = new TursoRunRecoveryRepository(connection);
+      const runEventRepository = new TursoRunEventRepository(connection);
+      const runtimeEventRepository = new TursoRuntimeEventRepository(
+        connection,
+      );
+      const resultRecordRepository = new TursoConduitResultRecordRepository(
+        connection,
+      );
+      const roleWorkspaceRepository = new TursoRoleWorkspaceRepository(
+        connection,
+      );
+      const processRegistry = createRunProcessRegistry();
+      const recoveryDispatchers = createRunRecoveryDispatchers({
+        projectRoot,
+        recoveryRepository,
+        runEventRepository,
+        runtimeEventRepository,
+        resultRecordRepository,
+        roleWorkspaceRepository,
+        processRegistry,
+      });
       await statusCommand(options, {
         ...handlers,
         latestRuns: async () =>
-          (await recoveryRepository.listSnapshots()).map(({ run }) => run),
+          (await recoveryRepository.listSnapshots(20)).map(({ run }) => run),
+        resumeRun: recoveryDispatchers.resumeRun,
+        getResumeEligibility: recoveryDispatchers.getResumeEligibility,
       });
     });
   });
@@ -503,6 +696,10 @@ export async function handleBareConduit(
 }
 
 export async function main(args: string[]): Promise<void> {
+  if (args[0] === "__agent-response-mcp") {
+    await runAgentResponseMcpServer();
+    return;
+  }
   if (shouldShowBanner(args)) process.stdout.write(`${conduitBanner}\n`);
 
   if (args.length === 0) {

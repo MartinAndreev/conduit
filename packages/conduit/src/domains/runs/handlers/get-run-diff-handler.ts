@@ -18,7 +18,7 @@ export function createGetRunDiffHandler(
       );
       const worktree = role?.worktree ?? "";
 
-      if (!worktree) {
+      if (!snapshot || !role || !worktree) {
         return {
           success: true,
           data: {
@@ -30,7 +30,23 @@ export function createGetRunDiffHandler(
         };
       }
 
-      const diffResult = diffReader.readDiff(worktree);
+      const dependencyCommits = new Set(
+        role.dependsOn.flatMap(
+          (dependency) =>
+            snapshot.run.roles.find(
+              (candidate) => candidate.name === dependency,
+            )?.integrationCommits ?? [],
+        ),
+      );
+      const firstRoleCommit = [
+        ...(role.integrationCommits ?? []),
+        ...(role.pendingResumeCommits ?? []),
+      ].find((commit) => !dependencyCommits.has(commit));
+      const diffResult = diffReader.readDiff(
+        worktree,
+        role.diffBaselineHead ??
+          (firstRoleCommit ? `${firstRoleCommit}^` : undefined),
+      );
       return {
         success: true,
         data: {

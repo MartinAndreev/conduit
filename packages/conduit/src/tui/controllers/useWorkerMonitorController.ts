@@ -6,6 +6,7 @@ import type { RunnerEvent } from "@domains/runs/types/runner-events.js";
 import type { ChangedFile } from "@domains/runs/types/review.js";
 import type { Run } from "@domains/runs/types/run.js";
 import {
+  canonicalMonitorRoleId,
   deriveRolePresentation,
   extractFileDiff,
 } from "@tui/helpers/event-presentation.js";
@@ -22,6 +23,7 @@ const initialMonitorState: WorkerMonitorState = {
   events: [],
   roles: [],
   run: undefined,
+  resumeEligibility: undefined,
   selectedRoleIndex: 0,
   diff: undefined,
   changedFiles: [],
@@ -33,6 +35,8 @@ const initialMonitorState: WorkerMonitorState = {
   expandedEventIndex: null,
   scrollOffset: 0,
   cancelled: false,
+  resuming: false,
+  resumeError: null,
   focusMode: "roles",
   transcriptExpanded: false,
   fileDiffExpanded: false,
@@ -70,7 +74,12 @@ export function monitorReducer(
       };
     }
     case "runLoaded":
-      return { ...state, run: action.run };
+      return {
+        ...state,
+        run: action.run,
+        resumeEligibility:
+          action.run.status === "failed" ? state.resumeEligibility : undefined,
+      };
     case "diffLoaded":
       return {
         ...state,
@@ -136,6 +145,19 @@ export function monitorReducer(
     }
     case "cancel":
       return { ...state, cancelled: true };
+    case "resumeEligibilityLoaded":
+      return { ...state, resumeEligibility: action.eligibility };
+    case "resumeStarted":
+      return {
+        ...state,
+        resuming: true,
+        resumeError: null,
+        resumeEligibility: undefined,
+      };
+    case "resumeFinished":
+      return { ...state, resuming: false, resumeError: null };
+    case "resumeFailed":
+      return { ...state, resuming: false, resumeError: action.message };
   }
 }
 
@@ -150,6 +172,7 @@ export function useWorkerMonitorController(
 ): WorkerMonitorViewModel {
   const [state, dispatch] = useReducer(monitorReducer, initialMonitorState);
   const cancellationInFlight = useRef(false);
+  const resumeInFlight = useRef(false);
   const selectRole = useCallback(
     (index: number) => dispatch({ type: "selectRole", index }),
     [],
@@ -171,6 +194,25 @@ export function useWorkerMonitorController(
       .catch(() => {});
   }, [queryBus, projectRoot, runId]);
 
+  const loadResumeEligibility = useCallback(() => {
+    if (state.run?.status !== "failed") return;
+    void queryBus
+      .execute({ type: "getRunResumeEligibility", projectRoot, runId })
+      .then((result) => {
+        if (result.success)
+          dispatch({
+            type: "resumeEligibilityLoaded",
+            eligibility:
+              result.data as import("@domains/runs/types/resume-eligibility.js").ResumeEligibility,
+          });
+      })
+      .catch(() => {});
+  }, [projectRoot, queryBus, runId, state.run?.status]);
+
+  useEffect(() => {
+    loadResumeEligibility();
+  }, [loadResumeEligibility]);
+
   const executeEvents = useCallback(async () => {
     const result = await queryBus.execute({ type: "getRunEvents", runId });
     if (!result.success) throw new Error(result.error.message);
@@ -191,21 +233,28 @@ export function useWorkerMonitorController(
     loadRun();
   }, [loadRun]);
   useEffect(() => {
+    if (eventQuery.data) loadRun();
+  }, [eventQuery.data, loadRun]);
+  useEffect(() => {
     const eventData = eventQuery.data;
     if (!eventData) return;
     const configuredRoleIds = state.run?.roles.map((role) => role.name) ?? [];
+    const events = eventData.events.map((event) => {
+      const roleId = canonicalMonitorRoleId(event.roleId, configuredRoleIds);
+      return roleId === event.roleId ? event : { ...event, roleId };
+    });
     const roleIds = [
       ...new Set([
         ...configuredRoleIds,
-        ...eventData.roleIds.filter((roleId) => roleId !== "system"),
+        ...eventData.roleIds
+          .filter((roleId) => roleId !== "system")
+          .map((roleId) => canonicalMonitorRoleId(roleId, configuredRoleIds)),
       ]),
     ];
     dispatch({
       type: "eventsLoaded",
-      events: eventData.events,
-      roles: roleIds.map((roleId) =>
-        deriveRolePresentation(eventData.events, roleId),
-      ),
+      events,
+      roles: roleIds.map((roleId) => deriveRolePresentation(events, roleId)),
     });
   }, [eventQuery.data, state.run]);
   useEffect(() => {
@@ -276,6 +325,38 @@ export function useWorkerMonitorController(
   const onKey = useCallback(
     (event: { name: string; ctrl?: boolean; shift?: boolean }) => {
       if (!enabled) return;
+      if (
+        !event.ctrl &&
+        event.name === "r" &&
+        state.resumeEligibility?.state === "resumable" &&
+        !resumeInFlight.current
+      ) {
+        resumeInFlight.current = true;
+        dispatch({ type: "resumeStarted" });
+        void commandBus
+          .dispatch({ type: "resumeRun", runId })
+          .then((result) => {
+            if (!result.success) {
+              dispatch({ type: "resumeFailed", message: result.error.message });
+              loadResumeEligibility();
+              return;
+            }
+            dispatch({ type: "resumeFinished" });
+            loadRun();
+            loadResumeEligibility();
+          })
+          .catch((cause) => {
+            dispatch({
+              type: "resumeFailed",
+              message: cause instanceof Error ? cause.message : String(cause),
+            });
+            loadResumeEligibility();
+          })
+          .finally(() => {
+            resumeInFlight.current = false;
+          });
+        return;
+      }
       if (event.name === "q") {
         if (cancelOnExit) {
           if (!state.cancelled && !cancellationInFlight.current) {
@@ -333,9 +414,19 @@ export function useWorkerMonitorController(
         if (event.name === "up") return roles.previous();
         if (event.name === "down") return roles.next();
       } else if (state.focusMode === "files") {
-        if (event.name === "up" || event.name === "left")
+        if (
+          !state.fileDiffExpanded &&
+          (event.name === "up" || event.name === "left")
+        )
           return files.previous();
-        if (event.name === "down" || event.name === "right")
+        if (
+          !state.fileDiffExpanded &&
+          (event.name === "down" || event.name === "right")
+        )
+          return files.next();
+        if (state.fileDiffExpanded && event.name === "left")
+          return files.previous();
+        if (state.fileDiffExpanded && event.name === "right")
           return files.next();
         if (event.name === "return" || event.name === "space")
           return dispatch({ type: "toggleFileDiff" });
@@ -361,7 +452,10 @@ export function useWorkerMonitorController(
     [
       enabled,
       state.focusMode,
+      state.fileDiffExpanded,
       state.cancelled,
+      state.run?.status,
+      state.resumeEligibility?.state,
       state.scrollOffset,
       state.changedFiles.length,
       onExit,
@@ -371,6 +465,8 @@ export function useWorkerMonitorController(
       cancelOnExit,
       roles,
       files,
+      loadRun,
+      loadResumeEligibility,
     ],
   );
   useKeyboard(onKey);
@@ -391,6 +487,11 @@ export function useWorkerMonitorController(
       expandedEventIndex: state.expandedEventIndex,
       scrollOffset: state.scrollOffset,
       cancelled: state.cancelled,
+      canResume: state.resumeEligibility?.state === "resumable",
+      showRecovery: state.run?.status === "failed",
+      resumeEligibility: state.resumeEligibility,
+      resuming: state.resuming,
+      resumeError: state.resumeError,
       focusMode: state.focusMode,
       transcriptExpanded: state.transcriptExpanded,
       fileDiffExpanded: state.fileDiffExpanded,

@@ -1,12 +1,15 @@
 import { TursoDraftRepository } from "../../../domains/refinement/repositories/turso-draft-repository.js";
 import { TursoArchitectEventRepository } from "../../../domains/refinement/repositories/turso-architect-event-repository.js";
-import { FileArchitectEventRepository } from "../../../domains/refinement/repositories/file-architect-event-repository.js";
-import { LiveArchitectEventRepository } from "../../../domains/refinement/repositories/live-architect-event-repository.js";
 import { TursoRefinementRevisionRepository } from "../../../domains/refinement/repositories/turso-revision-repository.js";
 import { TursoResearchReportRepository } from "../../../domains/refinement/repositories/turso-research-report-repository.js";
+import { TursoClarificationQuestionRepository } from "../../../domains/refinement/repositories/turso-clarification-question-repository.js";
 import { TursoRunEventRepository } from "../../../domains/runs/repositories/turso-run-event-repository.js";
 import { TursoReviewResultRepository } from "../../../domains/runs/repositories/turso-review-result-repository.js";
 import { TursoRunRecoveryRepository } from "../../../domains/runs/repositories/turso-run-recovery-repository.js";
+import { TursoConduitResultRecordRepository } from "../../../domains/runs/repositories/turso-conduit-result-record-repository.js";
+import { TursoRuntimeEventRepository } from "../../../domains/runs/repositories/turso-runtime-event-repository.js";
+import { TursoHarnessRuntimeStateRepository } from "../../../domains/runs/repositories/turso-harness-runtime-state-repository.js";
+import { TursoRoleWorkspaceRepository } from "../../../domains/runs/repositories/turso-role-workspace-repository.js";
 import { TursoSourceVersionRepository } from "../../../domains/source/repositories/turso-source-version-repository.js";
 import { InMemoryRunEventRepository } from "../../../domains/runs/repositories/in-memory-run-event-repository.js";
 import { InMemoryReviewResultRepository } from "../../../domains/runs/repositories/in-memory-review-result-repository.js";
@@ -54,21 +57,17 @@ export function createBootstrapComposition(
       processRegistry: createRunProcessRegistry(),
       repositories: {
         drafts: connection ? new TursoDraftRepository(connection) : undefined,
-        architectEvents:
-          connection && projectRoot
-            ? new LiveArchitectEventRepository(
-                new FileArchitectEventRepository(
-                  projectRoot,
-                  dependencies.stateDirectory,
-                ),
-                new TursoArchitectEventRepository(connection),
-              )
-            : undefined,
+        architectEvents: connection
+          ? new TursoArchitectEventRepository(connection)
+          : undefined,
         revisions: connection
           ? new TursoRefinementRevisionRepository(connection)
           : undefined,
         researchReports: connection
           ? new TursoResearchReportRepository(connection)
+          : undefined,
+        clarificationQuestions: connection
+          ? new TursoClarificationQuestionRepository(connection)
           : undefined,
         runEvents: connection
           ? new TursoRunEventRepository(connection)
@@ -78,6 +77,18 @@ export function createBootstrapComposition(
           : new InMemoryReviewResultRepository(),
         recovery: connection
           ? new TursoRunRecoveryRepository(connection)
+          : undefined,
+        resultRecords: connection
+          ? new TursoConduitResultRecordRepository(connection)
+          : undefined,
+        runtimeEvents: connection
+          ? new TursoRuntimeEventRepository(connection)
+          : undefined,
+        harnessRuntimeState: connection
+          ? new TursoHarnessRuntimeStateRepository(connection)
+          : undefined,
+        roleWorkspaces: connection
+          ? new TursoRoleWorkspaceRepository(connection)
           : undefined,
         sourceVersions: connection
           ? new TursoSourceVersionRepository(connection)

@@ -7,6 +7,7 @@ import { createGetRunEventsHandler } from "../src/domains/runs/handlers/get-run-
 import { createReviewRunHandler } from "../src/domains/runs/handlers/review-run-handler.js";
 import { createGetReviewResultHandler } from "../src/domains/runs/handlers/get-review-result-handler.js";
 import { createGetRunDiffHandler } from "../src/domains/runs/handlers/get-run-diff-handler.js";
+import { createResumeRunHandler } from "../src/domains/runs/handlers/resume-run-handler.js";
 import { createEvent } from "../src/system/runners/events.js";
 import { createRunProcessRegistry } from "../src/domains/runs/repositories/run-process-registry.js";
 import { CommandBus } from "../src/system/bus/command-bus.js";
@@ -21,6 +22,7 @@ function recoveryRepository(run?: Run): RunRecoveryRepository {
     saveSnapshot: async () => {
       throw new Error("not used");
     },
+    claimFailedRun: async () => undefined,
     loadSnapshot: async () =>
       run
         ? {
@@ -35,6 +37,91 @@ function recoveryRepository(run?: Run): RunRecoveryRepository {
     markCancelled: async () => {},
   };
 }
+
+test("resumeRun dispatches through CommandBus and persists the resumed snapshot", async () => {
+  const run: Run = {
+    id: "run-failed",
+    featureId: "001",
+    status: "failed",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    roles: [
+      {
+        name: "reviewer",
+        runner: "codex",
+        readOnly: true,
+        owns: [],
+        dependsOn: [],
+        promptFile: "",
+        prompt: "",
+        command: "",
+        args: [],
+        skillSource: "test",
+        status: "completed",
+      },
+    ],
+    stateDirectory: "/tmp/conduit-state",
+  };
+  let version = 1;
+  let saved = 0;
+  const repository: RunRecoveryRepository = {
+    loadSnapshot: async () => ({
+      run,
+      state: "complete",
+      version,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }),
+    claimFailedRun: async (_runId, expectedVersion) => {
+      assert.equal(expectedVersion, version);
+      version += 1;
+      run.status = "running";
+      return {
+        run,
+        state: "running",
+        version,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      };
+    },
+    saveSnapshot: async (nextRun, expectedVersion) => {
+      assert.equal(expectedVersion, version);
+      saved += 1;
+      version += 1;
+      return {
+        run: nextRun,
+        state: "complete",
+        version,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      };
+    },
+    listSnapshots: async () => [],
+    markInterrupted: async () => {},
+    markCancelled: async () => {},
+  };
+  const handler = createResumeRunHandler(repository, {
+    projectRoot: "/tmp/project",
+    evaluateEligibility: async () => ({
+      state: "resumable",
+      preservedRoles: [],
+      retryRoles: ["reviewer"],
+      reconstructRoles: [],
+    }),
+    executeRun: async (input) => {
+      assert.equal(input.resume, true);
+      assert.equal(input.run, run);
+      assert.equal(input.run.roles[0]?.status, "failed");
+      input.run.status = "completed";
+      await input.onRoleWorkspaceReady?.();
+      return [];
+    },
+  });
+  const bus = new CommandBus();
+  bus.register("resumeRun", handler);
+
+  const result = await bus.dispatch({ type: "resumeRun", runId: run.id });
+
+  assert.equal(result.success, true);
+  assert.equal(run.status, "completed");
+  assert.equal(saved, 2);
+});
 
 // createCancelRunHandler
 
@@ -214,9 +301,11 @@ test("createGetReviewResultHandler returns persisted review", async () => {
 
 // createGetRunDiffHandler
 
-test("createGetRunDiffHandler resolves worktree from persisted run data", async () => {
+test("createGetRunDiffHandler resolves worktree and baseline from persisted run data", async () => {
+  let receivedBaseline: string | undefined;
   const mockReader: DiffReader = {
-    readDiff(_worktree) {
+    readDiff(_worktree, baseline) {
+      receivedBaseline = baseline;
       return {
         diff: "diff",
         changedFiles: [{ path: "a.ts", additions: 1, deletions: 0 }],
@@ -246,6 +335,7 @@ test("createGetRunDiffHandler resolves worktree from persisted run data", async 
           skillSource: "builtin",
           status: "running",
           worktree: "/worktree",
+          diffBaselineHead: "baseline-head",
         },
       ],
     }),
@@ -264,6 +354,7 @@ test("createGetRunDiffHandler resolves worktree from persisted run data", async 
     };
     assert.equal(data.diff, "diff");
     assert.equal(data.changedFiles.length, 1);
+    assert.equal(receivedBaseline, "baseline-head");
   }
 });
 

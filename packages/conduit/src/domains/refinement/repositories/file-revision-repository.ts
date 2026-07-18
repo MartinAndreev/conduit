@@ -111,6 +111,12 @@ export class FileRefinementRevisionRepository implements RefinementRevisionRepos
     );
   }
 
+  async readAnswers(revision: RefinementRevision): Promise<string> {
+    return readFile(path.join(revision.directory, "answers.md"), "utf8").catch(
+      () => "",
+    );
+  }
+
   async recordReview(
     revision: RefinementRevision,
     decision: "approved" | "changes_requested",

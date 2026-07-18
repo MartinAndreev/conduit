@@ -17,9 +17,18 @@ export class PiAdapter implements RunnerAdapter {
   }
 
   buildArgs(promptFile: string, model?: string): readonly string[] {
-    const args: string[] = [];
+    const args: string[] = [
+      "--mode",
+      "json",
+      "--print",
+      "--no-extensions",
+      "--no-skills",
+      "--no-prompt-templates",
+      "--no-context-files",
+      "--no-session",
+    ];
     if (model) args.push("--model", model);
-    args.push("-p", `Read ${promptFile} and perform only your assigned task.`);
+    args.push(`Read ${promptFile} and perform only your assigned task.`);
     return args;
   }
 

@@ -113,6 +113,7 @@ export class RefinementBootstrapService implements ApplicationBootstrapService {
         processRegistry,
         reportRepository: repositories.researchReports,
         recoveryRepository: repositories.recovery,
+        roleWorkspaceRepository: repositories.roleWorkspaces,
       }) as CommandHandler,
     );
     queryBus.register(
@@ -160,6 +161,7 @@ export class RefinementBootstrapService implements ApplicationBootstrapService {
           runArchitect: dependencies.runArchitect,
           revisionRepository: repositories.revisions,
           researchReportRepository: repositories.researchReports,
+          clarificationQuestionRepository: repositories.clarificationQuestions,
         }) as CommandHandler,
       );
 
@@ -181,6 +183,7 @@ export class RefinementBootstrapService implements ApplicationBootstrapService {
       loadConfig: dependencies.loadConfig,
       findFeature: dependencies.findFeature,
       repository: repositories.revisions,
+      clarificationQuestionRepository: repositories.clarificationQuestions,
     };
     commandBus.register(
       "submitArchitectAnswers",
