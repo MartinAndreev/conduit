@@ -2,9 +2,14 @@
 
 ## Status
 
-Approved for the initial task group defined in `tasks.md`.
+Implemented across all approved task groups and shipped in v0.7.0 (`b1b595c`).
+Slot identity, persistence, fenced leases, role-slot materialization, terminal
+lifecycle, Continue, and Start Anew are present. The current macOS verification
+suite still has failures in worktree path reconciliation, resume eligibility,
+Start Anew, and compatible continuity reporting, so implementation status is
+not a claim of complete current acceptance.
 
-## Problem
+## Historical problem statement
 
 Conduit currently materializes role worktrees below a run-specific path. Failed worktrees are retained for recovery, but repeated runs accumulate nested paths and operators must reason about runs before discovering reusable role work. Simply changing the path to a role name would be unsafe: a filesystem path is not workflow identity and can contain work from a different revision, package, assignment, or process.
 
@@ -119,6 +124,10 @@ Role-slot cleanup uses Git worktree removal, exact registered paths, verified br
 - Existing stored run history remains readable.
 
 ## Acceptance criteria
+
+These criteria describe the delivered design. Current verification remains
+open for criteria 4, 6–9, and related recovery paths because the September 2026
+macOS suite reproduces worktree/recovery failures on unchanged HEAD.
 
 1. Two repositories with the same checkout basename produce different workspace namespaces.
 2. A repository has at most one physical slot per normalized role.

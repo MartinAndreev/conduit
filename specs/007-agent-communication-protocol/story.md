@@ -1,3 +1,3 @@
-# Story: Agent Communication Protocol
+# Story
 
-As a Conduit operator, I need every started agent to communicate progress and final results through one harness-agnostic, validated protocol so that implementation, QA, documentation, research, architect, reviewer, and future custom roles can be orchestrated safely without treating Markdown or process exit code as machine-readable truth.
+As a Conduit operator, I want a newly launched role to receive only the verified prior lessons that apply to its current assignment, so independent agents can build on accepted work without sharing transcripts, storage access, backend details, or unbounded context.

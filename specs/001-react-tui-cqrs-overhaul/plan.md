@@ -1,5 +1,11 @@
 # Implementation plan
 
+## Status
+
+Historical delivery plan, implemented. Feature 002 later replaced file-backed
+runtime persistence, and Features 007–009 strengthened response, communication,
+recovery, and workspace-continuity behavior without reopening these task groups.
+
 ## Ownership
 
 | Role        | Responsibility                                                          |
@@ -9,9 +15,10 @@
 | reviewer    | Codex review of spec compliance, diff, tests, security, and integration |
 | QA          | regression and interaction test coverage                                |
 
-## Delivery gate
+## Historical delivery gate
 
-For every task group: approved spec → OpenCode implementation → architect review → correction if required → accepted commit. The implementer must not start a later group.
+For every task group, the required sequence was approved spec → OpenCode
+implementation → architect review → correction if required → accepted commit.
 
 ## Task groups
 

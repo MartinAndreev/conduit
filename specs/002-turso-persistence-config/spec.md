@@ -1,10 +1,19 @@
 # Feature 002: Turso persistence and configuration foundation
 
+## Delivery status
+
+Implemented in `ea0d012` and shipped before v0.6.0. The storage foundation is
+in production use. The current macOS audit still has one platform-assumption
+failure in the XDG path test, and the complete supported-target standalone
+matrix was not rerun during this documentation audit. The unchanged-HEAD
+baseline also had one additional global-profile failure whose difference from
+the current tree was not isolated.
+
 ## Outcome
 
 Conduit uses embedded `@tursodatabase/database` as the only default persistence engine for local runtime state. A single Conduit process owns all database connections, resolves configuration from layered sources, and exposes domain-owned repositories that replace file-backed intermediate state without leaking drafts, credentials, prompts, or run artifacts into committed feature packets.
 
-Feature 002 is the foundation consumed by Feature 003. It owns database bootstrap, migrations, configuration resolution, generic persistence/repository infrastructure, import from existing JSON/file state, single-instance safety, shutdown, and standalone native-binding compatibility. It does **not** define memory retrieval, context-pack ranking, embedding policy, or handoff lifecycle beyond the generic storage primitives required by later features.
+Feature 002 is the persistence foundation originally consumed by Feature 003. It owns database bootstrap, migrations, configuration resolution, generic persistence/repository infrastructure, import from existing JSON/file state, single-instance safety, shutdown, and standalone native-binding compatibility. Feature 003's completed historical scope is frozen; future memory lifecycle, retrieval, and context compilation belong to a Feature 007 memory extension and must reuse these storage primitives.
 
 ## Scope
 
@@ -18,7 +27,7 @@ Feature 002 is the foundation consumed by Feature 003. It owns database bootstra
 - Domain-owned schemas and ordered, checksummed migrations.
 - Configuration precedence: built-in defaults → user-global profile → `conduit.yml` → project role guidance.
 - Global profile storage for reusable role/profile defaults and metadata.
-- Project runtime state repositories for drafts, refinement revisions, architect/research events, run events, reviews, source-version metadata placeholders, handoffs/context-pack storage primitives consumed by 003, and recovery metadata.
+- Project runtime state repositories for drafts, refinement revisions, architect/research events, run events, reviews, source-version metadata placeholders, future memory-extension storage primitives, and recovery metadata.
 - Import from existing `.conduit` JSON/file state where applicable.
 - Secret redaction and plaintext-credential prevention for database writes, backups, logs, and migration/import paths.
 - Clean shutdown, checkpoint behavior, bounded transactions, batching, optimistic versioning, corruption/error reporting, and safe migration recovery.
@@ -30,7 +39,7 @@ Feature 002 is the foundation consumed by Feature 003. It owns database bootstra
 - Replacing Turso with ordinary SQLite to avoid packaging work.
 - Experimental Turso multi-process WAL support.
 - Multiple agent processes opening the database.
-- Memory retrieval, vector search, context-pack assembly, global memory promotion, or handoff validation policy; those belong to Feature 003.
+- Memory retrieval, vector search, context-pack assembly, global memory promotion, or memory lifecycle policy; future work belongs to a Feature 007 memory extension.
 - Provider credentials storage. Credentials remain in the OS credential vault or the existing encrypted fallback.
 
 ## Architectural decisions
@@ -54,8 +63,8 @@ Stores project-local runtime state, including:
 - schema migration history and recovery metadata;
 - drafts, refinement revisions, research events, architect events, questions, answers, and approval state;
 - run events, role prompt metadata, reviews, diffs metadata, and cancellation/recovery state;
-- repository source versions and index metadata placeholders required by 003;
-- project memory, handoff, context-pack, and retrieval table namespaces created by 003 migrations;
+- repository source versions and index metadata placeholders available to a future Feature 007 memory extension;
+- project memory, context-pack, and retrieval table namespaces added only by future memory-extension migrations;
 - import markers from legacy JSON/file state.
 
 `.conduit/state.db`, WAL/SHM files, backups, caches, runs, worktrees, and imported legacy artifacts remain ignored by Git. Only explicitly approved packet artifacts are written to `specs/`.
@@ -72,7 +81,7 @@ Stores user-global-on-this-machine data, including:
 
 - reusable role/profile defaults;
 - global configuration metadata;
-- explicitly promoted reusable memory tables owned by 003;
+- explicitly promoted reusable memory tables owned by a future Feature 007 memory extension;
 - promotion provenance and audit metadata.
 
 Global data is not a raw cross-project knowledge pool. Projects do not automatically share project-specific knowledge.
@@ -116,8 +125,8 @@ Feature 002 must introduce or update repositories behind existing domain interfa
 - run event repository;
 - review result repository;
 - run recovery/snapshot metadata repository;
-- source-version metadata repository primitives consumed by 003;
-- generic handoff/context-pack persistence primitives owned by 003 migrations but opened through 002 connection infrastructure.
+- source-version metadata repository primitives available to a future Feature 007 memory extension;
+- generic memory/context-pack persistence primitives added by future memory-extension migrations but opened through 002 connection infrastructure.
 
 Repositories must preserve CQRS boundaries. State-changing persistence occurs through command handlers; reads occur through query handlers.
 
@@ -134,8 +143,8 @@ Initial migration order:
 3. `refinement` project draft/revision/research/architect tables.
 4. `runs` project run-event/review/recovery tables.
 5. `features` project feature metadata cache, if needed for read performance without replacing committed packet files.
-6. `source` project source-version metadata primitives for 003 evidence tracking.
-7. Reserved extension points for 003 memory, handoff, context-pack, retrieval, and promotion migrations.
+6. `source` project source-version metadata primitives, retained under their shipped migration identity for future evidence tracking.
+7. Reserved extension points for future Feature 007 memory lifecycle, context-pack, retrieval, and promotion migrations.
 
 ### Requirements
 
@@ -217,14 +226,18 @@ Standalone acceptance tests must prove the executable starts without `node_modul
 ## Acceptance criteria
 
 - [ ] Project and global databases are created at the approved default locations and can be overridden only through documented local configuration, not through remote URLs or tokens.
-- [ ] The Conduit process is the only database owner; spawned agents receive bounded files/prompts only and no database access.
-- [ ] A project single-instance guard prevents unsafe simultaneous Conduit database ownership without relying on experimental Turso multi-process WAL.
-- [ ] Domain-owned migrations run in the documented order, are checksummed, create pre-migration backups, and recover safely after interruption.
-- [ ] Configuration resolution follows built-in defaults → global profile → `conduit.yml` → project role guidance with field provenance.
-- [ ] Existing JSON/file-backed intermediate state imports idempotently into domain repositories without writing unapproved artifacts to `specs/`.
-- [ ] Repository interfaces replace file-backed intermediate state for refinement, run, review, and recovery flows while preserving CQRS boundaries.
-- [ ] Transactions are short and bounded; stale mutable writes use optimistic version checks.
-- [ ] Shutdown closes handles, releases locks, flushes writes, and reports checkpoint/recovery status.
-- [ ] Corruption and migration errors produce actionable, redacted diagnostics.
-- [ ] Plaintext credentials and seeded secrets are absent from project DB, global DB, backups, logs, imported records, and emitted diagnostics.
+- [x] The Conduit process is the only database owner; spawned agents receive bounded files/prompts only and no database access.
+- [x] A project single-instance guard prevents unsafe simultaneous Conduit database ownership without relying on experimental Turso multi-process WAL.
+- [x] Domain-owned migrations run in the documented order, are checksummed, create pre-migration backups, and recover safely after interruption.
+- [x] Configuration resolution follows built-in defaults → global profile → `conduit.yml` → project role guidance with field provenance.
+- [x] Existing JSON/file-backed intermediate state imports idempotently into domain repositories without writing unapproved artifacts to `specs/`.
+- [x] Repository interfaces replace file-backed intermediate state for refinement, run, review, and recovery flows while preserving CQRS boundaries.
+- [x] Transactions are short and bounded; stale mutable writes use optimistic version checks.
+- [x] Shutdown closes handles, releases locks, flushes writes, and reports checkpoint/recovery status.
+- [x] Corruption and migration errors produce actionable, redacted diagnostics.
+- [x] Plaintext credentials and seeded secrets are absent from project DB, global DB, backups, logs, imported records, and emitted diagnostics.
 - [ ] Bun standalone builds for supported targets package the correct Turso native binding and pass the standalone persistence suite without `node_modules`.
+
+The final item remains open as a current verification gate. The implementation
+and release jobs exist, but this audit verified only the macOS ARM64 standalone
+build; it did not execute Linux x64/ARM64 and Windows x64 release artifacts.

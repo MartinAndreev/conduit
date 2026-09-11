@@ -1,5 +1,11 @@
 # Plan: Bootstrap update check and guided self-update
 
+## Status
+
+Implemented and shipped in v0.6.0. The delivery sequence remains as historical
+review context. Its cross-platform artifact gate remains current and was not
+fully rerun during the September 2026 macOS audit.
+
 ## Delivery sequence
 
 ### 005-A Contracts and deterministic discovery
@@ -40,7 +46,7 @@
 - Update README/TUI/release documentation and exercise package plus supported
   standalone targets.
 
-## Delivery gate
+## Historical delivery gate
 
 Each group requires approved packet scope, implementation, review, correction
 if needed, acceptance, and commit before the next group begins. Do not combine

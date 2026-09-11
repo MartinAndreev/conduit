@@ -1,5 +1,16 @@
 # Test cases
 
+## Verification status
+
+These cases were implemented as automated coverage in `ea0d012`. The September
+2026 macOS audit is not a clean acceptance run: the XDG global-path assertion is
+Linux-specific but currently executes on macOS, and the full supported-target
+standalone matrix was not rerun. The implementation coverage exists, but these
+acceptance checkboxes remain unchecked because this audit did not rerun each
+targeted case as an independent acceptance suite. Unchanged HEAD also showed an
+additional global-profile failure that did not reproduce in the current tree;
+its cause was not isolated.
+
 ## Persistence and migration
 
 - [ ] Fresh project creates `<project>/.conduit/state.db`, fresh user creates platform app-data `global.db`, and both run initial migrations.

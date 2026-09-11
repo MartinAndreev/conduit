@@ -1,5 +1,9 @@
 # Feature 008 Tasks
 
+All approved implementation groups shipped in v0.7.0. Checked tasks record code
+delivery and focused coverage; they do not override the provider gates or the
+current failing recovery/worktree tests recorded below.
+
 ## Approved task group: amendment and baseline communication foundation
 
 - [x] Update Feature 008 documentation to cover session lifecycle, state cleanup, package hashing, legacy migration, clarification-loop correctness, transcripts, and isolation.
@@ -41,8 +45,20 @@
 - [x] Preserve post-capture Feature 007 structural, semantic, ownership, retry, and recovery behavior.
 - [x] Add MCP protocol, prompt-delivery, ACP capture, and malformed-response regression coverage.
 
-## Blockers recorded for later task groups
+## Deferred provider gates
 
 - Codex app-server v2 remains capability-gated until a captured sanitized fixture verifies its session, event, cancellation, and terminal-response lifecycle; Codex exec JSONL remains the verified fallback.
 - Providers remain version-gated to the captured harness versions. Unknown versions may use only a separately verified compatible fallback.
 - OpenCode 1.17.18 and Kilo 7.4.9 ACP communicate with Conduit over JSON-RPC stdio. Their process-internal loopback HTTP server is not Conduit's transport and does not change the approved `acp-stdio` boundary.
+
+## Current verification gaps
+
+- The full September 2026 macOS CLI run reported 354 passing and 21 failing
+  tests; all 21 also fail on unchanged HEAD. Feature 008 failures include role
+  worktree persistence, reviewer correction, protocol retry, resume,
+  reviewer-only recovery, promotion cleanup, and retained-worktree scenarios.
+- Codex app-server v2 remains unavailable as a verified preferred provider until
+  its captured sanitized fixture covers session negotiation, events,
+  cancellation, and terminal response capture.
+- Recovery behavior must remain fail closed while the macOS worktree path
+  canonicalization failures are unresolved.

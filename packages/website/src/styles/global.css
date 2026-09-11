@@ -452,7 +452,7 @@
 
 .roadmap-board {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   border-top: 1px solid var(--line);
   border-left: 1px solid var(--line);
 }
@@ -778,7 +778,7 @@
 
   .roadmap-control-group {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
   }
 
   .roadmap-control-group > span {

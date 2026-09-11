@@ -2,7 +2,12 @@
 
 ## Dependency position
 
-Feature 002 must be completed before Feature 003 implementation begins. It supplies database ownership, migrations, configuration resolution, repository infrastructure, and standalone packaging gates. Feature 003 may add memory/indexing migrations through the 002 migration registry, but must not duplicate connection bootstrap or migration infrastructure.
+This plan records the completed implementation sequence from `ea0d012`.
+Feature 002 supplied database ownership, migrations, configuration resolution,
+repository infrastructure, and standalone packaging gates before the historical
+Feature 003 work. Feature 003's completed scope remains historical; a future
+Feature 007 memory extension may add migrations through the 002 registry but
+must not duplicate connection bootstrap or migration infrastructure.
 
 ## Domain ownership
 
@@ -110,8 +115,10 @@ Completion checks:
 3. `0003_refinement_state` in project DB.
 4. `0004_runs_state` in project DB.
 5. `0005_feature_packet_cache_optional` in project DB, only if read caching is implemented.
-6. `0006_source_versions_primitives` in project DB for Feature 003 evidence tracking.
-7. Feature 003 migrations start after these IDs and use the same registry.
+6. `0006_source_versions_primitives` in project DB for evidence tracking. This
+   shipped identifier is immutable.
+7. Future Feature 007 memory-extension migrations start after these shipped IDs
+   and use the same registry.
 
 ## Failure and recovery behavior
 
@@ -127,4 +134,4 @@ Completion checks:
 - Integration tests using temporary project/global directories for import and repository behavior.
 - Process tests for single-instance lock and no database handoff to agents.
 - Standalone executable tests in release CI for supported targets.
-- Markdown/spec checks for this packet before implementation begins.
+- Markdown/spec checks for this packet were part of the implementation gate.

@@ -1,5 +1,20 @@
 # Feature 008 Test Cases
 
+## Verification status
+
+The v0.7.0 implementation includes focused tests for the registry, stream
+ordering, package hashing, native fixtures, database persistence, response-tool
+capture, correction, promotion, retry, and resume behavior. The September 2026
+macOS run confirms the provider registry, hashing, stream consumer, captured
+fixtures, ACP/RPC communication, MCP response tool, transcript bounds, database
+round trips, clarification loop, and atomic failed-run claim tests pass.
+
+The complete matrix is not currently green. Worktree registration, correction,
+protocol retry, resume, promotion cleanup, and retained-worktree cases fail in
+the same way on current and unchanged HEAD. Codex app-server fixture coverage is
+still gated; its exec JSONL fallback is the verified path. Therefore this file
+records implemented cases rather than declaring all A–L acceptance passed.
+
 The complete acceptance suite is the handoff test matrix A-L. Baseline tests added with the amendment cover:
 
 1. The default provider registry contains eight separate providers: Codex app-server, Codex exec, OpenCode ACP, OpenCode JSON, Pi RPC, Pi JSON, Kilo ACP, and Kilo JSON.

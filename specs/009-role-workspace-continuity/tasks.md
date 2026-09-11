@@ -1,5 +1,9 @@
 # Feature 009 Tasks
 
+All approved implementation groups shipped in v0.7.0. Checked boxes record
+implementation and focused test coverage; the current full-suite recovery
+failures remain explicit in `test-cases.md`.
+
 ## Approved task group: slot identity, persistence, and fenced lease primitives
 
 - [x] Add versioned role-workspace slot, generation-lineage, and lease contracts.
@@ -37,3 +41,15 @@ This group does not change current worktree paths, cleanup, promotion, start com
 - Automatic adoption of legacy worktrees is deferred unless the complete identity envelope can be proven.
 - Parallel active runs that require the same role are intentionally unsupported.
 - Lease TTL/heartbeat stealing is deferred while the exclusive project database lock remains authoritative.
+
+## Current verification gaps
+
+- The September 2026 macOS run fails exact Git worktree registration and path
+  reconciliation in temporary directories, including `/var` versus
+  `/private/var` representations.
+- Start Anew lineage/reconciliation/preflight, resume eligibility and crash
+  reconstruction, compatible retained-work reporting, and failed-run lease
+  recovery are not currently green. The same failures reproduce on unchanged
+  HEAD, so they are pre-existing but still unresolved acceptance evidence.
+- Automatic legacy-worktree adoption remains intentionally deferred unless the
+  complete identity envelope can be proven.

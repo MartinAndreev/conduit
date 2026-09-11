@@ -1,11 +1,21 @@
 # Feature 006: Website releases, roadmap, and mobile navigation drawer
 
+## Status
+
+Implemented. The shared website shell, repository-authored release journal,
+interactive roadmap, and mobile navigation drawer are present in
+`packages/website`. Automated Astro, static-build, and static-output evidence is
+recorded in `test-cases.md`. The responsive and assistive-technology browser
+matrix remains a manual release check and is not claimed as re-run by this
+documentation update.
+
 ## Outcome
 
 Add Releases and Roadmap to the Conduit website's primary navigation. Releases
 is a static, blog-style publication surface for regular releases and major
-release announcements. Roadmap is an interactive planning chart showing work
-by phase and priority without inventing delivery dates. Replace the current
+release announcements. Roadmap is an interactive planning chart showing
+shipped, current, and researched work by phase and priority without inventing
+delivery dates. Replace the current
 mobile dropdown with an accessible off-canvas navigation drawer.
 
 This feature is contained within `packages/website`. It does not change the
@@ -92,30 +102,37 @@ headers, counts, and aligned work items. On narrow screens the same information
 becomes a readable stacked or horizontally scrollable board without shrinking
 text below accessible sizes.
 
-Initial phases and required items are:
+The approved roadmap has three ordered phases:
 
-| Phase               | Item                | Priority |
-| ------------------- | ------------------- | -------- |
-| In development      | Self update         | High     |
-| In development      | Agent memory        | High     |
-| Research & planning | Linear integration  | High     |
-| Research & planning | Jira integration    | High     |
-| Research & planning | Asana integration   | Normal   |
-| Research & planning | ClickUp integration | Normal   |
+| Phase               | Required items                                                                                                                  | Priority contract                      |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| Shipped             | Self update; Local persistence; Universal agent communication; Durable role workspaces and recovery; Approval-gated corrections | No planning priority                   |
+| In development      | Agent long-term memory                                                                                                          | High                                   |
+| Research & planning | Linear integration; Jira integration; Asana integration; ClickUp integration                                                    | Linear/Jira high; Asana/ClickUp normal |
 
-The chart may include a future/released phase for layout continuity, but it
-must not falsely claim an item or delivery date. Linear and Jira are visually
-and semantically identified as higher priority than Asana and ClickUp. Order
-within a phase is explicit and stable.
+Shipped entries state only capabilities supported by implementation, task, and
+release evidence. Their details retain applicable platform, harness-version,
+and capability gates rather than implying that every platform or provider
+variant was validated.
 
-Each roadmap item has a title, concise outcome, phase, priority, stable order,
-and optional details or dependency references. Roadmap data lives in one typed,
-validated website-owned source so content can move between phases without
-rewriting page markup.
+Agent long-term memory remains design work. Its public direction is a
+provider-independent memory boundary with Turso as the canonical source of
+truth, Memvid as the default recoverable local index, and an optional
+configurable Hindsight adapter. The approved memory contract owns the final
+implementation scope. The roadmap must not imply that memory retrieval,
+evidence lifecycle, or cross-run context compilation has shipped.
+
+Each roadmap item has a title, concise outcome, phase, stable order, optional
+planning priority, and optional details or dependency references. Planning
+priority is required for current and research items and omitted for shipped
+items. Roadmap data lives in one typed, website-owned source so content can move
+between phases without rewriting page markup.
 
 ### Interaction
 
-- Visitors can filter or highlight roadmap items by phase and priority.
+- Visitors can filter or highlight roadmap items by phase and planning
+  priority. Selecting a priority excludes shipped items, which do not carry a
+  planning priority.
 - Selecting a work item expands an inline detail region or opens an accessible
   non-navigational detail panel with its outcome, current phase, priority, and
   known dependencies.
@@ -129,9 +146,9 @@ rewriting page markup.
 - Motion used to rearrange, reveal, or emphasize items respects
   `prefers-reduced-motion`.
 
-The initial dependency note for Agent memory may reference its persistence
-foundation when useful, but the website must not expose internal implementation
-claims that are not approved for public communication.
+The dependency note for Agent long-term memory may reference shipped local
+persistence and universal communication foundations, while keeping memory
+itself clearly in development.
 
 ## Mobile navigation drawer
 
@@ -192,23 +209,24 @@ must not leave the page permanently obscured.
 
 ## Acceptance criteria
 
-- [ ] Shared desktop and mobile navigation link to Home, Docs, Releases,
+- [x] Shared desktop and mobile navigation link to Home, Docs, Releases,
       Roadmap, and GitHub with correct base-path handling and current-page state.
-- [ ] `/releases/` renders a blog-style reverse-chronological archive with a
+- [x] `/releases/` renders a blog-style reverse-chronological archive with a
       featured treatment, typed entries, useful empty behavior, and entry links.
-- [ ] `/releases/<slug>/` renders validated repository-authored release or major
+- [x] `/releases/<slug>/` renders validated repository-authored release or major
       announcement content with correct metadata and draft exclusion.
-- [ ] `/roadmap/` renders the six required items in a planning-chart layout with
-      Self update and Agent memory in development, all integrations in research
-      and planning, and Linear/Jira at higher priority.
-- [ ] Roadmap filtering and item details are progressively enhanced, keyboard
+- [x] `/roadmap/` renders shipped, development, and research phases with the
+      approved current content. Self update is shipped and Agent long-term
+      memory remains in development; Linear/Jira retain higher priority than
+      Asana/ClickUp.
+- [x] Roadmap filtering and item details are progressively enhanced, keyboard
       accessible, non-color-dependent, and usable at mobile widths.
-- [ ] Mobile navigation is an off-canvas drawer with backdrop, focus management,
+- [x] Mobile navigation is an off-canvas drawer with backdrop, focus management,
       Escape/backdrop/link closing, scroll lock, resize cleanup, and reduced
       motion support.
-- [ ] Homepage, Docs, Releases, entries, and Roadmap share navigation behavior
+- [x] Homepage, Docs, Releases, entries, and Roadmap share navigation behavior
       without importing CLI runtime code or requiring a remote backend.
-- [ ] Astro checks and static builds pass at root and GitHub Pages base paths.
+- [x] Astro checks and static builds pass at root and GitHub Pages base paths.
 
 ## Non-goals
 
@@ -217,6 +235,6 @@ must not leave the page permanently obscured.
   delivery, or release subscription system.
 - Committed roadmap dates, percentage-complete estimates, issue-tracker sync,
   drag-and-drop editing, or public roadmap voting.
-- Implementing Self update, Agent memory, or any project-management provider
-  integration in the CLI.
+- Implementing roadmap capabilities in the CLI. Feature 006 reports their
+  public status; their owning feature packets define runtime behavior.
 - Redesigning the homepage, documentation content, logo, or overall brand.

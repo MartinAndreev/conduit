@@ -1,5 +1,13 @@
 # Group 5.5 — TUI controller consolidation
 
+## Status
+
+Implemented. Shared TUI contracts, polling/selection helpers, reducer-backed
+interaction state, a single worker monitor, and view-owned `SplitDiff` are in
+the current tree with focused consolidation coverage. The verification command
+list below records the delivery gate; it is not a claim that today's complete
+repository suite is green.
+
 ## Outcome
 
 Make TUI state transitions explicit, remove duplicated polling, selection, and diff rendering behavior, and restore the presentation boundary before accepting Group 5 worker monitoring. This corrective group does not begin SQLite persistence or add provider integrations.

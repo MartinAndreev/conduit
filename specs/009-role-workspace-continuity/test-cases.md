@@ -1,5 +1,18 @@
 # Feature 009 Test Cases
 
+## Verification status
+
+The v0.7.0 implementation includes coverage for all listed cases. In the
+September 2026 macOS run, repository identity, safe role keys and paths, atomic
+claims, fencing, generation advancement, contention, database constraints,
+foreign/active lease rejection, reviewer-only promotion resume, unstarted-role
+reconstruction, and changed-package rejection pass.
+
+The complete packet is not currently accepted by a green suite. Failures remain
+in exact worktree registration/removal, retained-role lifecycle, Start Anew,
+resume eligibility, crash reconstruction, and compatible continuity/lease
+reporting. These failures reproduce on current and unchanged HEAD.
+
 1. Repository identity is stable for the same Git common directory and differs for unrelated repositories with the same directory basename.
 2. Role IDs are encoded into safe non-colliding workspace slot paths.
 3. Planning two sequential runs for one repository and role resolves the same physical slot but distinct run/assignment/branch lineage.

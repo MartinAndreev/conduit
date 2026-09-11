@@ -294,18 +294,28 @@ pnpm --filter @conduit/website dev
 The website deploys to GitHub Pages from `main` through GitHub Actions. Enable
 **Settings → Pages → Source → GitHub Actions** before the first deployment.
 
-Build a self-contained Linux binary with Bun:
+Build a self-contained binary with Bun (for example, macOS ARM64):
 
 ```bash
-pnpm build:standalone -- linux-x64
-dist/release/conduit-linux-x64 --version
+pnpm build:standalone darwin-arm64
+packages/conduit/dist/release/conduit-darwin-arm64 --version
 ```
 
 Install that local binary onto your `PATH` with:
 
 ```bash
-pnpm install:local
+pnpm install:local darwin-arm64
 ```
+
+Supported targets are `linux-x64`, `linux-arm64`, `darwin-arm64`, and
+`windows-x64`. Omit the target to install the binary for your current platform
+and architecture. Build that target first; installation copies the existing
+artifact into `~/.local/bin/conduit` (`conduit.exe` for Windows).
+
+If the install directory is missing from `PATH`, the installer adds it to your
+zsh or bash startup files and prints a command to activate it in the current
+terminal. Open a new terminal or run that command before invoking `conduit`.
+For other shells, follow the printed PATH guidance.
 
 The release workflow builds Linux, macOS, and Windows binaries when a version tag is pushed.
 

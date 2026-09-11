@@ -1,3 +1,3 @@
 # Story
 
-Conduit roles need bounded, evidence-backed, feature-specific context so they can act without repeatedly scanning unrelated repository areas.
+Conduit established a strict structured handoff and durable provenance foundation. Feature 007 now owns the unimplemented work required to turn approved prior results into bounded context for later independent role launches.

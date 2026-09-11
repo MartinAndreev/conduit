@@ -1,17 +1,11 @@
-# Contracts
+# Feature 003 contracts
 
-Feature 003 contracts to define during implementation:
+Feature 003 defines no independent runtime contract.
 
-- `MemoryRepository` for nodes, versions, lifecycle states, evidence, relations, and audit history.
-- `MemoryProposalRepository` and proposal validation contracts.
-- `SourceIndexRepository` and deterministic indexer contracts.
-- `EvidenceResolver` and stale-memory invalidation contracts.
-- `EmbeddingProvider` port and embedding repository contracts.
-- `MemoryRetriever` contract for query construction, eligibility, candidate generation, rank fusion, and score explanation.
-- `ContextPackCompiler` and `ContextPackRepository` contracts.
-- Versioned `AgentHandoffEnvelope` contract.
-- `HandoffRepository` and handoff validation/redaction contracts.
-- `MemoryPromotionRepository` and explicit global-promotion approval contracts.
-- `RetrievalAttributionRepository` and feedback contracts.
+The completed handoff contracts are the unchanged Feature 007 schemas:
 
-Contracts must follow repository domain conventions: command/query interfaces in the owning domain, repository contracts in domain `interfaces`, value types in domain `types`, enums in domain `enums`, and errors in domain `errors`.
+- `../../007-agent-communication-protocol/contracts/agent-assignment-v1.schema.json`
+- `../../007-agent-communication-protocol/contracts/agent-response-v1.schema.json`
+- `../../007-agent-communication-protocol/contracts/conduit-result-record-v1.schema.json`
+
+The proposed long-term memory provider and context contracts are documented under Feature 007. Implementations must not revive the retired `AgentHandoffEnvelope` concept from earlier Feature 003 drafts.

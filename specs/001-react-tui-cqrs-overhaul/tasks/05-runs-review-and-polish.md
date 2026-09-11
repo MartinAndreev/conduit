@@ -1,5 +1,12 @@
 # Group 5 — Worker monitoring, review, and polish
 
+## Status
+
+Implementation complete. Later Features 007–009 superseded parts of the review,
+runner communication, recovery, and worktree lifecycle while retaining these
+presentation and CQRS boundaries. Repository-wide regression verification is
+currently unresolved on macOS.
+
 ## Implementation guardrails
 
 - Run exactly one implementation process and wait for its exit before any continuation.
@@ -25,15 +32,20 @@ Finish the React run experience, preserve compact CLI operations, add architect 
 
 ## Tasks
 
-- [ ] Implement React worker monitor driven by normalized events for all runner adapters.
-- [ ] Show role lifecycle, activity timeline, transcript expansion, worktree file changes, split diff, scrolling, cancellation, and unavailable-runner guidance.
-- [ ] Preserve compact `init`, `feature`, `run`, and `status` operations; interactive `refine` uses the shared screen.
-- [ ] Add a Codex review command/query flow that reads the approved packet, selected run, changed files, test output, and unresolved risks.
-- [ ] Finalize built-in nerdy FrameBuffer robot portraits and config overrides for all default roles.
+- [x] Implement React worker monitor driven by normalized events for all runner adapters.
+- [x] Show role lifecycle, activity timeline, transcript expansion, worktree file changes, split diff, scrolling, cancellation, and unavailable-runner guidance.
+- [x] Preserve compact `init`, `feature`, `run`, and `status` operations; interactive `refine` uses the shared screen.
+- [x] Add a Codex review command/query flow that reads the approved packet, selected run, changed files, test output, and unresolved risks.
+- [x] Finalize built-in nerdy FrameBuffer robot portraits and config overrides for all default roles.
 - [ ] Complete release documentation, migration notes, accessibility/resize testing, and end-to-end regression tests.
 
 ## Acceptance criteria
 
-- [ ] Actual worktree diffs, not agent claims, drive the changed-file view.
-- [ ] A review result identifies approved/rejected status, findings, evidence paths, and required follow-up.
+- [x] Actual worktree diffs, not agent claims, drive the changed-file view.
+- [x] A review result identifies approved/rejected status, findings, evidence paths, and required follow-up.
 - [ ] All CLI, runner, provider, security, and TUI regression tests pass.
+
+The unchecked items remain verification gaps: the September 2026 macOS run
+reported 354 passing and 21 failing CLI tests. All 21 failures reproduce on the
+unchanged baseline; 20 cluster in later worktree, correction, resume, and
+continuity behavior, while one is a platform-specific XDG-path expectation.

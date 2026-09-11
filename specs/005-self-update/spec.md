@@ -1,5 +1,14 @@
 # Feature 005: Bootstrap update check and guided self-update
 
+## Delivery status
+
+Implemented and shipped in v0.6.0 (`e850491`). Discovery, update-domain CQRS,
+Home presentation, package-manager and verified standalone strategies, and the
+dedicated update screen have focused automated coverage. Cross-platform release
+artifact testing remains a release gate, and the current full macOS CLI suite is
+not green because of pre-existing worktree/recovery failures outside this
+feature.
+
 ## Outcome
 
 Every interactive bare `conduit` launch starts a bounded, non-blocking check for
@@ -126,24 +135,24 @@ outside its installation location and a private temporary directory.
 
 ## Acceptance criteria
 
-- [ ] Every interactive bare `conduit` bootstrap starts exactly one
+- [x] Every interactive bare `conduit` bootstrap starts exactly one
       non-blocking stable-release check and renders Home without waiting for it.
-- [ ] Home always shows the current version and clearly distinguishes checking,
+- [x] Home always shows the current version and clearly distinguishes checking,
       current, update-available, and unavailable states.
-- [ ] `u` opens an explicit, default-cancel confirmation only when Home owns
+- [x] `u` opens an explicit, default-cancel confirmation only when Home owns
       focus and an automatic or guided update is available.
-- [ ] Confirmation opens an update screen with loader, typed progress stages,
+- [x] Confirmation opens an update screen with loader, typed progress stages,
       source/target versions, and terminal success or failure behavior.
-- [ ] Official standalone updates verify the target asset checksum and replace
+- [x] Official standalone updates verify the target asset checksum and replace
       safely without destroying the running installation on failure.
-- [ ] Supported global package installs update only
+- [x] Supported global package installs update only
       `conduit-orchestrator@<exact-version>`; local/unknown installs receive
       non-mutating manual guidance.
-- [ ] Offline, timeout, rate-limit, invalid metadata, unsupported platform, and
+- [x] Offline, timeout, rate-limit, invalid metadata, unsupported platform, and
       installation failures do not block bootstrap or project work.
-- [ ] Non-interactive commands never perform update network I/O or emit update
+- [x] Non-interactive commands never perform update network I/O or emit update
       notices.
-- [ ] No project data, secrets, telemetry, or stable machine identifier leaves
+- [x] No project data, secrets, telemetry, or stable machine identifier leaves
       the process during update discovery or installation.
 
 ## Non-goals

@@ -2,9 +2,18 @@
 
 ## Status
 
-Approved. This specification defines the harness integration boundary. It does not amend the approved `AgentAssignmentV1`, `AgentResponseV1`, or `ConduitResultRecordV1` wire contracts from Feature 007.
+Implemented and shipped in v0.7.0 (`b1b595c`). This specification defines the
+harness integration boundary and does not amend the approved
+`AgentAssignmentV1`, `AgentResponseV1`, or `ConduitResultRecordV1` wire contracts
+from Feature 007.
 
-## Problem
+Implementation status does not remove capability and verification gates. Codex
+app-server v2 still lacks the required captured sanitized lifecycle fixture, so
+Codex exec JSONL remains its verified fallback. Provider versions remain gated,
+and the September 2026 macOS full suite still fails worktree, correction, and
+resume scenarios that exercise this feature.
+
+## Historical problem statement
 
 Conduit supports `codex`, `opencode`, `pi`, and `kilo` through runner adapters, but the current launch and parsing boundaries are inconsistent:
 
@@ -117,7 +126,8 @@ Successful native session termination is not successful role completion. Role co
 
 ### 5. Normalized telemetry
 
-A versioned normalized telemetry contract MUST be approved under this feature before implementation. It MUST be able to represent:
+The approved versioned normalized telemetry contract implemented by this
+feature MUST be able to represent:
 
 - lifecycle and protocol state;
 - agent activity and reasoning summaries;
@@ -223,9 +233,9 @@ If deterministic execution requires disabling unapproved project-local plugins o
 13. Telemetry and raw diagnostics remain bounded and secret-redacted under long-running and noisy harness output.
 14. Process exit zero without a valid, semantically complete `AgentResponseV1` still fails the role and blocks dependents.
 
-## Contract and Planning Requirements
+## Historical contract and planning requirements
 
-Before implementation begins, the feature packet MUST add:
+Before implementation began, the feature packet was required to add:
 
 - a versioned normalized telemetry schema;
 - a launch-plan/capability contract;

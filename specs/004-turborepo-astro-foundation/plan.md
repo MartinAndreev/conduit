@@ -2,15 +2,18 @@
 
 ## Purpose
 
-Establish a pnpm workspace and Turborepo task graph before Feature 002 (local
-Turso persistence) and Feature 003 (repository memory). Preserve Conduit's
-current CLI behaviour and release outputs while creating an independent Astro
-website application.
+This is the historical plan implemented by `e92c939`: establish a pnpm
+workspace and Turborepo task graph before the then-planned Feature 002 local
+Turso persistence and Feature 003 work. Preserve Conduit's current CLI behaviour
+and release outputs while creating an independent Astro website application.
 
-This is a repository-structure change only. It does not implement any Feature
-002 or 003 storage, profile, memory, indexing, or handoff behaviour.
+The Feature 004 change itself was repository structure only and did not
+implement storage, profiles, memory, indexing, or handoff behaviour. That scope
+statement is historical rather than a current prohibition: Feature 002 later
+shipped, Feature 003's completed scope is frozen, and future memory work belongs
+to a Feature 007 extension.
 
-## Decisions to approve before implementation
+## Historical decisions approved before implementation
 
 1. Use pnpm workspaces with Turborepo; pnpm remains the sole package manager.
 2. Move the publishable CLI to `packages/conduit`, retaining the package name,
@@ -128,8 +131,10 @@ This is a repository-structure change only. It does not implement any Feature
 | Astro dependencies destabilize CLI tooling                                       | CLI checks run independently and site dependencies remain scoped to `packages/website`.                                |
 | A stale or misbased site build is published                                      | The Pages workflow uses deployment concurrency and a production build that receives the Pages base-path configuration. |
 
-## Follow-on order
+## Historical follow-on order
 
-After this packet is accepted and implemented, begin Feature 002 against the
-settled workspace layout. Feature 003 follows Feature 002, because its memory
-repositories depend on the persistence foundation.
+After this packet was accepted, Feature 002 began against the settled workspace
+layout and shipped in `ea0d012`. The former instruction that Feature 003 follow
+Feature 002 records the original sequence; Feature 003's completed scope is now
+historical, and future memory lifecycle/retrieval work belongs to a Feature 007
+extension that must reuse the persistence foundation.

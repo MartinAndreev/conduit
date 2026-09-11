@@ -1,6 +1,9 @@
 # Role Workspace V1 Contract
 
-`RoleWorkspaceRepository` is the canonical project-scoped persistence boundary for physical role workspace slots. This version defines persistence and fenced lease primitives; Git materialization is a later task group.
+`RoleWorkspaceRepository` is the canonical project-scoped persistence boundary
+for physical role workspace slots. This version introduced persistence and
+fenced lease primitives; the later Git-materialization and lifecycle groups are
+implemented without changing this contract's stored identity model.
 
 ## Current slot
 

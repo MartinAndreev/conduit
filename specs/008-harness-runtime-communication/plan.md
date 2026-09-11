@@ -1,5 +1,12 @@
 # Feature 008 Plan
 
+## Status
+
+Implemented through the v0.7.0 release. This sequence is retained as the
+delivery record. The verification list remains useful, but the current macOS
+full suite is not green in correction, resume, promotion, and worktree cleanup
+paths. Provider fixture and version gates remain active.
+
 ## Implementation sequence
 
 1. Approve amended contracts for the session-oriented communication provider, normalized telemetry, package hashing, session lifecycle, database ownership, legacy migration, transcript retention, and isolation.

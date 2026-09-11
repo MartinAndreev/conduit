@@ -1,5 +1,7 @@
 # Tasks
 
+All implementation tasks shipped in `e92c939`.
+
 - [x] T001 Establish pnpm workspace and Turborepo task graph
 - [x] T002 Move the publishable CLI to `packages/conduit`
 - [x] T003 Add the Astro website package

@@ -24,7 +24,7 @@
     "build": "bun scripts/build.js",
     "build:standalone": "bun scripts/build-standalone.js",
     "generate:role-templates": "bun scripts/generate-role-templates.js",
-    "install:local": "mkdir -p \"$HOME/.local/bin\" && install -m 755 dist/release/conduit-linux-x64 \"$HOME/.local/bin/conduit\"",
+    "install:local": "tsx scripts/install-local.ts",
     "prepack": "pnpm build",
     "release:checksums": "node scripts/write-checksums.mjs",
     "lint": "eslint .",

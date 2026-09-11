@@ -1,5 +1,11 @@
 # Plan: Website releases, roadmap, and mobile navigation drawer
 
+## Status
+
+Complete. The roadmap content refresh adds the shipped phase to the existing
+planning-chart design; it does not reopen the completed site architecture or
+introduce runtime work.
+
 ## Delivery sequence
 
 ### 006-A Shared shell and content contracts
@@ -23,7 +29,8 @@
 
 ### 006-C Interactive roadmap
 
-- Build the responsive phase-column planning chart with the six approved items.
+- Build the responsive phase-column planning chart with shipped, development,
+  and research items from the approved website-owned data source.
 - Add progressively enhanced phase/priority controls and accessible item detail
   disclosure.
 - Add mobile chart behavior, visible labels, focus states, reduced-motion
@@ -47,6 +54,10 @@ Each task group requires review and acceptance before the next begins. Work is
 limited to `packages/website`, this packet, and directly related website tests
 or documentation. Do not implement CLI roadmap items as part of this feature.
 
+The groups have been implemented and reviewed through the repository's prior
+delivery history. This packet now records their completed state; future roadmap
+content changes remain website-content work under Feature 006.
+
 ## Verification commands
 
 - `pnpm format:check`
@@ -58,3 +69,7 @@ or documentation. Do not implement CLI roadmap items as part of this feature.
 - `BASE_PATH=/conduit pnpm --filter @conduit/website build`
 - Static preview and browser interaction checks at desktop and 320 px mobile
   widths
+
+The command checks are automated evidence. Static preview, keyboard, responsive,
+and assistive-technology interaction checks are manual release checks and must
+be reported separately when they are run.

@@ -1,5 +1,11 @@
 # Feature 009 Plan
 
+## Status
+
+Implemented and shipped in v0.7.0. The sequence below is the delivery record.
+The full verification command remains unresolved on macOS because worktree,
+Start Anew, resume, and continuity cases fail on current and unchanged HEAD.
+
 ## Implementation sequence
 
 1. Approve the role-workspace registry, lease, identity, continuation, reset, and cleanup contracts.

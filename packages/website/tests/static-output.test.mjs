@@ -78,17 +78,72 @@ test("release archive and entries render published content", async () => {
   assert.match(previousRelease, /Guided self-update/u);
 });
 
-test("roadmap preserves approved phases, priorities, and ordering", async () => {
+test("roadmap preserves approved status, priorities, and data-derived counts", async () => {
   const html = await readPage(pages.roadmap);
-  for (const item of [
+  const phaseSections = Array.from(
+    html.matchAll(
+      /<section class="roadmap-column" data-roadmap-column="([^"]+)"[^>]*>(.*?)<\/section>/gsu,
+    ),
+  );
+  assert.deepEqual(
+    phaseSections.map((match) => match[1]),
+    ["shipped", "development", "research"],
+  );
+
+  for (const [, , phaseMarkup] of phaseSections) {
+    const renderedCount = Number(
+      phaseMarkup.match(/data-roadmap-count[^>]*>(\d+)</u)?.[1],
+    );
+    const itemCount = phaseMarkup.match(/data-roadmap-item/gu)?.length ?? 0;
+    assert.equal(renderedCount, itemCount);
+  }
+
+  const entries = Array.from(
+    html.matchAll(
+      /<li data-roadmap-item data-phase="([^"]+)"(?: data-priority="([^"]+)")?[^>]*>.*?<h4>(.*?)<\/h4>/gsu,
+    ),
+    (match) => ({ phase: match[1], priority: match[2], title: match[3] }),
+  );
+  assert.equal(
+    entries.length,
+    phaseSections.reduce(
+      (count, [, , markup]) =>
+        count + (markup.match(/data-roadmap-item/gu)?.length ?? 0),
+      0,
+    ),
+  );
+
+  const entryByTitle = new Map(entries.map((entry) => [entry.title, entry]));
+  for (const title of [
     "Self update",
-    "Agent memory",
-    "Linear integration",
-    "Jira integration",
-    "Asana integration",
-    "ClickUp integration",
+    "Local persistence",
+    "Universal agent communication",
+    "Durable role workspaces and recovery",
+    "Approval-gated corrections",
   ]) {
-    assert.match(html, new RegExp(`>${item}<`, "u"));
+    assert.deepEqual(entryByTitle.get(title), {
+      phase: "shipped",
+      priority: undefined,
+      title,
+    });
+  }
+
+  assert.deepEqual(entryByTitle.get("Agent long-term memory"), {
+    phase: "development",
+    priority: "high",
+    title: "Agent long-term memory",
+  });
+  for (const [title, priority] of [
+    ["Linear integration", "high"],
+    ["Jira integration", "high"],
+    ["Asana integration", "normal"],
+    ["ClickUp integration", "normal"],
+  ]) {
+    assert.deepEqual(entryByTitle.get(title), {
+      phase: "research",
+      priority,
+      title,
+    });
   }
 
   assert.ok(
@@ -97,15 +152,11 @@ test("roadmap preserves approved phases, priorities, and ordering", async () => 
   assert.ok(
     html.indexOf("Jira integration") < html.indexOf("ClickUp integration"),
   );
-  assert.match(
-    html,
-    /data-phase="development" data-priority="high"[^>]*><article[^>]*>.*?Self update/su,
-  );
-  assert.match(
-    html,
-    /data-phase="research" data-priority="high"[^>]*><article[^>]*>.*?Linear integration/su,
-  );
-  assert.match(html, /Roadmap order and scope may change/u);
+  assert.match(html, /Turso as the canonical source of truth/u);
+  assert.match(html, /Memvid as the default recoverable local index/u);
+  assert.match(html, /configurable Hindsight adapter/u);
+  assert.match(html, /provider-independent/u);
+  assert.match(html, /Planned order and scope may change/u);
 });
 
 test("drawer ships its accessibility and dismissal controls", async () => {

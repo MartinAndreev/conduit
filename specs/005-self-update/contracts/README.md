@@ -1,6 +1,6 @@
 # Contracts
 
-Feature 005 must define these contracts during implementation:
+Feature 005 delivered these contracts in v0.6.0:
 
 - `ReleaseDiscovery` for bounded stable-release lookup.
 - `InstallationDetector` for fail-closed standalone, global-package, local,
