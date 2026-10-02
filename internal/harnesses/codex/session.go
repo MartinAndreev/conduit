@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/MartinAndreev/conduit/internal/harnesses/codex/rules"
 	"io"
 	"os"
 	"sync"
@@ -163,14 +164,18 @@ func (s *session) StartTurn(ctx context.Context, request provider.StartTurnReque
 	}
 	var threadID string
 	err = lockscope.WithMutexLock(&s.mu, func() error {
-		if s.closing {
-			return adaptererror.New(provider.OperationStartTurn, provider.ErrorSessionLost, provider.RemoteEffectNotSent, nil, "session is closing")
-		}
-		if s.turnPending || s.active.Present {
-			return adaptererror.New(provider.OperationStartTurn, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, nil, "session already has an active or unresolved turn")
-		}
-		if request.Session != s.ref || !request.Assignment.SameIdentity(s.assignment) {
-			return adaptererror.New(provider.OperationStartTurn, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, nil, "session or assignment binding differs")
+		decision := rules.DecideStartTurn(rules.StartTurnFacts{
+			Closing: s.closing, TurnPending: s.turnPending, ActiveTurn: s.active.Present,
+			SessionMatches:            request.Session == s.ref,
+			AssignmentIdentityMatches: request.Assignment.SameIdentity(s.assignment),
+		})
+		switch decision.Kind {
+		case rules.StartTurnClosing:
+			return adaptererror.New(provider.OperationStartTurn, provider.ErrorSessionLost, provider.RemoteEffectNotSent, nil, decision.Reason)
+		case rules.StartTurnOccupied:
+			return adaptererror.New(provider.OperationStartTurn, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, nil, decision.Reason)
+		case rules.StartTurnBindingDiffers:
+			return adaptererror.New(provider.OperationStartTurn, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, nil, decision.Reason)
 		}
 		s.turnPending = true
 		threadID = s.nativeThread
@@ -302,17 +307,20 @@ func (s *session) Close(ctx context.Context, request provider.CloseSessionReques
 	}
 	var previous provider.SessionState
 	err := lockscope.WithMutexLock(&s.mu, func() error {
-		if err := s.checkSessionReference(provider.OperationCloseSession, request.Session); err != nil {
-			return err
-		}
-		if s.closing {
-			return adaptererror.New(provider.OperationCloseSession, provider.ErrorSessionLost, provider.RemoteEffectNotSent, nil, "session is already closing")
-		}
-		if request.Policy == provider.CloseRequireQuiescent && (s.active.Present || s.turnPending || s.steerPending != nil) {
-			return adaptererror.New(provider.OperationCloseSession, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, nil, "session has active or unresolved work")
-		}
-		if request.Policy == provider.CloseExplicitDetach {
-			return adaptererror.New(provider.OperationCloseSession, provider.ErrorCapabilityUnsupported, provider.RemoteEffectNotSent, nil, "owned App Server cannot be detached")
+		decision := rules.DecideClose(rules.CloseFacts{
+			SessionMatches:         request.Session == s.ref,
+			Closing:                s.closing,
+			RequireQuiescent:       request.Policy == provider.CloseRequireQuiescent,
+			ActiveOrUnresolvedWork: s.active.Present || s.turnPending || s.steerPending != nil,
+			ExplicitDetach:         request.Policy == provider.CloseExplicitDetach,
+		})
+		switch decision.Kind {
+		case rules.CloseSessionDiffers, rules.CloseWorkUnresolved:
+			return adaptererror.New(provider.OperationCloseSession, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, nil, decision.Reason)
+		case rules.CloseAlreadyClosing:
+			return adaptererror.New(provider.OperationCloseSession, provider.ErrorSessionLost, provider.RemoteEffectNotSent, nil, decision.Reason)
+		case rules.CloseDetachUnsupported:
+			return adaptererror.New(provider.OperationCloseSession, provider.ErrorCapabilityUnsupported, provider.RemoteEffectNotSent, nil, decision.Reason)
 		}
 		s.closing = true
 		previous = s.state
@@ -347,7 +355,8 @@ func (s *session) terminateOwnedProcess() {
 	// A reaped root process is not proof that descendants in its owned process
 	// group are gone. On supported platforms, always terminate the group. On
 	// unsupported platforms, KillTree still terminates the root process only.
-	killAttempted := s.process.TreeKillSupported() || !reaped
+	termination := rules.DecideOwnedProcessTermination(reaped, s.process.TreeKillSupported())
+	killAttempted := termination.Kind == rules.OwnedProcessKillRequired
 	var killErr error
 	if killAttempted {
 		killErr = s.process.KillTree()
@@ -361,7 +370,16 @@ func (s *session) terminateOwnedProcess() {
 	}
 
 	result := provider.CloseSessionResult{HandleClosed: true, ExecutionState: provider.ExecutionUnknown}
-	if reaped && s.process.TreeKillSupported() && killAttempted && (killErr == nil || errors.Is(killErr, os.ErrProcessDone)) {
+	// Preserve the original evidence-read and cause-check short circuit order.
+	treeKillSupported := reaped && s.process.TreeKillSupported()
+	killConfirmed := treeKillSupported && killAttempted && (killErr == nil || errors.Is(killErr, os.ErrProcessDone))
+	quiescence := rules.DecideQuiescence(rules.QuiescenceFacts{
+		RootReaped:        reaped,
+		TreeKillSupported: treeKillSupported,
+		KillAttempted:     killAttempted,
+		KillConfirmed:     killConfirmed,
+	})
+	if quiescence.Kind == rules.QuiescenceConfirmed {
 		result.ExecutionState = provider.ExecutionNone
 		result.ResourcesReleased = true
 	}

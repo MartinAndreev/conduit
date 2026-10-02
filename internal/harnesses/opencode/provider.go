@@ -3,6 +3,7 @@ package opencode
 import (
 	"context"
 	"encoding/json"
+	"github.com/MartinAndreev/conduit/internal/harnesses/opencode/rules"
 	"time"
 
 	"github.com/MartinAndreev/conduit/internal/harnesses/internal/adaptererror"
@@ -50,13 +51,19 @@ func (a *Adapter) OpenSession(ctx context.Context, request provider.OpenSessionR
 }
 
 func negotiate(contract provider.ResultContractRef) (provider.SchemaEnforcement, error) {
-	if len(contract.Schema) > 0 && !json.Valid(contract.Schema) {
-		return "", adaptererror.NewWithDetail(provider.OperationOpenSession, provider.ErrorProtocolViolation, provider.RemoteEffectNotSent, "result schema is not valid JSON", nil)
-	}
-	if contract.Allows(provider.SchemaNone) {
+	decision := rules.DecideResultEnforcement(rules.ResultEnforcementFacts{
+		SchemaPresent:   len(contract.Schema) > 0,
+		SchemaValidJSON: json.Valid(contract.Schema),
+		AllowsNone:      contract.Allows(provider.SchemaNone),
+	})
+	switch decision.Kind {
+	case rules.ResultEnforcementNone:
 		return provider.SchemaNone, nil
+	case rules.ResultEnforcementInvalidSchema:
+		return "", adaptererror.NewWithDetail(provider.OperationOpenSession, provider.ErrorProtocolViolation, provider.RemoteEffectNotSent, decision.Reason, nil)
+	default:
+		return "", adaptererror.NewWithDetail(provider.OperationOpenSession, provider.ErrorCapabilityUnsupported, provider.RemoteEffectNotSent, decision.Reason, nil)
 	}
-	return "", adaptererror.NewWithDetail(provider.OperationOpenSession, provider.ErrorCapabilityUnsupported, provider.RemoteEffectNotSent, "OpenCode native result schema is unproven", nil)
 }
 
 func capabilities(model provider.ModelSelection, at time.Time) provider.CapabilitySnapshot {

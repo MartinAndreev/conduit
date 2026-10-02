@@ -12,10 +12,15 @@
 
 ### Rule
 
-- A rule answers a business question from supplied facts. It is deterministic for those facts, performs no I/O, and does not mutate state.
-- Return a concrete decision structure for that business question, containing a typed `Kind` and explanatory `Reason`. Define the permitted kinds for that question rather than introducing a universal result for all rules.
+- A rule answers a named business or technical policy question from supplied facts. It is deterministic for those facts, performs no I/O, and does not mutate state.
+- Return a concrete decision structure for that specific question, containing a typed `Kind` and explanatory `Reason`. Define the permitted kinds for that question rather than introducing a universal result for all rules.
 - Procedures branch on `Kind`, never on the text of `Reason`. `Reason` explains the decision for people, logs, UI, and agent feedback.
-- A normal business rejection is a decision, not a Go technical error. Define handling of invalid facts when designing the rule instead of silently inventing a policy.
+- Keep business rules in their owning domain and technical rules in their owning infrastructure/adapter package. A technical rule does not become domain logic merely because it returns a decision. Do not create a global rules package.
+- Approved technical-rule layout: each owning Codex, OpenCode, eventstream, and Turso package keeps its rules and their Facts/Decision/Kind types in its own `rules` subpackage. Pure rule tests live alongside those rules; procedure/integration tests stay with their owner. Dependency direction is owner → rules; rules must not import the parent adapter, mutable session, process, or database implementation. Keep `sessions.DecideCorrection` in its existing business owner; no global rules package or unrelated domain move.
+- An expected policy rejection is a decision. The procedure translates it into the appropriate public error/result and preserves any original technical cause. The rule neither performs the operation nor formats its transport response. Define handling of invalid facts explicitly instead of inventing a policy.
+- Extract a named rule when a branch expresses a meaningful eligibility, validity, or transition policy, including technical lifecycle policy. Duplication is not a prerequisite. Do not mechanically extract every `if`: direct error propagation, native protocol decoding, and trivial defensive checks need no decision abstraction unless they encode such a policy.
+- Evaluate rules from explicit facts, not mutable owner access or hidden callbacks. Fact reads, the decision, and dependent mutation/attempt must stay in the same existing critical section when required for atomicity; a pure rule does not acquire locks itself.
+- Approved example: eventstream `DecidePublish` returns `PublishDecision{Kind, Reason}` with `PublishAllowed`, `PublishConsumerClosed`, or `PublishStreamClosed`. Consumer closure takes precedence over stream closure. `Publish` maps a stream-closed decision to the stored terminal error or `io.ErrClosedPipe`; the rule need not interpret that error. Both the decision and the nonblocking send stay under the broker mutex. Allowed means eligible to attempt publishing, not guaranteed success: the attempt may still report buffer overflow.
 
 ### Query
 
@@ -33,7 +38,7 @@
 - A procedure owns one use case's flow in one place: gather facts with queries, evaluate rules, decide the path, and invoke steps in order. Repeat those phases when the use case requires it.
 - Keep business sequencing visible. Do not duplicate the flow in services, handlers, UI, or adapter code.
 - Give multi-action success, failure, and reconciliation paths explicit names. When a branch classifies an outcome, changes state, and constructs a response, extract a focused subprocedure so the caller shows the overall flow. A simple guard or error propagation need not become a separate function.
-- A subprocedure owns its sequence; its name and contract must expose effects and uncertainty. Do not hide state changes behind a name that implies pure error formatting, or turn protocol classification into a business rule merely to match the vocabulary.
+- A subprocedure owns its sequence; its name and contract must expose effects and uncertainty. Do not hide state changes behind a name that implies pure error formatting, or move technical protocol policy into a business domain merely to match the vocabulary. Pure technical policy may be a local rule; parsing and direct error propagation alone do not require one.
 - Describe partial-success behavior and transaction/concurrency boundaries before implementing a multi-effect procedure. A database transaction cannot undo a command already sent to a harness.
 
 ### Wrapper

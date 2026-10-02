@@ -63,3 +63,23 @@ func TestClosedConsumerIsVisibleToPublisherAndReceiver(t *testing.T) {
 		t.Fatalf("Receive after close = %v", err)
 	}
 }
+
+func TestPublishClosedStreamPreservesTerminalAndConsumerPrecedence(t *testing.T) {
+	terminal := errors.New("terminal transport failure")
+	for _, err := range []error{nil, terminal, ErrBufferOverflow} {
+		broker := New(1)
+		broker.Finish(err)
+		want := err
+		if want == nil {
+			want = io.ErrClosedPipe
+		}
+		if got := broker.Publish(testEvent(t, 1)); got != want {
+			t.Fatalf("Publish = %v, want %v", got, want)
+		}
+		stream, _ := broker.Subscribe()
+		_ = stream.Close()
+		if got := broker.Publish(testEvent(t, 2)); got != ErrConsumerClosed {
+			t.Fatalf("consumer precedence = %v", got)
+		}
+	}
+}

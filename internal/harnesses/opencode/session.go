@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"github.com/MartinAndreev/conduit/internal/harnesses/opencode/rules"
 	"io"
 	"reflect"
 	"strings"
@@ -70,14 +71,21 @@ func (s *session) StartTurn(ctx context.Context, request provider.StartTurnReque
 	var turn provider.TurnRef
 	var proc processruntime.Process
 	err := lockscope.WithMutexLock(&s.mu, func() error {
-		if request.Session != s.ref || !request.Assignment.SameIdentity(s.assignment) || request.Assignment.Revision != s.assignment.Revision {
+		decision := rules.DecideStartTurn(rules.StartTurnFacts{
+			SessionMatches:            request.Session == s.ref,
+			AssignmentIdentityMatches: request.Assignment.SameIdentity(s.assignment),
+			AssignmentRevisionMatches: request.Assignment.Revision == s.assignment.Revision,
+			Closed:                    s.closed, ActiveTurn: s.turn.Present, SteerPending: s.steerPending,
+			DeliveryUnknown: s.deliveryUnknown, SessionLost: s.state == provider.SessionLost,
+			ResultContractMatches: reflect.DeepEqual(request.ResultContract, s.contract.Contract),
+		})
+		switch decision.Kind {
+		case rules.StartTurnBindingDiffers:
 			return s.stale(provider.OperationStartTurn)
-		}
-		if s.closed || s.turn.Present || s.steerPending || s.deliveryUnknown || s.state == provider.SessionLost {
-			return adaptererror.NewWithDetail(provider.OperationStartTurn, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, "session closed or a turn is already active", nil)
-		}
-		if !reflect.DeepEqual(request.ResultContract, s.contract.Contract) {
-			return adaptererror.NewWithDetail(provider.OperationStartTurn, provider.ErrorProtocolViolation, provider.RemoteEffectNotSent, "result contract changed", nil)
+		case rules.StartTurnUnavailable:
+			return adaptererror.NewWithDetail(provider.OperationStartTurn, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, decision.Reason, nil)
+		case rules.StartTurnContractChanged:
+			return adaptererror.NewWithDetail(provider.OperationStartTurn, provider.ErrorProtocolViolation, provider.RemoteEffectNotSent, decision.Reason, nil)
 		}
 		turnID, err := s.config.NewID("opencode-turn")
 		if err != nil {
@@ -113,11 +121,16 @@ func (s *session) InterruptTurn(context.Context, provider.InterruptRequest) (pro
 func (s *session) Close(_ context.Context, request provider.CloseSessionRequest) (provider.CloseSessionResult, error) {
 	var result provider.CloseSessionResult
 	err := lockscope.WithMutexLock(&s.mu, func() error {
-		if request.Session != s.ref {
-			return s.stale(provider.OperationCloseSession)
-		}
-		if s.turn.Present && request.Policy != provider.CloseExplicitDetach {
-			return adaptererror.NewWithDetail(provider.OperationCloseSession, provider.ErrorCapabilityUnsupported, provider.RemoteEffectNotSent, "active OpenCode work can only be detached because native stop is unproven", nil)
+		decision := rules.DecideClose(rules.CloseFacts{
+			SessionMatches: request.Session == s.ref,
+			ActiveTurn:     s.turn.Present,
+			ExplicitDetach: request.Policy == provider.CloseExplicitDetach,
+		})
+		switch decision.Kind {
+		case rules.CloseBindingStale:
+			return adaptererror.NewWithDetail(provider.OperationCloseSession, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, decision.Reason, nil)
+		case rules.CloseActiveWorkRequiresDetach:
+			return adaptererror.NewWithDetail(provider.OperationCloseSession, provider.ErrorCapabilityUnsupported, provider.RemoteEffectNotSent, decision.Reason, nil)
 		}
 		s.closed, s.state = true, provider.SessionClosed
 		s.broker.Finish(nil)
@@ -200,7 +213,7 @@ func (s *session) emit(body provider.EventBody) {
 }
 
 func (s *session) stale(op provider.Operation) error {
-	return adaptererror.NewWithDetail(op, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, "session, turn, assignment, or revision binding is stale", nil)
+	return adaptererror.NewWithDetail(op, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, rules.StaleBindingReason, nil)
 }
 func joinParts(parts []provider.InputPart) string {
 	var values []string

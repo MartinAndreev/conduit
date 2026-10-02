@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"github.com/MartinAndreev/conduit/internal/harnesses/codex/rules"
 
 	"github.com/MartinAndreev/conduit/internal/harnesses/internal/adaptererror"
 	"github.com/MartinAndreev/conduit/internal/harnesses/internal/lockscope"
@@ -42,9 +43,13 @@ func (s *session) acceptSteer(request provider.SteerRequest, result json.RawMess
 		return provider.DeliveryReceipt{}, adaptererror.New(provider.OperationSteer, provider.ErrorProtocolViolation, provider.RemoteEffectAccepted, err, "turn/steer returned no turn ID")
 	}
 	err := lockscope.WithMutexLock(&s.mu, func() error {
-		if s.steerPending == nil || s.steerPending.request.RequestID != request.RequestID ||
-			!s.active.Present || response.TurnID != string(request.ExpectedActiveTurn.AdapterTurnID) || s.active.Value != request.ExpectedActiveTurn {
-			return adaptererror.New(provider.OperationSteer, provider.ErrorProtocolViolation, provider.RemoteEffectAccepted, nil, "turn/steer response does not match the pending active turn")
+		decision := rules.DecideSteerReceipt(rules.SteerReceiptFacts{
+			PendingRequestMatches: s.steerPending != nil && s.steerPending.request.RequestID == request.RequestID,
+			ActiveTurnMatches:     s.active.Present && s.active.Value == request.ExpectedActiveTurn,
+			NativeTurnMatches:     response.TurnID == string(request.ExpectedActiveTurn.AdapterTurnID),
+		})
+		if decision.Kind != rules.SteerReceiptAccepted {
+			return adaptererror.New(provider.OperationSteer, provider.ErrorProtocolViolation, provider.RemoteEffectAccepted, nil, decision.Reason)
 		}
 		s.assignment = request.NewAssignment
 		s.steerPending = nil
@@ -80,14 +85,18 @@ func (s *session) reconcileLateSteer(request provider.SteerRequest, reply rpcRes
 func (s *session) reserveSteer(request provider.SteerRequest) (string, string, error) {
 	var threadID, turnID string
 	err := lockscope.WithMutexLock(&s.mu, func() error {
-		if err := s.checkSessionReference(provider.OperationSteer, request.Session); err != nil {
-			return err
-		}
-		if request.Mode != provider.DeliverActiveTurn {
-			return adaptererror.New(provider.OperationSteer, provider.ErrorCapabilityUnsupported, provider.RemoteEffectNotSent, nil, "only active-turn steering is supported")
-		}
-		if !s.active.Present || s.active.Value != request.ExpectedActiveTurn || s.steerPending != nil || s.turnPending {
-			return adaptererror.New(provider.OperationSteer, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, nil, "active turn is absent, different, or unresolved")
+		technical := rules.DecideSteer(rules.SteerFacts{
+			SessionMatches:    request.Session == s.ref,
+			ActiveTurnMode:    request.Mode == provider.DeliverActiveTurn,
+			ActiveTurnMatches: s.active.Present && s.active.Value == request.ExpectedActiveTurn,
+			SteerPending:      s.steerPending != nil,
+			TurnPending:       s.turnPending,
+		})
+		switch technical.Kind {
+		case rules.SteerSessionDiffers, rules.SteerBindingUnresolved:
+			return adaptererror.New(provider.OperationSteer, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, nil, technical.Reason)
+		case rules.SteerModeUnsupported:
+			return adaptererror.New(provider.OperationSteer, provider.ErrorCapabilityUnsupported, provider.RemoteEffectNotSent, nil, technical.Reason)
 		}
 		decision := sessions.DecideCorrection(s.assignment, request.CurrentAssignment, request.ExpectedRevision, request.NewAssignment)
 		if decision.Kind != sessions.CorrectionAllowed {

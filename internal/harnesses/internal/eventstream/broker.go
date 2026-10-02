@@ -3,6 +3,7 @@ package eventstream
 import (
 	"context"
 	"errors"
+	"github.com/MartinAndreev/conduit/internal/harnesses/internal/eventstream/rules"
 	"io"
 	"sync"
 
@@ -38,10 +39,10 @@ func New(capacity int) *Broker {
 // explicit error rather than silently dropping an event.
 func (b *Broker) Publish(event provider.ProviderEvent) error {
 	return lockscope.WithMutexLock(&b.mu, func() error {
-		if b.consumerClosed {
+		switch rules.DecidePublish(b.consumerClosed, b.closed).Kind {
+		case rules.PublishConsumerClosed:
 			return ErrConsumerClosed
-		}
-		if b.closed {
+		case rules.PublishStreamClosed:
 			if b.terminal != nil {
 				return b.terminal
 			}

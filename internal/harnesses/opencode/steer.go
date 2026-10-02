@@ -2,6 +2,7 @@ package opencode
 
 import (
 	"context"
+	"github.com/MartinAndreev/conduit/internal/harnesses/opencode/rules"
 
 	"github.com/MartinAndreev/conduit/internal/harnesses/internal/adaptererror"
 	"github.com/MartinAndreev/conduit/internal/harnesses/internal/lockscope"
@@ -33,15 +34,23 @@ func (s *session) Steer(ctx context.Context, request provider.SteerRequest) (pro
 func (s *session) reserveSteer(request provider.SteerRequest) (provider.NativeSessionID, error) {
 	var native provider.NativeSessionID
 	err := lockscope.WithMutexLock(&s.mu, func() error {
-		if request.Session != s.ref || !s.turn.Present || request.ExpectedActiveTurn != s.turn.Value || s.steerPending || s.deliveryUnknown {
-			return s.stale(provider.OperationSteer)
+		eligibility := rules.DecideSteerEligibility(rules.SteerEligibilityFacts{
+			SessionMatches:  request.Session == s.ref,
+			ActiveTurn:      s.turn.Present,
+			TurnMatches:     request.ExpectedActiveTurn == s.turn.Value,
+			SteerPending:    s.steerPending,
+			DeliveryUnknown: s.deliveryUnknown,
+		})
+		if eligibility.Kind == rules.SteerBindingStale {
+			return adaptererror.NewWithDetail(provider.OperationSteer, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, eligibility.Reason, nil)
 		}
 		decision := sessions.DecideCorrection(s.assignment, request.CurrentAssignment, request.ExpectedRevision, request.NewAssignment)
 		if decision.Kind != sessions.CorrectionAllowed {
 			return adaptererror.NewWithDetail(provider.OperationSteer, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, decision.Reason, nil)
 		}
-		if request.Mode != provider.DeliverActiveTurn {
-			return adaptererror.NewWithDetail(provider.OperationSteer, provider.ErrorCapabilityUnsupported, provider.RemoteEffectNotSent, "only active-turn steer is supported", nil)
+		mode := rules.DecideSteerMode(request.Mode == provider.DeliverActiveTurn)
+		if mode.Kind == rules.SteerModeUnsupported {
+			return adaptererror.NewWithDetail(provider.OperationSteer, provider.ErrorCapabilityUnsupported, provider.RemoteEffectNotSent, mode.Reason, nil)
 		}
 		s.steerPending = true
 		native = s.nativeSession
@@ -59,8 +68,13 @@ func (s *session) deliverSteer(ctx context.Context, native provider.NativeSessio
 func (s *session) acceptSteer(request provider.SteerRequest, result PromptResult) (provider.DeliveryReceipt, error) {
 	err := lockscope.WithMutexLock(&s.mu, func() error {
 		s.steerPending = false
-		if !s.turn.Present || s.turn.Value != request.ExpectedActiveTurn || s.assignment.Revision != request.ExpectedRevision {
-			return adaptererror.NewWithDetail(provider.OperationSteer, provider.ErrorDeliveryUnknown, provider.RemoteEffectAccepted, "binding changed after accepted delivery", nil)
+		decision := rules.DecideSteerReceipt(rules.SteerReceiptFacts{
+			ActiveTurn:      s.turn.Present,
+			TurnMatches:     s.turn.Value == request.ExpectedActiveTurn,
+			RevisionMatches: s.assignment.Revision == request.ExpectedRevision,
+		})
+		if decision.Kind == rules.SteerReceiptBindingChanged {
+			return adaptererror.NewWithDetail(provider.OperationSteer, provider.ErrorDeliveryUnknown, provider.RemoteEffectAccepted, decision.Reason, nil)
 		}
 		s.assignment = request.NewAssignment
 		return nil

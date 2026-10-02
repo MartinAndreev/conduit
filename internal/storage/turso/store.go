@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/MartinAndreev/conduit/internal/storage/turso/rules"
 	"os"
 
 	"github.com/MartinAndreev/conduit/internal/events"
@@ -62,8 +63,12 @@ func validateSchema(ctx context.Context, db *sql.DB) error {
 	for key, expected := range markers {
 		var actual string
 		err := db.QueryRowContext(ctx, "SELECT value FROM conduit_metadata WHERE key = ?", key).Scan(&actual)
-		if err != nil || actual != expected {
+		if err != nil {
 			return fmt.Errorf("%w: invalid %s", ErrIncompatibleDatabase, key)
+		}
+		decision := rules.DecideSchemaMarker(key, actual, expected)
+		if decision.Kind != rules.SchemaCompatible {
+			return fmt.Errorf("%w: %s", ErrIncompatibleDatabase, decision.Reason)
 		}
 	}
 	required := map[string][]string{
@@ -89,10 +94,9 @@ func validateSchema(ctx context.Context, db *sql.DB) error {
 			return fmt.Errorf("%w: inspect %s columns: %v", ErrIncompatibleDatabase, table, err)
 		}
 		rows.Close()
-		for _, column := range columns {
-			if !found[column] {
-				return fmt.Errorf("%w: missing %s.%s", ErrIncompatibleDatabase, table, column)
-			}
+		decision := rules.DecideSchemaColumns(table, columns, found)
+		if decision.Kind != rules.SchemaCompatible {
+			return fmt.Errorf("%w: %s", ErrIncompatibleDatabase, decision.Reason)
 		}
 	}
 	return nil

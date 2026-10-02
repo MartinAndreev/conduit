@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"github.com/MartinAndreev/conduit/internal/harnesses/codex/rules"
 	"time"
 
 	"github.com/MartinAndreev/conduit/internal/harnesses/internal/adaptererror"
@@ -94,23 +95,33 @@ func (a *Adapter) OpenSession(ctx context.Context, request provider.OpenSessionR
 }
 
 func negotiateResultContract(contract provider.ResultContractRef) (provider.SchemaEnforcement, error) {
-	if len(contract.Schema) != 0 && contract.Allows(provider.SchemaNative) {
-		if !json.Valid(contract.Schema) {
-			return "", &provider.ProviderError{
-				Code: provider.ErrorProtocolViolation, Operation: provider.OperationOpenSession,
-				Retry: provider.RetryNever, RemoteEffect: provider.RemoteEffectNotSent,
-				Detail: "result schema is not valid JSON",
-			}
-		}
+	decision := rules.DecideResultEnforcement(rules.ResultEnforcementFacts{
+		SchemaPresent: len(contract.Schema) != 0,
+		NativeAllowed: contract.Allows(provider.SchemaNative),
+		SchemaValid:   json.Valid(contract.Schema),
+		NoneAllowed:   contract.Allows(provider.SchemaNone),
+	})
+	switch decision.Kind {
+	case rules.ResultEnforcementNative:
 		return provider.SchemaNative, nil
-	}
-	if contract.Allows(provider.SchemaNone) {
+	case rules.ResultEnforcementNone:
 		return provider.SchemaNone, nil
-	}
-	return "", &provider.ProviderError{
-		Code: provider.ErrorCapabilityUnsupported, Operation: provider.OperationOpenSession,
-		Retry: provider.RetryNever, RemoteEffect: provider.RemoteEffectNotSent,
-		Detail: "requested result enforcement cannot be negotiated",
+	case rules.ResultEnforcementInvalidSchema:
+		return "", &provider.ProviderError{
+			Code:         provider.ErrorProtocolViolation,
+			Operation:    provider.OperationOpenSession,
+			Retry:        provider.RetryNever,
+			RemoteEffect: provider.RemoteEffectNotSent,
+			Detail:       decision.Reason,
+		}
+	default:
+		return "", &provider.ProviderError{
+			Code:         provider.ErrorCapabilityUnsupported,
+			Operation:    provider.OperationOpenSession,
+			Retry:        provider.RetryNever,
+			RemoteEffect: provider.RemoteEffectNotSent,
+			Detail:       decision.Reason,
+		}
 	}
 }
 
