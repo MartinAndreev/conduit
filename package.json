@@ -1,50 +1,12 @@
 {
-  "name": "conduit-workspace",
+  "name": "conduit-commit-tooling",
   "private": true,
-  "type": "module",
   "packageManager": "pnpm@10.32.1",
   "scripts": {
-    "build": "turbo run build",
-    "build:standalone": "pnpm --filter conduit-orchestrator build:standalone",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "install:local": "pnpm --filter conduit-orchestrator install:local",
-    "lint": "turbo run lint",
-    "release:checksums": "pnpm --filter conduit-orchestrator release:checksums",
-    "start": "pnpm --filter conduit-orchestrator start",
-    "test": "turbo run test",
-    "typecheck": "turbo run typecheck",
-    "website:build": "pnpm --filter @conduit/website build",
-    "website:dev": "pnpm --filter @conduit/website dev",
-    "website:preview": "pnpm --filter @conduit/website preview"
+    "commitlint": "commitlint"
   },
   "devDependencies": {
-    "@commitlint/cli": "^21.0.0",
-    "@commitlint/config-conventional": "^21.0.0",
-    "@eslint/js": "^10.0.1",
-    "@hkdobrev/run-if-changed": "^0.9.0",
-    "@types/node": "^22.0.0",
-    "@types/react": "^18.0.0",
-    "bun-types": "^1.0.0",
-    "eslint": "^10.7.0",
-    "globals": "^17.0.0",
-    "husky": "^9.0.0",
-    "lint-staged": "^17.0.0",
-    "prettier": "^3.0.0",
-    "tsx": "^4.23.0",
-    "turbo": "^2.10.5",
-    "typescript": "^5.0.0",
-    "typescript-eslint": "^8.0.0"
-  },
-  "lint-staged": {
-    "*.{js,jsx,ts,tsx,mjs,cjs}": [
-      "eslint --fix"
-    ],
-    "*.{js,jsx,ts,tsx,mjs,cjs,json,md,mdx,yml,yaml,css,scss,html}": [
-      "prettier --write"
-    ]
-  },
-  "engines": {
-    "node": ">=22"
+    "@commitlint/cli": "21.0.0",
+    "@commitlint/config-conventional": "21.0.0"
   }
 }

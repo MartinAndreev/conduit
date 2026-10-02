@@ -1,28 +1,29 @@
-# Conduit agent instructions
+# Conduit Go instruction registry
 
-## Delivery protocol
+Read only the instruction files relevant to the current task, before doing the corresponding work. Follow links below; do not load every document or skill by default.
 
-This repository uses committed feature packets under `specs/` as the implementation contract. Read the active feature's `spec.md`, `plan.md`, applicable `tasks/*.md`, `test-cases.md`, and `contracts/` before changing code.
+## Always applicable
 
-Only implement the approved task group named in your assignment. Do not begin a later group, change an unapproved contract, add a provider integration, or broaden scope because it seems convenient. Record a blocker instead.
+- Ask Martin about missing material requirements or architectural decisions; do not decide them silently or treat silence as agreement.
+- Implement only approved scope. The main assistant delegates implementation and executable tests to Sol, and may investigate, review, verify, and edit documentation itself.
+- Do not commit unless requested. Preserve unrelated work and the original TypeScript repository.
 
-## Architecture rules
+## Instructions by task
 
-- Use strict TypeScript and TSX. Keep types, enums, and interfaces out of implementation files except for narrow local inference.
-- Organize code by domain. Each domain owns `commands`, `queries`, `handlers`, `repositories`, `types`, `interfaces`, `enums`, and `errors` as needed; never add a global catch-all `src/types`, `src/interfaces`, or `src/enums` module.
-- Do not leave application behavior at the `src/` root. Configuration, features, runs, roles/skills, credentials, and refinement behavior must live in their owning `src/domains/<domain>/` subdirectories. `src/system` is infrastructure only; `src/tui` is presentation only.
-- Do not define interfaces, enums, or shared value types in `commands`, `queries`, `handlers`, `repositories`, or implementation files. Command/query message contracts belong in the owning domain's `interfaces/commands` or `interfaces/queries`; repository contracts belong in `interfaces`; value types belong in `types`; enums belong in `enums`; errors belong in `errors`.
-- Views in `src/tui/components`, `src/tui/sections`, and `src/tui/screens` render state and delegate actions. They do not read files, spawn processes, access secrets, or implement business rules.
-- State-changing work goes through a command and command handler. Read models go through a query and query handler. Do not bypass the bus from a screen.
-- Core services belong in `src/system`; pure non-business helpers belong in `src/helpers/<category>`.
-- Use the shared Conduit theme tokens. Do not introduce hard-coded colors in a component.
-- Provider credentials never enter project configuration, run logs, prompts, snapshots, or committed files.
-- Use NodeNext ESM conventions: relative TypeScript imports use the emitted `.js` specifier. Do not use `.ts` runtime specifiers, `@ts-expect-error` to mask integration problems, or `any` to bypass a type boundary.
+| When | Read |
+| --- | --- |
+| Designing, implementing, or reviewing architecture/code | [Architecture](.agents/instructions/architecture.md) |
+| Planning work, agreeing scope, or delegating to agents | [Collaboration](.agents/instructions/collaboration.md) |
+| Validating changes, reviewing delivery, or handing off | [Verification](.agents/instructions/verification.md) |
 
-## Verification and handoff
+Read the active feature's relevant documents under `specs/` and explicitly referenced planning documents before assigning or changing implementation. Surface conflicts before dependent work. Existing code does not establish architectural approval; these instructions do not authorize a bulk refactor.
 
-Run the checks named by the active task group. For runtime changes, also verify `pnpm start --help`, package build, and the appropriate standalone target. Report changed files, commands run, failures, and contract risks concisely. Do not commit; the architect reviews and commits accepted groups.
+## Skills
 
-## Review correction protocol
-
-If a group fails review once, the architect's next correction request must include concrete guidance: the violated contract or rule, affected file(s), the intended design, and the exact verification command or test to satisfy. Do not send a second vague retry. If it fails review again, stop further implementation retries and let the architect take over or explicitly narrow the remaining work.
+- Personal `agent-orchestration`: use when coordinating approved implementation through agents.
+- Personal `mentoring`: use when explaining concepts or helping Martin learn. Martin is learning Go through this project; adapt explanations to that context and communicate in Bulgarian unless requested otherwise.
+- These skills are independent. Neither requires loading the other. If unavailable, do not claim to have loaded them; repository rules still apply.
+- [implementation-audit](.agents/skills/implementation-audit/SKILL.md): after feature implementation, use a fresh independent agent for advisory review of contracts, coding standards, architecture, and human readability. Highlight critical code for Martin; do not automatically fix, accept, or block the feature.
+- [feature-walkthrough](.agents/skills/feature-walkthrough/SKILL.md): for a feature handoff or requested overview, explain the whole implementation with a Mermaid diagram, reading route, hotspots, and verification limits. Use current audit findings when available; an audit is not a prerequisite.
+- [duplication-audit](.agents/skills/duplication-audit/SKILL.md): when analyzing repeated logic or scattered access to shared state/resources, identify changes requiring coordinated edits and recommend ownership/reuse boundaries. Advisory only; do not merge superficially similar code or automatically refactor.
+- Load only the skill needed for the current task. Register future project-specific skills here with their purpose and trigger; do not scan or load all skills on every task.
