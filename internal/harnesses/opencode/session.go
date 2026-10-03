@@ -3,12 +3,14 @@ package opencode
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/MartinAndreev/conduit/internal/harnesses/opencode/rules"
 	"io"
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/MartinAndreev/conduit/internal/harnesses/internal/adaptererror"
 	"github.com/MartinAndreev/conduit/internal/harnesses/internal/boundedtext"
@@ -103,9 +105,54 @@ func (s *session) StartTurn(ctx context.Context, request provider.StartTurnReque
 	if err != nil {
 		return provider.StartTurnResult{}, err
 	}
+	if err := proc.Stdin().Close(); err != nil {
+		return provider.StartTurnResult{}, s.handleStartStdinCloseFailure(request, proc, err)
+	}
 	s.emit(provider.TurnStateEvent{Previous: provider.TurnStarting, Current: provider.TurnActive})
 	go s.readRun(proc, turn)
 	return provider.StartTurnResult{Turn: turn, Assignment: request.Assignment, TargetingStrength: provider.TargetSessionLease, ResultEnforcement: s.contract.Actual, Native: provider.NativeIDs{Session: provider.Some(s.nativeSession)}}, nil
+}
+
+// handleStartStdinCloseFailure preserves the launched prompt's uncertainty and
+// cleans up only its owned CLI. Cleanup is bounded; ownership remains recorded
+// until the background reaper observes actual exit, even after cleanup failure.
+func (s *session) handleStartStdinCloseFailure(request provider.StartTurnRequest, proc processruntime.Process, cause error) error {
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		s.deliveryUnknown = true
+		if !s.closed {
+			s.state = provider.SessionLost
+		}
+		return nil
+	})
+	var drains sync.WaitGroup
+	drains.Add(2)
+	go func() { defer drains.Done(); _, _ = io.Copy(io.Discard, proc.Stdout()) }()
+	go func() { defer drains.Done(); _, _ = io.Copy(io.Discard, proc.Stderr()) }()
+	killErr := proc.KillTree()
+	done := make(chan processruntime.Result, 1)
+	go func() {
+		result := proc.Wait()
+		drains.Wait()
+		_ = lockscope.WithMutexLock(&s.mu, func() error {
+			if s.process == proc {
+				s.process = nil
+			}
+			return nil
+		})
+		done <- result
+	}()
+	if killErr != nil {
+		cause = errors.Join(cause, fmt.Errorf("terminate owned OpenCode CLI: %w", killErr), proc.Stdout().Close(), proc.Stderr().Close())
+	}
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	select {
+	case result := <-done:
+		cause = errors.Join(cause, result.Err)
+	case <-timer.C:
+		cause = errors.Join(cause, errors.New("owned OpenCode CLI cleanup timed out; reaping remains pending"), proc.Stdout().Close(), proc.Stderr().Close())
+	}
+	return adaptererror.Delivery(provider.OperationStartTurn, request.RequestID, true, cause)
 }
 
 func (s *session) RespondPermission(context.Context, provider.PermissionResponse) (provider.DeliveryReceipt, error) {
