@@ -1,0 +1,17 @@
+Use case: ui-mockup. Generate a polished Conduit TUI concept in Bulgarian. Reference is STYLE ONLY, new screen, do not change reference asset. Dark charcoal terminal, monospaced crisp Cyrillic, thin box-drawing borders, restrained purple accent and green completed checks, no desktop switches, no gradients or illustrations. Landscape 1600x1100 approximately. Single main settings screen with a bottom strip illustrating subsequent states, clearly labeled preview, not simultaneous active states.
+Header "CONDUIT / Настройки" right "Проект: Conduit". Tabs "Роли    Harness-и    [Проект]". Main title "Локална памет · Engram".
+Explain prominently: "Агентите намират предишни решения и полезен контекст," then "за да не проучват проекта отначало при всяка задача."
+Next explanatory text: "При включване Conduit изтегля и стартира Engram." and "След изтеглянето паметта работи локално, без облак."
+Status line "[x] Използвай локална памет" with amber "Подготовка…", not ready yet.
+Box "Подготовка на паметта":
+completed "✓ Проверка на системата"
+current "› Изтегляне на Engram" with progress block bar 64% and caption "Изтегля се компонентът, не данните на проекта."
+pending "· Проверка на изтегления файл"
+pending "· Стартиране на локалната памет"
+pending "· Проверка на готовността"
+Data label "Данни: .conduit/memory/engram/"
+note "Проектните данни остават на тази машина."
+Action focused purple "[ Откажи подготовката ]".
+Bottom compact two sequential preview boxes under heading "След изтеглянето": first "Стартиране…" with spinner and text "Engram се стартира локално." second "✓ Паметта е готова" text "Агентите могат да използват контекста." Small connecting arrow. Both clearly separate from main active download.
+Footer "Esc Назад    Tab Следващо поле" and tiny "Концептуален екран • примерен прогрес".
+Clear readable text, generous spacing, no code/log dumps, no fake version or download size.
