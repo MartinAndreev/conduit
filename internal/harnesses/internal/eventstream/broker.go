@@ -7,7 +7,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/MartinAndreev/conduit/internal/harnesses/internal/lockscope"
+	"github.com/MartinAndreev/conduit/internal/lockscope"
 	"github.com/MartinAndreev/conduit/internal/sessions/provider"
 )
 

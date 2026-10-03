@@ -63,3 +63,7 @@
 - [Етап B — TUI и GUI](tasks/02-presentation.md)
 - Изходни изисквания: [startup](../004-project-navigation/contracts/startup-configuration.md), [памет](../004-project-navigation/contracts/project-memory.md).
 - Макети: [TUI](../004-project-navigation/screens/00-startup-configuration.png), [GUI v2](../004-project-navigation/screens/gui/01-startup-welcome-v2.png), [визуален ориентир](../004-project-navigation/screens/gui/visual-reference.png).
+
+## Допълнително одобрен Windows обхват — 2026-10-03
+
+Потребителят изрично одобри ограничено разширение в съществуващия `internal/process` owner: Windows Job Object с kill-on-close, процесът се стартира suspended, присъединява се към job преди ResumeThread. Невъзможност за гарантирано ownership (включително nested-job ограничения) отказва launch и чисти suspended процеса/handles. Няма launch-to-assignment прозорец за escaping descendants. Startup detector използва общия process lifecycle; не заменяме Windows probes с отказ от откриване. Windows cross-compile не доказва runtime; реалният Windows тест остава отделна проверка.

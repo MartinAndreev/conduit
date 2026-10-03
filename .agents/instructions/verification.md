@@ -11,3 +11,13 @@
 ## TUI visual changes
 
 For implemented or modified TUI screens, use the registered `tui-visual-audit` skill with the relevant screen reference and an actual application capture before handoff. Record missing runnable UI/capture or an unapproved baseline as a verification limitation. A generated mockup alone is design evidence, not a passed visual check. This adds visual evidence to the existing review flow without authorizing live harness calls or automatic fixes.
+
+## Review corrections: required evidence
+
+- Read the actual entry procedures and explain their main success and consequential failure paths. Check that low-level I/O and public result mapping have clear owners. Passing tests, shorter functions, and fewer `if` statements do not establish readability.
+- Search changed packages for raw `.Lock()`/`.Unlock()` pairs, local `withLock` implementations, and old shared-helper imports. Confirm that ordinary synchronous scopes use `internal/lockscope`, including new buffers, mailboxes, and process owners. Inspect critical-section boundaries after reuse; do not accept a wrapper that changes which facts and mutations are atomic.
+- When supported variants change or are reorganized, inspect ID lists, hard-coded counts, condition chains, and parser dispatch together. Verify descriptor/schema coverage and unknown-ID rejection without silently broadening the schema.
+- For file-query corrections, exercise observable distinctions: initially absent, unreadable, non-regular/symlink, open failure after lookup, original Stat error, identity mismatch, bounded-size rejection, parsing/future schema, and cancellation. Assert preserved causes as well as result kind.
+- For publication refactors, verify write/sync/close failures remove only the operation's own temporary file and leave no partial target. Retain the distinction between pre-publication failure and `Published` with a later sync error, including simultaneous cancellation.
+- For process lifecycle corrections, test cancellation during lookup, successful and failed root exit with descendants, kill failure with delayed reap, slow or failing pipe closure, bounded caller return, repeated cleanup requests, concurrent observer reads, and eventual completion after the caller timed out. Fixtures must release their blocked processes/readers and verify their own cleanup.
+- Compare the final code with the reviewed snapshot and state any residual limits. Cross-compilation is not native execution; green focused tests do not substitute for the required integrated suite or for architectural review.

@@ -15,10 +15,11 @@ type Spec struct {
 
 // Result is the observed result of reaping an owned process.
 type Result struct {
-	ExitCode int
-	Signal   string
-	Err      error
-	ExitedAt time.Time
+	ReleaseErr error
+	ExitCode   int
+	Signal     string
+	Err        error
+	ExitedAt   time.Time
 }
 
 // Launcher starts owned processes without binding their lifetime to a request

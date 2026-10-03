@@ -12,7 +12,7 @@ import (
 
 	"github.com/MartinAndreev/conduit/internal/harnesses/internal/adaptererror"
 	"github.com/MartinAndreev/conduit/internal/harnesses/internal/eventstream"
-	"github.com/MartinAndreev/conduit/internal/harnesses/internal/lockscope"
+	"github.com/MartinAndreev/conduit/internal/lockscope"
 	processruntime "github.com/MartinAndreev/conduit/internal/process"
 	"github.com/MartinAndreev/conduit/internal/sessions/provider"
 )

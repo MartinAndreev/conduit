@@ -9,7 +9,7 @@ import (
 
 	"github.com/MartinAndreev/conduit/internal/harnesses/internal/adaptererror"
 	"github.com/MartinAndreev/conduit/internal/harnesses/internal/boundedtext"
-	"github.com/MartinAndreev/conduit/internal/harnesses/internal/lockscope"
+	"github.com/MartinAndreev/conduit/internal/lockscope"
 	"github.com/MartinAndreev/conduit/internal/sessions/provider"
 )
 

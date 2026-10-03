@@ -1,4 +1,4 @@
-// Package lockscope owns the synchronous mutex scope used by harness adapters.
+// Package lockscope owns the synchronous mutex scope used by infrastructure and adapters.
 package lockscope
 
 import "sync"

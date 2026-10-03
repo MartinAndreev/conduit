@@ -22,6 +22,12 @@
 | S16 | Help/version на CLI | Без директории, config writes, discovery или inference |
 | S18 | Home path и project cwd | Конфиг само в `<user-home>/.conduit/config.yaml`; смяна на cwd не променя целта; неразрешим home дава грешка без fallback |
 | S17 | Symlink/unsupported filesystem | Няма неявно писане в чужда цел или unsafe fallback |
+| S19 | Cancel по време на lookup/неуспешен launch | Няма launch след наблюдаван cancel; cancellation и техническата причина остават различими |
+| S20 | Root exit с descendants и пренасочени потоци | Cleanup се изпълнява и при успешен/неуспешен root exit |
+| S21 | Kill failure и неприключващ Wait/reader | Caller връща в cleanup срока; няма ready/publish; outcome запазва observer и техническата причина |
+| S22 | Повторен cleanup и конкурентно наблюдение | Един owner/worker; копирани snapshots; eventual reap след caller timeout се наблюдава без загуба на ownership |
+| S23 | Stat failure, сменен файл и файл, изчезнал след Lstat | Запазена оригинална Stat причина; identity mismatch е отделен; късен ENOENT не става първоначално absent |
+| S24 | Shared lock и probe descriptors | Error/panic се запазват, mutex се освобождава; schema IDs и probe описанията са съгласувани без implicit нов harness |
 
 Deterministic fake ports тестват реда и отказите. Реални file adapters се проверяват в temp directories, probes с test helper executable; CI няма нужда от инсталирани Codex/OpenCode или акаунти. Тестовете не стартират истински агенти.
 

@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func (ExecLauncher) Start(spec Spec) (Process, error) {
+func (ExecLauncher) Start(spec Spec) (started Process, err error) {
 	if spec.Path == "" {
 		return nil, errors.New("process executable path is empty")
 	}
@@ -18,7 +18,16 @@ func (ExecLauncher) Start(spec Spec) (Process, error) {
 	if spec.Env != nil {
 		cmd.Env = append(os.Environ(), spec.Env...)
 	}
-	configureOwnedProcess(cmd)
+	owned, err := prepareOwnedProcess(cmd)
+	if err != nil {
+		return nil, err
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			err = errors.Join(err, owned.close())
+		}
+	}()
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -40,7 +49,17 @@ func (ExecLauncher) Start(spec Spec) (Process, error) {
 		_ = stderr.Close()
 		return nil, err
 	}
+	if err := owned.activate(cmd.Process.Pid); err != nil {
+		_ = cmd.Process.Kill()
+		_ = stdin.Close()
+		_ = stdout.Close()
+		_ = stderr.Close()
+		_ = cmd.Wait()
+		return nil, err
+	}
+	transferred = true
 	return &execProcess{
+		owned:  owned,
 		cmd:    cmd,
 		stdin:  stdin,
 		stdout: newTrackedReadCloser(stdout),
@@ -50,6 +69,7 @@ func (ExecLauncher) Start(spec Spec) (Process, error) {
 
 type execProcess struct {
 	cmd    *exec.Cmd
+	owned  *ownedResources
 	stdin  io.WriteCloser
 	stdout *trackedReadCloser
 	stderr *trackedReadCloser
@@ -60,8 +80,10 @@ type execProcess struct {
 
 type trackedReadCloser struct {
 	io.ReadCloser
-	done chan struct{}
-	once sync.Once
+	done      chan struct{}
+	once      sync.Once
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func newTrackedReadCloser(reader io.ReadCloser) *trackedReadCloser {
@@ -77,9 +99,8 @@ func (r *trackedReadCloser) Read(buffer []byte) (int, error) {
 }
 
 func (r *trackedReadCloser) Close() error {
-	err := r.ReadCloser.Close()
-	r.once.Do(func() { close(r.done) })
-	return err
+	r.closeOnce.Do(func() { r.closeErr = r.ReadCloser.Close(); r.once.Do(func() { close(r.done) }) })
+	return r.closeErr
 }
 
 func (p *execProcess) PID() int                { return p.cmd.Process.Pid }
@@ -87,7 +108,7 @@ func (p *execProcess) Stdin() io.WriteCloser   { return p.stdin }
 func (p *execProcess) Stdout() io.ReadCloser   { return p.stdout }
 func (p *execProcess) Stderr() io.ReadCloser   { return p.stderr }
 func (p *execProcess) Interrupt() error        { return interruptOwnedProcess(p.cmd.Process.Pid) }
-func (p *execProcess) KillTree() error         { return killOwnedProcessTree(p.cmd.Process.Pid) }
+func (p *execProcess) KillTree() error         { return p.owned.kill(p.cmd.Process.Pid) }
 func (p *execProcess) TreeKillSupported() bool { return ownedTreeKillSupported() }
 
 func (p *execProcess) Wait() Result {
@@ -98,7 +119,8 @@ func (p *execProcess) Wait() Result {
 		<-p.stdout.done
 		<-p.stderr.done
 		err := p.cmd.Wait()
-		result := Result{ExitCode: -1, Err: err, ExitedAt: time.Now()}
+		releaseErr := p.owned.close()
+		result := Result{ExitCode: -1, Err: err, ReleaseErr: releaseErr, ExitedAt: time.Now()}
 		if state := p.cmd.ProcessState; state != nil {
 			result.ExitCode = state.ExitCode()
 			result.Signal = processSignal(state)

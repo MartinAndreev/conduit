@@ -9,7 +9,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/MartinAndreev/conduit/internal/harnesses/internal/lockscope"
+	"github.com/MartinAndreev/conduit/internal/lockscope"
 	processruntime "github.com/MartinAndreev/conduit/internal/process"
 )
 

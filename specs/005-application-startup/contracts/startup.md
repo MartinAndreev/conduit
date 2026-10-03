@@ -54,3 +54,13 @@ Already-exists е отделен outcome: прочитаме и валидира
 ## Retry и application lifetime
 
 Няма автоматичен retry. Explicit Retry стартира нова операция и reread-ва диска. Една UI инстанция не стартира втори Initialize паралелно; cross-process безопасността остава в file adapter-а. Закриване на приложението cancel-ва неговата процедура и изчаква bounded cleanup. Не въвеждаме глобален mutex за целия lifecycle на Conduit.
+
+### Одобрена корекция на lifecycle и четимостта — 2026-10-03
+
+- Един cleanup owner в `internal/process` притежава всеки startup probe. Повторно започване на cleanup през същия owner не стартира втори worker. Отделен срок ограничава чакането на caller-а; изтичането му не изоставя отговорността за процеса и eventual reap.
+- Startup различава root reap, опит/резултат от прекратяване на дървото и освобождаване на ресурсите. Root exit или успешно изпратен сигнал не доказват моментална липса на descendants. При отказ от ОС няма обещание за гарантирано прекратяване.
+- Непотвърден cleanup прекратява следващите startup ефекти: `blocked`, или `cancelled` при потребителски отказ, със специфична безопасна диагностика и запазена техническа причина. Крайният outcome предоставя application-owned observer за оставащия cleanup; той се запазва от application lifetime owner. Наблюдаемостта и worker-ът са в рамките на живото приложение, без detached service, глобален registry или автоматични retries.
+- Metadata лимитът остава 3 секунди; cleanup има отделен 250 ms срок за изчакване. Нито чакането на reap, нито чакането на capture readers може да превърне този срок в неограничено блокиране на caller-а. Окончателният exit UX при непотвърден cleanup принадлежи на бъдещия presentation/lifetime етап и не се симулира тук.
+- Общата lock механика се премества в `internal/lockscope`, достъпен за всички вътрешни модули. Съществуващите harness callers сменят само import-а; startup/process callers използват същия wrapper и запазват критичните си секции.
+- `Files.Read` показва файлов query, decode и превод към application резултат. `Discover` показва избор на probe описание, executable lookup, execution/cleanup и класификация. Техническият протокол и failure paths са именувани под-процедури; не се въвежда общ workflow engine.
+- Configuration остава собственик на допустимите schema IDs; startup infrastructure притежава executable/args/parser описанията. Премахването на повторени ID проверки не разширява schema v1 и не разрешава нов harness.

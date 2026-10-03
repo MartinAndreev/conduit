@@ -44,7 +44,7 @@
 ### Wrapper
 
 - A wrapper decorates execution, for example `withLock`, `withTransaction`, or `withRetry`. It must not hide business decisions or become an alternate procedure.
-- Reuse an established wrapper for repeated lock/callback/unlock mechanics within its owning technical boundary. A mutex wrapper requires a synchronous callback, acquires the lock, and defers its release so early returns and panics release it; it must not swallow a panic or add retry/recovery behavior.
+- Use the shared `internal/lockscope.WithMutexLock` for synchronous mutex scopes in new or changed code. Do not add another local Lock/defer Unlock implementation or a domain-private copy. The shared wrapper acquires the lock, invokes the callback synchronously, and defers release; errors and panics pass through unchanged. Call the shared wrapper directly. Do not add local forwarding-only helpers such as `Progress.withLock` that merely capture a mutex or adapt a void callback to an error callback. A named state transition may use the wrapper internally, but its purpose must be the transition, not forwarding. Non-callback synchronization protocols need an explicit, documented reason; do not change their atomicity merely to use the wrapper.
 - Keep callbacks short and state-focused. Related fact reads, validation, and mutation/reservation stay within one critical section. Do not split them into separately locked helpers, nest acquisition of the same mutex, or perform harness I/O/event publication under the session mutex.
 - Keep domain-specific state transitions in named steps/subprocedures; the wrapper owns only synchronization. Do not invent optional callbacks or generic workflow abstractions without an actual use case. Existing unrelated flows are migrated only within an approved task scope.
 - Specify wrapper ordering and scope where they change behavior. Retrying an entire procedure can repeat external effects; do not apply retries without an agreed delivery/idempotency policy.
@@ -55,3 +55,29 @@
 - A skeleton is a shared procedure shape extracted from demonstrated common flow in concrete procedures, with explicit variation points.
 - Introduce it only after the common ordering and guarantees are understood. Prefer composition; do not introduce inheritance emulation or a general workflow engine merely to support this pattern.
 - Preserve one owner for the shared flow and keep procedure-specific business decisions visible.
+
+## Readable procedures and error boundaries
+
+- The entry procedure must expose the operation's phases and the points where effects can occur. Keep filesystem protocols, process/pipe mechanics, parsing, and public outcome mapping in focused owners. For startup, `Files.Read` shows file query -> decode -> result, and `Discover` shows descriptor lookup -> executable query -> execution/cleanup -> decision -> observation.
+- Extract a helper when it owns a coherent read, effect, policy, or multi-action failure path. Do not extract each `if` or introduce callback pipelines, generic workflow engines, `Must` helpers, or panic/recover to hide ordinary error returns. A line-count or branch-count reduction alone is not a design improvement.
+- Low-level queries return facts and technical causes; the adapter/application boundary translates them into its public result. Avoid repeating public response construction at every low-level operation. Keep expected outcomes such as absence separate from technical failure.
+- Preserve original causes through wrapping or joining so `errors.Is` and `errors.As` remain useful. Do not combine different failures under a misleading message: `Stat` failure is distinct from a successful `Stat` that proves file identity changed. A file disappearing after an initial successful lookup is not automatically the same as an initially absent file.
+- Recheck cancellation before starting a subsequent effect after a potentially blocking read. Preserve partial completion and cleanup errors alongside cancellation. These checks do not claim atomic cancellation of an OS call already in flight.
+- For file publication, separate preparation of a completely written, synced, closed temporary file from atomic create-if-absent publication and post-publication durability checks. Keep each necessary error check with its I/O owner; remove redundant operations only after verifying the standard-library/platform guarantee. Do not obscure write/sync/close failures with a generic action loop.
+- Format callbacks that update several state facts over multiple lines so the state transition can be read directly; avoid packing transitions into semicolon-separated statements.
+- Error-handling refactors must preserve failure precedence, resource ownership, and cleanup. Repeated syntax is acceptable where the operations and causes are genuinely different; consolidate repeated policy and mapping rather than suppressing checks.
+
+## One owner for supported variants
+
+- Keep supported IDs and schema membership in their domain owner. Derive counts from that definition; do not repeat supported-ID boolean chains or hard-coded counts in consumers.
+- Keep technical variation such as executable names, argument arrays, and version parsers in adapter-owned descriptors selected by ID. The common procedure must not grow a provider-specific branch for each descriptor. Use a coverage check to keep the descriptor set consistent with the supported schema IDs.
+- Prefer standard helpers such as `slices.Contains` for simple slice membership, followed by a direct map lookup when selecting a descriptor. Keep explicit loops when they own ordering, effects, or richer matching; do not replace them mechanically.
+- A descriptor refactor does not authorize a new provider, broaden a versioned schema, or move process-specific configuration into the domain. Schema compatibility and adapter implementation remain separate responsibilities.
+
+## Bounded process cleanup
+
+- A timeout must bound the caller's whole wait, including pipe readers and reap. Do not follow a deadline with an unconditional wait on a channel, WaitGroup, or process in the caller's path.
+- When cleanup may outlive the caller, retain one explicit per-process cleanup owner and expose its current state and eventual completion through an observer. Repeated cleanup requests on that owner must not create duplicate workers. Do not replace a blocking call with an unobservable abandoned goroutine.
+- Distinguish root reap, tree termination attempt/result, pipe closure, and native resource release. Root exit or successful signal delivery does not prove immediate descendant quiescence. Preserve uncertainty and original failures when the OS refuses cleanup.
+- Cancellation stops future application effects; it neither rolls back a published file nor proves process termination. Unconfirmed probe cleanup must not become ordinary metadata warning/ready. Keep the pending observer reachable from the application outcome while the application is alive.
+- Technical owners perform cleanup outside state mutexes and publish copied state through the shared lock wrapper. Do not introduce a global supervisor, automatic retry, or detached lifetime without an approved contract.
