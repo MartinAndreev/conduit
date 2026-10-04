@@ -1,0 +1,38 @@
+package views
+
+import (
+ "github.com/axadrn/shadcn-templ/v2/components/button"
+ "github.com/axadrn/shadcn-templ/v2/components/progress"
+)
+
+templ Layout(catalog map[string]string, language string) {
+ <!DOCTYPE html>
+ <html lang={ language } class="dark">
+ <head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Conduit</title><link rel="stylesheet" href="/assets/style.css"/></head>
+ <body>
+ <aside><div class="brand"><svg viewBox="0 0 40 40" aria-hidden="true"><path d="M20 3L38 35H27L20 22L13 35H2Z" fill="currentColor"/></svg><strong>Conduit</strong></div><div class="projects" data-copy="nav.projects"></div><p data-copy="nav.empty"></p><button class="settings" disabled data-copy="nav.settings"></button></aside>
+ <main>
+ <p id="transport-error" class="diagnostic" role="alert" hidden></p>
+ <div class="breadcrumb">Conduit / <span id="location" data-copy="startup.title"></span></div>
+ <section id="startup" aria-labelledby="heading"><h1 id="heading" data-copy="startup.title"></h1><p class="subtitle" data-copy="startup.subtitle"></p><ol id="steps"></ol>
+ <div id="readiness" class="details"></div>
+ @progress.Progress(progress.Props{ID:"progress", Value:0,Max:4})
+ <p id="count" class="details"></p>
+ <div id="diagnostics" aria-live="polite"></div><p id="config" class="details"></p>
+ <p id="cleanup" role="status" hidden></p>
+ <div class="actions">
+ @button.Button(button.Props{ID:"cancel",Class:"secondary"}) { <span data-copy="action.cancel"></span> }
+ @button.Button(button.Props{ID:"retry"}) { <span data-copy="action.retry"></span> }
+ @button.Button(button.Props{ID:"wait",Class:"secondary"}) { <span data-copy="action.wait"></span> }
+ @button.Button(button.Props{ID:"exit",Class:"secondary"}) { <span data-copy="action.exit"></span> }
+ @button.Button(button.Props{ID:"exit-now",Class:"secondary"}) { <span data-copy="action.exit_now"></span> }
+ </div></section>
+ <section id="welcome" hidden><h1 data-copy="welcome.title"></h1><p class="subtitle" data-copy="welcome.subtitle"></p><div id="welcome-diagnostics" aria-live="polite"></div><div class="actions">
+ @button.Button(button.Props{Disabled:true}) { <span data-copy="action.add_project"></span> }
+ @button.Button(button.Props{Disabled:true,Class:"secondary"}) { <span data-copy="action.open_project"></span> }
+ </div><p class="details" data-copy="unavailable.project"></p></section>
+ </main>
+ @templ.JSONScript("translations",catalog)
+ <script src="/assets/progress.js"></script><script src="/assets/bridge.js"></script>
+ </body></html>
+}

@@ -1,0 +1,204 @@
+:root {
+  --background:#151920;
+  --sidebar:#181d25;
+  --foreground:#f1f2f5;
+  --muted:#9ba9bd;
+  --accent:#8b52f5;
+  --border:#303b4a;
+  --danger:#ec9696;
+  color-scheme:dark
+}
+* {
+  box-sizing:border-box
+}
+body {
+  margin:0;
+  display:flex;
+  min-height:100vh;
+  background:var(--background);
+  color:var(--foreground);
+  font:16px/1.55 system-ui,-apple-system,sans-serif
+}
+aside {
+  width:245px;
+  flex-shrink:0;
+  background:var(--sidebar);
+  padding:32px 25px;
+  border-right:1px solid var(--border);
+  display:flex;
+  flex-direction:column;
+  min-height:100vh
+}
+.brand {
+  display:flex;
+  align-items:center;
+  gap:14px;
+  font-size:25px
+}
+.brand svg {
+  width:35px;
+  color:var(--accent)
+}
+.projects {
+  margin-top:38px;
+  color:var(--muted)
+}
+aside p {
+  color:var(--muted);
+  font-size:14px
+}
+.settings {
+  margin-top:auto;
+  text-align:left;
+  background:none!important;
+  color:var(--muted)!important;
+  border:0!important;
+  padding:0!important
+}
+main {
+  flex:1;
+  min-width:0;
+  padding:30px 42px
+}
+.breadcrumb {
+  color:var(--muted);
+  margin-bottom:65px;
+  font-size:14px
+}
+h1 {
+  font-size:36px;
+  line-height:1.25;
+  letter-spacing:-.6px;
+  margin:0 0 14px;
+  font-weight:650
+}
+.subtitle {
+  color:var(--muted);
+  margin:0 0 36px;
+  font-size:17px;
+  max-width:850px
+}
+ol {
+  list-style:none;
+  padding:0;
+  margin:0 0 28px
+}
+li {
+  display:flex;
+  align-items:flex-start;
+  gap:16px;
+  margin:20px 0
+}
+.mark {
+  width:23px;
+  height:23px;
+  line-height:21px;
+  text-align:center;
+  border-radius:50%;
+  border:2px solid var(--border);
+  flex-shrink:0
+}
+.completed .mark,.skipped .mark {
+  border-color:var(--accent);
+  background:var(--accent);
+  color:var(--background)
+}
+.running .mark {
+  border-color:var(--accent);
+  border-right-color:var(--border);
+  animation:spin 1s linear infinite
+}
+.failed .mark {
+  border-color:var(--danger);
+  color:var(--danger)
+}
+.pending {
+  color:var(--muted)
+}
+@keyframes spin {
+  to {
+  transform:rotate(360deg)
+}
+
+}
+.details {
+  color:var(--muted);
+  font-size:14px;
+  overflow-wrap:anywhere
+}
+.actions {
+  display:flex;
+  flex-wrap:wrap;
+  gap:12px;
+  margin-top:24px
+}
+button {
+  font:inherit;
+  border:1px solid transparent;
+  background:var(--accent);
+  color:white;
+  padding:10px 20px;
+  border-radius:6px;
+  cursor:pointer
+}
+.secondary {
+  background:transparent;
+  border-color:var(--border);
+  color:var(--foreground)
+}
+button:focus-visible {
+  outline:2px solid var(--accent);
+  outline-offset:4px
+}
+button:disabled {
+  opacity:.45;
+  cursor:not-allowed
+}
+.diagnostic {
+  margin-top:14px;
+  color:var(--danger);
+  overflow-wrap:anywhere
+}
+[hidden] {
+  display:none!important
+}
+[data-slot=progress] {
+  display:block;
+  max-width:780px;
+  margin-top:25px
+}
+[data-slot=progress-track] {
+  height:4px;
+  background:var(--border);
+  overflow:hidden
+}
+[data-slot=progress-indicator] {
+  height:100%;
+  background:var(--accent);
+  transition:width .15s
+}
+@media(max-width:850px) {
+  aside {
+  width:180px;
+  padding:24px 18px
+}
+main {
+  padding:26px
+}
+h1 {
+  font-size:29px
+}
+.breadcrumb {
+  margin-bottom:40px
+}
+
+}
+@media(prefers-reduced-motion:reduce) {
+  .running .mark {
+  animation:none
+}
+[data-slot=progress-indicator] {
+  transition:none
+}
+
+}

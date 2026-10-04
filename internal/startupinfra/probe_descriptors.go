@@ -28,7 +28,9 @@ var probeDescriptors = map[configuration.HarnessID]probeDescriptor{
 	configuration.Codex: {"codex", []string{"--version"}, func(output string) string {
 		return parseVersionValue(strings.TrimPrefix(strings.TrimSpace(output), "codex-cli "))
 	}},
-	configuration.OpenCode: {"opencode", []string{"--version"}, func(output string) string { return parseVersionValue(strings.TrimSpace(output)) }},
+	configuration.OpenCode: {"opencode", []string{"--version"}, func(output string) string {
+		return parseVersionValue(strings.TrimPrefix(strings.TrimSpace(output), "opencode v"))
+	}},
 }
 
 func probeDescriptorFor(h configuration.HarnessID) (probeDescriptor, bool) {

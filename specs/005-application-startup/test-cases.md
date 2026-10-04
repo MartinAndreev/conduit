@@ -38,3 +38,17 @@ Deterministic fake ports тестват реда и отказите. Реалн
 ## Presentation след A
 
 Еднакви fixtures за first run, existing config, no harness, blocked, cancelled, retry и slow probe. Проверки за keyboard navigation/focus, resize, видима причина, съвпадащ status и никакви UI-owned writes. Real TUI/GUI captures за startup/welcome; реалният GUI asset build работи без CDN. GUI application bridge не се счита доказан от browser screenshot.
+
+| ID | Сценарий | Очакване |
+| --- | --- | --- |
+| P01 | Plain `conduit`, help и version | Plain командата отваря TUI; help/version не извикват startup |
+| P02 | Бавен startup, cancel и terminal outcome | UI остава отзивчив; cancel не симулира завършен cleanup; terminal outcome не зависи от progress delivery |
+| P03 | Двоен Retry и късно съобщение от предишен run | Една активна операция; нов context/operation; старите snapshots не заменят новите |
+| P04 | Неприключил cleanup, Exit и Wait | Retry е недостъпен; bounded wait; явно „Излез сега“; observer се пази докато UI работи |
+| P05 | Ready, предупреждения, blocked и cancelled | Правилен екран, преведени diagnostics по code, безопасен fallback за неизвестен code |
+| P06 | 120×40, 80×24 и resize | Четими стъпки/действия, достъпни дълги подробности, еднозначен keyboard focus |
+| P07 | Welcome действия извън scope | Добавяне/отваряне на проект и настройки са видимо недостъпни, без fake success |
+| P08 | GUI без външни assets | Точен templUI beta.10; локални CSS/JS; native render, Start/Cancel/Retry и progress проверени през Wails bridge |
+| P09 | GUI reload или пропуснат progress event | Snapshot възстановява актуалното състояние; няма втора startup операция |
+| P10 | Standalone build | CLI/TUI build и default Go tests не изискват native GUI toolchain |
+| P11 | Езици и fallback | Default английски, `--lang bg` български; общ каталог, еднакви ключове, английски fallback и независими копия за GUI |
