@@ -52,10 +52,15 @@ func (b *Broker) Publish(event provider.ProviderEvent) error {
 		case b.events <- event:
 			return nil
 		default:
+			overflow := &provider.ProviderError{
+				Code: provider.ErrorBackpressureExceeded, Operation: provider.OperationReceiveEvent,
+				Retry: provider.RetryNever, RemoteEffect: provider.RemoteEffectUnknown,
+				Detail: "event consumer fell behind the bounded buffer", Cause: ErrBufferOverflow,
+			}
 			b.closed = true
-			b.terminal = ErrBufferOverflow
+			b.terminal = overflow
 			close(b.events)
-			return ErrBufferOverflow
+			return overflow
 		}
 	})
 }

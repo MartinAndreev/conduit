@@ -83,6 +83,7 @@ func (a *Adapter) OpenSession(ctx context.Context, request provider.OpenSessionR
 		warnedNative: make(map[string]struct{}),
 	}
 	s.rpc = newRPCClient(proc)
+	s.rpc.onClosed = s.handleTransportClosed
 	s.rpc.start(s.handleNotification, s.handleServerRequest)
 	go s.observeProcessExit()
 	s.emit(provider.SessionStateEvent{Previous: provider.SessionStateUnknown, Current: provider.SessionOpening})

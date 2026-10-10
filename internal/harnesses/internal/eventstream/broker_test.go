@@ -45,8 +45,13 @@ func TestBrokerOverflowIsExplicitAfterBufferedEvents(t *testing.T) {
 	if _, err := stream.Receive(context.Background()); err != nil {
 		t.Fatalf("buffered Receive: %v", err)
 	}
-	if _, err := stream.Receive(context.Background()); !errors.Is(err, ErrBufferOverflow) {
+	_, err := stream.Receive(context.Background())
+	if !errors.Is(err, ErrBufferOverflow) {
 		t.Fatalf("terminal Receive error = %v", err)
+	}
+	var providerErr *provider.ProviderError
+	if !errors.As(err, &providerErr) || providerErr.Code != provider.ErrorBackpressureExceeded || providerErr.Operation != provider.OperationReceiveEvent {
+		t.Fatalf("overflow is not a typed backpressure error: %#v", err)
 	}
 }
 

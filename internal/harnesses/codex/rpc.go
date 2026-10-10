@@ -22,6 +22,10 @@ type pendingRequest struct {
 	response  chan rpcResponse
 	abandoned bool
 	late      func(rpcResponse)
+	// commit runs synchronously on the reader goroutine before the reply is
+	// handed to a waiter or late callback, so state derived from the reply is
+	// visible to every notification that follows it on the wire.
+	commit func(rpcResponse)
 }
 
 type writeJob struct {
@@ -57,9 +61,13 @@ type rpcClient struct {
 	closed   bool
 	closeErr error
 	writes   chan writeJob
+	done     chan struct{}
 
 	onNotification func(string, json.RawMessage)
 	onRequest      func(json.RawMessage, string, json.RawMessage)
+	// onClosed is called once, outside rpc locks, when the transport stops
+	// (reader EOF/error or a failed write). Set it before start.
+	onClosed func(error)
 }
 
 func newRPCClient(proc processruntime.Process) *rpcClient {
@@ -69,6 +77,7 @@ func newRPCClient(proc processruntime.Process) *rpcClient {
 		nextID:  1,
 		pending: make(map[uint64]*pendingRequest),
 		writes:  make(chan writeJob, 64),
+		done:    make(chan struct{}),
 	}
 }
 
@@ -80,8 +89,14 @@ func (c *rpcClient) start(onNotification func(string, json.RawMessage), onReques
 	go io.Copy(io.Discard, c.process.Stderr())
 }
 
-// call returns sent=true once the complete request has been flushed to stdin.
-func (c *rpcClient) call(ctx context.Context, method string, params any, late func(rpcResponse)) (result json.RawMessage, sent bool, err error) {
+// call returns sent=true once the request has been queued to the owned writer.
+func (c *rpcClient) call(ctx context.Context, method string, params any, late func(rpcResponse)) (json.RawMessage, bool, error) {
+	return c.callCommitting(ctx, method, params, nil, late)
+}
+
+// callCommitting is call with a commit hook that observes the native reply on
+// the reader goroutine before any later message is processed.
+func (c *rpcClient) callCommitting(ctx context.Context, method string, params any, commit, late func(rpcResponse)) (result json.RawMessage, sent bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
@@ -97,7 +112,7 @@ func (c *rpcClient) call(ctx context.Context, method string, params any, late fu
 		id = c.nextID
 		c.nextID++
 		response = make(chan rpcResponse, 1)
-		c.pending[id] = &pendingRequest{response: response}
+		c.pending[id] = &pendingRequest{response: response, commit: commit}
 		return nil
 	})
 	if err != nil {
@@ -121,20 +136,21 @@ func (c *rpcClient) call(ctx context.Context, method string, params any, late fu
 	case <-ctx.Done():
 		c.removePending(id)
 		return nil, false, ctx.Err()
+	case <-c.done:
+		c.removePending(id)
+		return nil, false, c.terminalErr()
 	case c.writes <- job:
 		// Once queued to the owned writer, dispatch may happen after this caller
 		// stops waiting. Conservatively report possibly sent.
 		sent = true
 	}
-	select {
-	case err := <-job.result:
-		if err != nil {
+	if err := c.awaitWrite(ctx, job); err != nil {
+		if errors.Is(err, ctx.Err()) {
+			c.abandon(id, response, late)
+		} else {
 			c.removePending(id)
-			return nil, true, err
 		}
-	case <-ctx.Done():
-		c.abandon(id, response, late)
-		return nil, true, ctx.Err()
+		return nil, true, err
 	}
 
 	select {
@@ -181,26 +197,56 @@ func (c *rpcClient) dispatch(ctx context.Context, payload []byte) (bool, error) 
 	select {
 	case <-ctx.Done():
 		return false, ctx.Err()
+	case <-c.done:
+		return false, c.terminalErr()
 	case c.writes <- job:
 	}
+	return true, c.awaitWrite(ctx, job)
+}
+
+// awaitWrite waits for the writer's outcome. A job still queued when the
+// transport stops is never written and reports the terminal transport error,
+// so no caller waits on a writer that has exited.
+func (c *rpcClient) awaitWrite(ctx context.Context, job writeJob) error {
 	select {
 	case err := <-job.result:
-		return true, err
+		return err
 	case <-ctx.Done():
-		return true, ctx.Err()
+		return ctx.Err()
+	case <-c.done:
+		select {
+		case err := <-job.result:
+			return err
+		default:
+			return c.terminalErr()
+		}
 	}
 }
 
+func (c *rpcClient) terminalErr() error {
+	var err error
+	_ = lockscope.WithMutexLock(&c.mu, func() error { err = c.closeErr; return nil })
+	if err == nil {
+		return io.EOF
+	}
+	return err
+}
+
 func (c *rpcClient) writeLoop() {
-	for job := range c.writes {
-		_, err := c.writer.Write(job.payload)
-		if err == nil {
-			err = c.writer.Flush()
-		}
-		job.result <- err
-		if err != nil {
-			c.finish(err)
+	for {
+		select {
+		case <-c.done:
 			return
+		case job := <-c.writes:
+			_, err := c.writer.Write(job.payload)
+			if err == nil {
+				err = c.writer.Flush()
+			}
+			job.result <- err
+			if err != nil {
+				c.finish(err)
+				return
+			}
 		}
 	}
 }
@@ -281,6 +327,9 @@ func (c *rpcClient) deliverResponse(id uint64, envelope rpcEnvelope) {
 	if envelope.Error != nil {
 		reply = rpcResponse{err: envelope.Error}
 	}
+	if pending.commit != nil {
+		pending.commit(reply)
+	}
 	if pending.abandoned {
 		if pending.late != nil {
 			pending.late(reply)
@@ -292,6 +341,7 @@ func (c *rpcClient) deliverResponse(id uint64, envelope rpcEnvelope) {
 
 func (c *rpcClient) finish(err error) {
 	var pending map[uint64]*pendingRequest
+	var first bool
 	_ = lockscope.WithMutexLock(&c.mu, func() error {
 		if c.closed {
 			return nil
@@ -300,8 +350,13 @@ func (c *rpcClient) finish(err error) {
 		c.closeErr = err
 		pending = c.pending
 		c.pending = make(map[uint64]*pendingRequest)
+		close(c.done)
+		first = true
 		return nil
 	})
+	if !first {
+		return
+	}
 	for _, request := range pending {
 		reply := rpcResponse{err: err}
 		if request.abandoned {
@@ -311,6 +366,9 @@ func (c *rpcClient) finish(err error) {
 			continue
 		}
 		request.response <- reply
+	}
+	if c.onClosed != nil {
+		c.onClosed(err)
 	}
 }
 

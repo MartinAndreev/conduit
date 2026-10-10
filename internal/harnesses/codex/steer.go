@@ -23,24 +23,36 @@ func (s *session) Steer(ctx context.Context, request provider.SteerRequest) (pro
 	if err != nil {
 		return provider.DeliveryReceipt{}, err
 	}
-	result, sent, callErr := s.deliverSteer(ctx, request, threadID, turnID, inputs)
+	committed, sent, callErr := s.deliverSteer(ctx, request, threadID, turnID, inputs)
 	if callErr != nil {
 		return provider.DeliveryReceipt{}, s.handleSteerDeliveryFailure(request, sent, callErr)
 	}
-	receipt, err := s.acceptSteer(request, result)
-	if err != nil {
-		return provider.DeliveryReceipt{}, err
+	if !committed.done {
+		return provider.DeliveryReceipt{}, adaptererror.New(provider.OperationSteer, provider.ErrorProtocolViolation, provider.RemoteEffectAccepted, nil, "turn/steer reply was not committed")
 	}
+	if committed.err != nil {
+		return provider.DeliveryReceipt{}, committed.err
+	}
+	receipt := s.steerReceipt(request)
 	s.emit(provider.ControlReceiptEvent{Receipt: receipt})
 	return receipt, nil
 }
 
-func (s *session) acceptSteer(request provider.SteerRequest, result json.RawMessage) (provider.DeliveryReceipt, error) {
+// steerCommit is written by the reader goroutine before the reply reaches the
+// waiting caller or late callback.
+type steerCommit struct {
+	done bool
+	err  error
+}
+
+// commitSteer advances the assignment while the reader is positioned right
+// after the native reply, before any later turn/completed can clear the turn.
+func (s *session) commitSteer(request provider.SteerRequest, result json.RawMessage) steerCommit {
 	var response struct {
 		TurnID string `json:"turnId"`
 	}
 	if err := json.Unmarshal(result, &response); err != nil || response.TurnID == "" {
-		return provider.DeliveryReceipt{}, adaptererror.New(provider.OperationSteer, provider.ErrorProtocolViolation, provider.RemoteEffectAccepted, err, "turn/steer returned no turn ID")
+		return steerCommit{done: true, err: adaptererror.New(provider.OperationSteer, provider.ErrorProtocolViolation, provider.RemoteEffectAccepted, err, "turn/steer returned no turn ID")}
 	}
 	err := lockscope.WithMutexLock(&s.mu, func() error {
 		decision := rules.DecideSteerReceipt(rules.SteerReceiptFacts{
@@ -55,29 +67,28 @@ func (s *session) acceptSteer(request provider.SteerRequest, result json.RawMess
 		s.steerPending = nil
 		return nil
 	})
-	if err != nil {
-		return provider.DeliveryReceipt{}, err
-	}
-	receipt := provider.DeliveryReceipt{
+	return steerCommit{done: true, err: err}
+}
+
+func (s *session) steerReceipt(request provider.SteerRequest) provider.DeliveryReceipt {
+	return provider.DeliveryReceipt{
 		RequestID: request.RequestID, MessageID: request.MessageID,
 		Disposition: provider.DeliveryTransportAccepted, Receipt: provider.ReceiptNativeKnown,
 		Targeting: provider.TargetNativeTurnID, DispatchedFor: provider.Some(request.NewAssignment),
 		ObservedAt: s.config.Now(),
 	}
-	return receipt, nil
 }
 
-func (s *session) reconcileLateSteer(request provider.SteerRequest, reply rpcResponse) {
+func (s *session) reconcileLateSteer(request provider.SteerRequest, reply rpcResponse, committed steerCommit) {
 	if reply.err != nil {
 		s.handleLateSteerDeliveryFailure(request, reply.err)
 		return
 	}
-	receipt, err := s.acceptSteer(request, reply.result)
-	if err != nil {
+	if committed.err != nil {
 		s.emit(provider.ProtocolWarningEvent{Code: "late_steer_invalid", Detail: provider.BoundedText{Text: "late turn/steer response was invalid"}})
 		return
 	}
-	s.emit(provider.ControlReceiptEvent{Receipt: receipt})
+	s.emit(provider.ControlReceiptEvent{Receipt: s.steerReceipt(request)})
 }
 
 // reserveSteer checks adapter facts and the domain rule under one lock, then
@@ -110,16 +121,27 @@ func (s *session) reserveSteer(request provider.SteerRequest) (string, string, e
 	return threadID, turnID, err
 }
 
-// deliverSteer sends one native correction. It does not accept the assignment
-// or publish a receipt; an uncertain send remains reserved for reconciliation.
-func (s *session) deliverSteer(ctx context.Context, request provider.SteerRequest, threadID, turnID string, inputs []nativeInput) (json.RawMessage, bool, error) {
+// deliverSteer sends one native correction. A successful reply is committed on
+// the reader goroutine; an uncertain send remains reserved for reconciliation.
+func (s *session) deliverSteer(ctx context.Context, request provider.SteerRequest, threadID, turnID string, inputs []nativeInput) (steerCommit, bool, error) {
 	params := struct {
 		ThreadID       string        `json:"threadId"`
 		ExpectedTurnID string        `json:"expectedTurnId"`
 		Input          []nativeInput `json:"input"`
 	}{ThreadID: threadID, ExpectedTurnID: turnID, Input: inputs}
-	late := func(reply rpcResponse) { s.reconcileLateSteer(request, reply) }
-	return s.rpc.call(ctx, "turn/steer", params, late)
+	var committed steerCommit
+	commit := func(reply rpcResponse) {
+		if reply.err == nil {
+			committed = s.commitSteer(request, reply.result)
+		}
+	}
+	late := func(reply rpcResponse) { s.reconcileLateSteer(request, reply, committed) }
+	_, sent, err := s.rpc.callCommitting(ctx, "turn/steer", params, commit, late)
+	if err != nil {
+		// The reader may still commit a late reply; do not read it here.
+		return steerCommit{}, sent, err
+	}
+	return committed, sent, nil
 }
 
 // handleSteerDeliveryFailure releases a proven rejected/unsent reservation. A

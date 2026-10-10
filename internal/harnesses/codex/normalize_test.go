@@ -62,6 +62,7 @@ func TestArchivedMultifileFixtureNormalizesWithoutWarningStorm(t *testing.T) {
 	}
 	s.broker.Finish(nil)
 	counts := map[provider.EventKind]int{}
+	invalidCandidates := 0
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		event, err := stream.Receive(ctx)
@@ -72,7 +73,16 @@ func TestArchivedMultifileFixtureNormalizesWithoutWarningStorm(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// The archived final_answer is prose, not schema JSON. It must surface as
+		// a visible warning rather than an unencodable result candidate.
+		if warning, ok := event.Body().(provider.ProtocolWarningEvent); ok && warning.Code == "result_candidate_invalid_json" {
+			invalidCandidates++
+			continue
+		}
 		counts[event.Kind()]++
+	}
+	if invalidCandidates != 1 || counts[provider.EventResultCandidate] != 0 {
+		t.Fatalf("prose final answer: invalid warnings=%d candidates=%d", invalidCandidates, counts[provider.EventResultCandidate])
 	}
 	if counts[provider.EventAssistantText] < 3 || counts[provider.EventCommandStarted] < 2 || counts[provider.EventCommandCompleted] < 2 || counts[provider.EventFileActivity] < 1 {
 		t.Fatalf("normalized event counts = %#v", counts)

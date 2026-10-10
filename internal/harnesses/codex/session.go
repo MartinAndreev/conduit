@@ -195,12 +195,26 @@ func (s *session) StartTurn(ctx context.Context, request provider.StartTurnReque
 	if actual == provider.SchemaNative {
 		params.OutputSchema = request.ResultContract.Schema
 	}
-	late := func(reply rpcResponse) { s.reconcileLateTurn(request, actual, reply) }
-	result, sent, callErr := s.rpc.call(ctx, "turn/start", params, late)
+	// The reply is committed on the reader goroutine so turn/started and item
+	// notifications that immediately follow it correlate with the new turn.
+	var committed turnStartCommit
+	commit := func(reply rpcResponse) {
+		if reply.err == nil {
+			committed = s.commitTurnStart(request, actual, reply.result)
+		}
+	}
+	late := func(reply rpcResponse) { s.reconcileLateTurn(request, reply, committed) }
+	_, sent, callErr := s.rpc.callCommitting(ctx, "turn/start", params, commit, late)
 	if callErr != nil {
 		return provider.StartTurnResult{}, s.handleTurnStartDeliveryFailure(request, sent, callErr)
 	}
-	return s.acceptTurnStart(request, actual, result)
+	if !committed.done {
+		return provider.StartTurnResult{}, adaptererror.New(provider.OperationStartTurn, provider.ErrorProtocolViolation, provider.RemoteEffectAccepted, nil, "turn/start reply was not committed")
+	}
+	if committed.err != nil {
+		return provider.StartTurnResult{}, committed.err
+	}
+	return s.turnStartResult(request, actual, committed.turn), nil
 }
 
 type nativeInput struct {
@@ -221,7 +235,17 @@ func codexInputs(parts []provider.InputPart) ([]nativeInput, error) {
 	return result, nil
 }
 
-func (s *session) acceptTurnStart(request provider.StartTurnRequest, actual provider.SchemaEnforcement, result json.RawMessage) (provider.StartTurnResult, error) {
+// turnStartCommit is written by the reader goroutine before the reply reaches
+// the waiting caller or late callback; both read it only after that handoff.
+type turnStartCommit struct {
+	done bool
+	turn provider.TurnRef
+	err  error
+}
+
+// commitTurnStart binds the native turn while the reader is positioned right
+// after its reply. An invalid reply releases the reservation.
+func (s *session) commitTurnStart(request provider.StartTurnRequest, actual provider.SchemaEnforcement, result json.RawMessage) turnStartCommit {
 	var started struct {
 		Turn struct {
 			ID string `json:"id"`
@@ -229,7 +253,7 @@ func (s *session) acceptTurnStart(request provider.StartTurnRequest, actual prov
 	}
 	if err := json.Unmarshal(result, &started); err != nil || started.Turn.ID == "" {
 		s.releaseTurnStartReservation()
-		return provider.StartTurnResult{}, adaptererror.New(provider.OperationStartTurn, provider.ErrorProtocolViolation, provider.RemoteEffectAccepted, err, "turn/start returned no turn ID")
+		return turnStartCommit{done: true, err: adaptererror.New(provider.OperationStartTurn, provider.ErrorProtocolViolation, provider.RemoteEffectAccepted, err, "turn/start returned no turn ID")}
 	}
 	turn := provider.TurnRef{AdapterTurnID: provider.AdapterTurnID(started.Turn.ID)}
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
@@ -239,14 +263,22 @@ func (s *session) acceptTurnStart(request provider.StartTurnRequest, actual prov
 		s.contract = provider.ResultContractNegotiation{Contract: request.ResultContract, Actual: actual}
 		return nil
 	})
+	return turnStartCommit{done: true, turn: turn}
+}
+
+func (s *session) turnStartResult(request provider.StartTurnRequest, actual provider.SchemaEnforcement, turn provider.TurnRef) provider.StartTurnResult {
+	var thread string
+	_ = lockscope.WithMutexLock(&s.mu, func() error { thread = s.nativeThread; return nil })
 	return provider.StartTurnResult{
 		Turn: turn, Assignment: request.Assignment, TargetingStrength: provider.TargetNativeTurnID,
 		ResultEnforcement: actual,
-		Native:            provider.NativeIDs{Session: provider.Some(provider.NativeSessionID(s.nativeThread)), Turn: provider.Some(provider.NativeTurnID(started.Turn.ID))},
-	}, nil
+		Native:            provider.NativeIDs{Session: provider.Some(provider.NativeSessionID(thread)), Turn: provider.Some(provider.NativeTurnID(turn.AdapterTurnID))},
+	}
 }
 
-func (s *session) reconcileLateTurn(request provider.StartTurnRequest, actual provider.SchemaEnforcement, reply rpcResponse) {
+// reconcileLateTurn reports the outcome of a start whose caller stopped
+// waiting. A successful reply was already committed on the reader goroutine.
+func (s *session) reconcileLateTurn(request provider.StartTurnRequest, reply rpcResponse, committed turnStartCommit) {
 	if reply.err != nil {
 		failure := classifyDeliveryFailure(provider.OperationStartTurn, request.RequestID, true, reply.err)
 		if failure.NativeRejected {
@@ -257,7 +289,7 @@ func (s *session) reconcileLateTurn(request provider.StartTurnRequest, actual pr
 		s.emit(provider.ProtocolWarningEvent{Code: "turn_start_delivery_unknown", Detail: provider.BoundedText{Text: "turn/start transport ended before reconciliation"}})
 		return
 	}
-	if _, err := s.acceptTurnStart(request, actual, reply.result); err != nil {
+	if committed.err != nil {
 		s.emit(provider.ProtocolWarningEvent{Code: "late_turn_start_invalid", Detail: provider.BoundedText{Text: "late turn/start response was invalid"}})
 	}
 }
@@ -419,11 +451,35 @@ func (s *session) observeProcessExit() {
 			return nil
 		})
 		close(s.exitDone)
-		if !closing {
+		if !closing && previous != provider.SessionLost {
 			s.emit(provider.SessionStateEvent{Previous: previous, Current: provider.SessionLost, NativeStatus: "app_server_process_exit"})
 			s.broker.Finish(adaptererror.New(provider.OperationReceiveEvent, provider.ErrorSessionLost, provider.RemoteEffectUnknown, result.Err, "App Server process exited"))
 		}
 	})
+}
+
+// handleTransportClosed reports a stopped JSON-RPC transport (reader EOF or
+// error such as an oversized line, or a failed write). The adapter can no longer
+// observe or control the App Server, so the session is lost and the owned
+// process is terminated instead of silently blocking on a full stdout pipe.
+func (s *session) handleTransportClosed(cause error) {
+	var previous provider.SessionState
+	lost := false
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		if s.closing || s.state == provider.SessionLost {
+			return nil
+		}
+		previous = s.state
+		s.state = provider.SessionLost
+		lost = true
+		return nil
+	})
+	if !lost {
+		return
+	}
+	s.emit(provider.SessionStateEvent{Previous: previous, Current: provider.SessionLost, NativeStatus: "app_server_transport_closed"})
+	s.broker.Finish(adaptererror.New(provider.OperationReceiveEvent, provider.ErrorSessionLost, provider.RemoteEffectUnknown, cause, "App Server transport closed"))
+	_ = s.process.KillTree()
 }
 
 func (s *session) emit(body provider.EventBody) {

@@ -13,6 +13,9 @@ import (
 	"github.com/MartinAndreev/conduit/internal/sessions/provider"
 )
 
+// maxNativeTextBytes bounds text copied from one native item into one event.
+const maxNativeTextBytes = 64 * 1024
+
 func (s *session) handleNotification(method string, params json.RawMessage) {
 	switch method {
 	case "$protocol/malformed":
@@ -182,6 +185,15 @@ func (s *session) normalizeItem(method string, raw json.RawMessage) {
 		update := s.textSnapshot(item.ID, "text", item.Text)
 		s.emit(provider.AssistantTextEvent{Phase: phase, Update: update})
 		if phase == provider.AssistantFinal && s.currentEnforcement() == provider.SchemaNative {
+			if !json.Valid([]byte(item.Text)) {
+				// A candidate payload must be JSON; invalid bytes cannot travel as
+				// json.RawMessage and would break journal encoding downstream.
+				s.emit(provider.ProtocolWarningEvent{
+					Code: "result_candidate_invalid_json", Detail: provider.BoundedText{Text: "final answer under native schema enforcement was not valid JSON"},
+					OffendingNativeKind: method,
+				})
+				return
+			}
 			submissionID, err := s.config.NewID("codex-result")
 			if err != nil {
 				_ = lockscope.WithMutexLock(&s.mu, func() error {
@@ -221,14 +233,14 @@ func (s *session) normalizeItem(method string, raw json.RawMessage) {
 	case "commandExecution":
 		commandID := provider.NativeCommandID(item.ID)
 		if started {
-			s.emit(provider.CommandStartedEvent{CommandID: commandID, Display: provider.BoundedText{Text: item.Command}})
+			s.emit(provider.CommandStartedEvent{CommandID: commandID, Display: boundedtext.String(item.Command, maxNativeTextBytes)})
 			return
 		}
 		exit := provider.None[int]()
 		if item.ExitCode != nil {
 			exit = provider.Some(*item.ExitCode)
 		}
-		s.emit(provider.CommandCompletedEvent{CommandID: commandID, ExitCode: exit, Output: provider.BoundedText{Text: item.AggregatedOutput}})
+		s.emit(provider.CommandCompletedEvent{CommandID: commandID, ExitCode: exit, Output: boundedtext.String(item.AggregatedOutput, maxNativeTextBytes)})
 	case "fileChange":
 		if started {
 			return
@@ -308,7 +320,7 @@ func (s *session) currentEnforcement() provider.SchemaEnforcement {
 }
 
 func (s *session) textSnapshot(item, segment, text string) provider.TextSegmentUpdate {
-	bounded := boundedtext.String(text, 64*1024)
+	bounded := boundedtext.String(text, maxNativeTextBytes)
 	key := item + "\x00" + segment
 	var version uint64
 	_ = lockscope.WithMutexLock(&s.textMu, func() error {
@@ -325,7 +337,7 @@ func (s *session) textSnapshot(item, segment, text string) provider.TextSegmentU
 }
 
 func (s *session) textDelta(item, segment, text string) provider.TextSegmentUpdate {
-	bounded := boundedtext.String(text, 64*1024)
+	bounded := boundedtext.String(text, maxNativeTextBytes)
 	key := item + "\x00" + segment
 	var base, offset, version uint64
 	_ = lockscope.WithMutexLock(&s.textMu, func() error {

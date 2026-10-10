@@ -48,6 +48,33 @@ mismatch. `CGO_ENABLED=0 go test ./...` exercises the full suite, including loca
 Turso operations, without that link path. This is an environment workaround,
 not a change to the system toolchain.
 
+## Collaboration
+
+### Branch naming
+
+Use one of the following prefixes for new branches, followed by a short lowercase kebab-case description:
+
+| Prefix | Purpose | Example |
+| --- | --- | --- |
+| `feature/` | Add new application functionality. | `feature/application-startup` |
+| `fix/` | Correct a defect in existing functionality. | `fix/startup-config-validation` |
+| `hotfix/` | Deliver an urgent correction to a released version. | `hotfix/config-data-loss` |
+| `refactor/` | Restructure code while preserving intended behavior. | `refactor/startup-procedures` |
+| `docs/` | Change documentation, specifications, or design references. | `docs/startup-contract` |
+| `test/` | Add or improve tests without changing application behavior. | `test/concurrent-initialization` |
+| `chore/` | Maintain dependencies, tooling, or repository configuration. | `chore/update-go-toolchain` |
+| `ci/` | Change continuous integration or automated delivery workflows. | `ci/windows-startup-checks` |
+| `perf/` | Improve runtime performance or resource consumption. | `perf/harness-discovery` |
+| `build/` | Change compilation, bundling, or packaging. | `build/desktop-assets` |
+| `release/` | Prepare and stabilize a specific release. | `release/0.2.0` |
+
+Choose the prefix matching the branch's primary purpose. Supporting tests and documentation for a feature belong on that feature branch. Do not invent another prefix without agreement.
+
+Do not use `codex/` as the default prefix. Follow any exact branch name explicitly requested by the user. This convention applies to future branches; it does not implicitly rename existing branches.
+
+Branch prefixes and commit-message types are separate conventions. Commit messages
+must still use the types allowed by the commit-message lint configuration below.
+
 ## Commit-message lint
 
 The original Conventional Commits configuration remains. Allowed types are

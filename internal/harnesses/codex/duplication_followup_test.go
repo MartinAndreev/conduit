@@ -67,9 +67,9 @@ func TestCandidateAndEnvelopeShareSnapshotAcrossSteerTransition(t *testing.T) {
 				t.Fatal("candidate did not reach publication boundary")
 			}
 			if pendingAtSnapshot {
-				if _, err := s.acceptSteer(request, json.RawMessage(`{"turnId":"turn-1"}`)); err != nil {
+				if committed := s.commitSteer(request, json.RawMessage(`{"turnId":"turn-1"}`)); committed.err != nil {
 					close(release)
-					t.Fatal(err)
+					t.Fatal(committed.err)
 				}
 			} else {
 				if _, _, err := s.reserveSteer(request); err != nil {
@@ -186,7 +186,7 @@ func TestLateStartRejectionReleasesPendingButTransportDoesNot(t *testing.T) {
 			if nativeRejected {
 				cause = &rpcError{Code: 123, Message: "rejected"}
 			}
-			s.reconcileLateTurn(provider.StartTurnRequest{RequestID: "start"}, provider.SchemaNative, rpcResponse{err: cause})
+			s.reconcileLateTurn(provider.StartTurnRequest{RequestID: "start"}, rpcResponse{err: cause}, turnStartCommit{})
 			if s.turnPending == nativeRejected || s.assignment != before || s.active.Present {
 				t.Fatal("late failure changed wrong pending/assignment/active state")
 			}

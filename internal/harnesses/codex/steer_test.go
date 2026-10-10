@@ -180,7 +180,7 @@ func TestLateSteerRejectionClearsOnlyMatchingReservation(t *testing.T) {
 			}
 			s.steerPending = &pendingSteer{request: pendingRequest}
 			before := s.assignment
-			s.reconcileLateSteer(r, rpcResponse{err: &rpcError{Code: 123, Message: "rejected"}})
+			s.reconcileLateSteer(r, rpcResponse{err: &rpcError{Code: 123, Message: "rejected"}}, steerCommit{})
 			if (s.steerPending == nil) != matching || s.assignment != before {
 				t.Fatal("late rejection cleared unrelated reservation or changed assignment")
 			}
@@ -209,7 +209,7 @@ func TestLateSteerTransportFailureKeepsUncertainty(t *testing.T) {
 	pending := &pendingSteer{request: r}
 	s.steerPending = pending
 	before := s.assignment
-	s.reconcileLateSteer(r, rpcResponse{err: io.ErrUnexpectedEOF})
+	s.reconcileLateSteer(r, rpcResponse{err: io.ErrUnexpectedEOF}, steerCommit{})
 	if s.steerPending != pending || s.assignment != before {
 		t.Fatal("late transport failure cleared uncertainty or changed assignment")
 	}

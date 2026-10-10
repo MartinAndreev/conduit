@@ -44,10 +44,17 @@ type Config struct {
 	ExecutablePath string
 	EventBuffer    int
 	MaxTextBytes   int
-	Launcher       processruntime.Launcher
-	Control        Control
-	Now            func() time.Time
-	NewID          func(string) (string, error)
+	// MaxEventLineBytes bounds one native JSONL line. It is separate from
+	// MaxTextBytes because one tool event may carry large output that is then
+	// truncated per field.
+	MaxEventLineBytes int
+	// StopGrace bounds how long Close waits for the owned run client to exit
+	// after it was terminated.
+	StopGrace time.Duration
+	Launcher  processruntime.Launcher
+	Control   Control
+	Now       func() time.Time
+	NewID     func(string) (string, error)
 }
 
 func withDefaults(config Config) Config {
@@ -59,6 +66,12 @@ func withDefaults(config Config) Config {
 	}
 	if config.MaxTextBytes < 1 {
 		config.MaxTextBytes = 64 * 1024
+	}
+	if config.MaxEventLineBytes < 1 {
+		config.MaxEventLineBytes = 8 * 1024 * 1024
+	}
+	if config.StopGrace <= 0 {
+		config.StopGrace = 2 * time.Second
 	}
 	if config.Launcher == nil {
 		config.Launcher = processruntime.ExecLauncher{}

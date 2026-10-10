@@ -231,10 +231,10 @@ func TestSteerRejectsMismatchedNativeTurnReceiptAndKeepsBindingUnresolved(t *tes
 		CurrentAssignment: testAssignment(1), NewAssignment: testAssignment(2), ExpectedRevision: 1,
 	}
 	s.steerPending = &pendingSteer{request: request}
-	_, err := s.acceptSteer(request, json.RawMessage(`{"turnId":"turn-other"}`))
+	err := s.commitSteer(request, json.RawMessage(`{"turnId":"turn-other"}`)).err
 	var providerErr *provider.ProviderError
 	if !errors.As(err, &providerErr) || providerErr.Code != provider.ErrorProtocolViolation {
-		t.Fatalf("acceptSteer error = %v", err)
+		t.Fatalf("commitSteer error = %v", err)
 	}
 	if s.steerPending == nil || s.assignment.Revision != 1 {
 		t.Fatalf("mismatched receipt changed unresolved binding: pending=%v assignment=%#v", s.steerPending, s.assignment)

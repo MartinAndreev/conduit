@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/MartinAndreev/conduit/internal/harnesses/opencode/rules"
 	"io"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -165,32 +166,69 @@ func (s *session) InterruptTurn(context.Context, provider.InterruptRequest) (pro
 	return provider.InterruptResult{}, adaptererror.NewWithDetail(provider.OperationInterruptTurn, provider.ErrorCapabilityUnsupported, provider.RemoteEffectNotSent, "native interrupt unsupported", nil)
 }
 
-func (s *session) Close(_ context.Context, request provider.CloseSessionRequest) (provider.CloseSessionResult, error) {
+func (s *session) Close(ctx context.Context, request provider.CloseSessionRequest) (provider.CloseSessionResult, error) {
 	var result provider.CloseSessionResult
+	var owned processruntime.Process
 	err := lockscope.WithMutexLock(&s.mu, func() error {
 		decision := rules.DecideClose(rules.CloseFacts{
-			SessionMatches: request.Session == s.ref,
-			ActiveTurn:     s.turn.Present,
-			ExplicitDetach: request.Policy == provider.CloseExplicitDetach,
+			SessionMatches:     request.Session == s.ref,
+			ActiveTurn:         s.turn.Present,
+			ExplicitDetach:     request.Policy == provider.CloseExplicitDetach,
+			InterruptThenClose: request.Policy == provider.CloseInterruptThenClose,
 		})
 		switch decision.Kind {
 		case rules.CloseBindingStale:
 			return adaptererror.NewWithDetail(provider.OperationCloseSession, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, decision.Reason, nil)
 		case rules.CloseActiveWorkRequiresDetach:
 			return adaptererror.NewWithDetail(provider.OperationCloseSession, provider.ErrorCapabilityUnsupported, provider.RemoteEffectNotSent, decision.Reason, nil)
+		case rules.CloseStopOwnedClient:
+			owned = s.process
 		}
 		s.closed, s.state = true, provider.SessionClosed
 		s.broker.Finish(nil)
 		result = provider.CloseSessionResult{HandleClosed: true, ExecutionState: provider.ExecutionUnknown, ResourcesReleased: false}
 		return nil
 	})
-	return result, err
+	if err != nil || owned == nil {
+		return result, err
+	}
+	result.ResourcesReleased = s.stopOwnedClient(ctx, owned)
+	return result, nil
+}
+
+// stopOwnedClient terminates only this session's own `opencode run` process
+// group and reports whether its root was reaped within the bound. A shared
+// OpenCode server is never signalled, so native execution stays unknown.
+func (s *session) stopOwnedClient(ctx context.Context, proc processruntime.Process) bool {
+	killErr := proc.KillTree()
+	if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+		return false
+	}
+	reaped := make(chan struct{})
+	go func() { _ = proc.Wait(); close(reaped) }()
+	timer := time.NewTimer(s.config.StopGrace)
+	defer timer.Stop()
+	select {
+	case <-reaped:
+	case <-timer.C:
+		return false
+	case <-ctx.Done():
+		return false
+	}
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		if s.process == proc {
+			s.process = nil
+		}
+		s.turn = provider.None[provider.TurnRef]()
+		return nil
+	})
+	return proc.TreeKillSupported()
 }
 
 func (s *session) readRun(proc processruntime.Process, turn provider.TurnRef) {
 	go io.Copy(io.Discard, proc.Stderr())
 	scanner := bufio.NewScanner(proc.Stdout())
-	scanner.Buffer(make([]byte, min(4096, s.config.MaxTextBytes)), s.config.MaxTextBytes)
+	scanner.Buffer(make([]byte, min(4096, s.config.MaxEventLineBytes)), s.config.MaxEventLineBytes)
 	for scanner.Scan() {
 		s.normalizeLine(scanner.Bytes(), turn)
 	}
@@ -237,14 +275,21 @@ func (s *session) emit(body provider.EventBody) {
 		}
 		var seq uint64
 		var turn provider.Optional[provider.TurnRef]
-		var assignment provider.AssignmentRef
+		var assignment provider.Optional[provider.AssignmentRef]
 		_ = lockscope.WithMutexLock(&s.mu, func() error {
 			s.seq++
 			seq = s.seq
-			turn, assignment = s.turn, s.assignment
+			turn = s.turn
+			// While a correction is in flight or its delivery is unknown, which
+			// revision the agent is working on is unresolved (provider contract).
+			if s.steerPending || s.deliveryUnknown {
+				assignment = provider.None[provider.AssignmentRef]()
+			} else {
+				assignment = provider.Some(s.assignment)
+			}
 			return nil
 		})
-		event, err := provider.NewProviderEvent(provider.EventEnvelope{EventID: provider.EventID(eventID), Session: s.ref, Turn: turn, Assignment: provider.Some(assignment), AdapterSeq: seq, Native: provider.NativeIDs{Session: provider.Some(s.nativeSession)}, ObservedAt: s.config.Now()}, body)
+		event, err := provider.NewProviderEvent(provider.EventEnvelope{EventID: provider.EventID(eventID), Session: s.ref, Turn: turn, Assignment: assignment, AdapterSeq: seq, Native: provider.NativeIDs{Session: provider.Some(s.nativeSession)}, ObservedAt: s.config.Now()}, body)
 		if err == nil {
 			if publishErr := s.broker.Publish(event); publishErr != nil {
 				_ = lockscope.WithMutexLock(&s.mu, func() error {

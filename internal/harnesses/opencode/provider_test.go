@@ -211,7 +211,7 @@ func TestNonzeroExitKeepsSessionLostAndBlocksNewTurn(t *testing.T) {
 
 func TestOversizedJSONLMarksSessionLost(t *testing.T) {
 	control, launcher := &fakeControl{}, &fakeLauncher{output: strings.Repeat("x", 128) + "\n"}
-	adapter := New(Config{Control: control, Launcher: launcher, MaxTextBytes: 32})
+	adapter := New(Config{Control: control, Launcher: launcher, MaxEventLineBytes: 32})
 	a := provider.AssignmentRef{AssignmentID: "x", Revision: 1}
 	m := provider.ModelSelection{ProviderID: "opencode", ModelID: "model"}
 	c := provider.ResultContractRef{Requested: provider.SchemaNone}
