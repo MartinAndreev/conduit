@@ -39,10 +39,17 @@ type Config struct {
 	Ephemeral      bool
 	EventBuffer    int
 	CloseGrace     time.Duration
-	Launcher       processruntime.Launcher
-	Now            func() time.Time
-	NewID          func(prefix string) (string, error)
+	// MaxLineBytes bounds one native JSON-RPC line read from the App Server.
+	// A line above the bound stops the transport and loses the session
+	// visibly. Large command items arrive as single lines, so the default is
+	// generous (128 MiB); nonpositive values select the default.
+	MaxLineBytes int
+	Launcher     processruntime.Launcher
+	Now          func() time.Time
+	NewID        func(prefix string) (string, error)
 }
+
+const defaultMaxLineBytes = 128 * 1024 * 1024
 
 func withDefaults(config Config) Config {
 	if config.ExecutablePath == "" {
@@ -59,6 +66,9 @@ func withDefaults(config Config) Config {
 	}
 	if config.EventBuffer < 1 {
 		config.EventBuffer = 256
+	}
+	if config.MaxLineBytes < 1 {
+		config.MaxLineBytes = defaultMaxLineBytes
 	}
 	if config.CloseGrace <= 0 {
 		config.CloseGrace = 2 * time.Second

@@ -12,6 +12,20 @@ import (
 	"github.com/MartinAndreev/conduit/internal/sessions/provider"
 )
 
+// workspacePermissionRules is the session rule set for the only accepted mode:
+// a writable workspace with PermissionDeny (no permission round-trip). OpenCode
+// evaluates rules last-match-wins, so the leading allow-all grants in-workspace
+// tools (shell, edit, ...) without asking, overriding an "ask" in user config
+// that would otherwise hang the turn, and the later denies take precedence for
+// leaving the workspace, web access, and questions. Order is load-bearing.
+var workspacePermissionRules = []struct{ action, effect string }{
+	{"*", "allow"},
+	{"external_directory", "deny"},
+	{"webfetch", "deny"},
+	{"websearch", "deny"},
+	{"question", "deny"},
+}
+
 type cliControl struct {
 	executable string
 	launcher   processruntime.Launcher
@@ -36,12 +50,12 @@ func (c *cliControl) CreateSession(ctx context.Context, request CreateSessionReq
 	}{Title: request.Title}
 	payload.Model.ProviderID, payload.Model.ID, payload.Model.Variant = request.Model.ProviderID, request.Model.ModelID, request.Model.Variant
 	payload.Location.Directory = request.Directory
-	for _, action := range []string{"external_directory", "webfetch", "websearch"} {
+	for _, rule := range workspacePermissionRules {
 		payload.Permissions = append(payload.Permissions, struct {
 			Action   string `json:"action"`
 			Resource string `json:"resource"`
 			Effect   string `json:"effect"`
-		}{Action: action, Resource: "*", Effect: "deny"})
+		}{Action: rule.action, Resource: "*", Effect: rule.effect})
 	}
 	raw, _ := json.Marshal(payload)
 	out, sent, err := c.call(ctx, request.Directory, "api", "session.create", "--data", string(raw))

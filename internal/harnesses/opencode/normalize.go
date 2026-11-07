@@ -5,6 +5,7 @@ import (
 
 	"github.com/MartinAndreev/conduit/internal/harnesses/internal/adaptererror"
 	"github.com/MartinAndreev/conduit/internal/harnesses/internal/boundedtext"
+	"github.com/MartinAndreev/conduit/internal/harnesses/opencode/rules"
 	"github.com/MartinAndreev/conduit/internal/lockscope"
 	"github.com/MartinAndreev/conduit/internal/sessions/provider"
 )
@@ -18,14 +19,17 @@ type nativeEvent struct {
 		Text  string `json:"text"`
 		Tool  string `json:"tool"`
 		State struct {
-			Status   string          `json:"status"`
-			Input    json.RawMessage `json:"input"`
-			Output   string          `json:"output"`
-			Title    string          `json:"title"`
+			Status string          `json:"status"`
+			Input  json.RawMessage `json:"input"`
+			Output string          `json:"output"`
+			Title  string          `json:"title"`
+			// Error is a string in recorded OpenCode tool parts; the object form
+			// `{message}` is accepted defensively.
+			Error    json.RawMessage `json:"error"`
 			Metadata struct {
-				Metadata struct {
-					Exit *int `json:"exit"`
-				} `json:"metadata"`
+				// Exit is `state.metadata.exit`, as recorded for completed bash parts.
+				Exit        *int `json:"exit"`
+				Interrupted bool `json:"interrupted"`
 			} `json:"metadata"`
 		} `json:"state"`
 	} `json:"part"`
@@ -90,36 +94,35 @@ func (s *session) normalizeTool(event nativeEvent) {
 	callID := provider.NativeToolCallID(id)
 	args := boundedtext.String(string(event.Part.State.Input), s.config.MaxTextBytes)
 	s.emit(provider.ToolStartedEvent{ToolCallID: callID, ToolName: event.Part.Tool, Arguments: args})
-	outcome := provider.ToolUnknown
-	switch event.Part.State.Status {
-	case "completed":
-		outcome = provider.ToolSucceeded
-	case "error", "failed":
-		outcome = provider.ToolFailed
-	case "cancelled":
-		outcome = provider.ToolCancelled
+	state := event.Part.State
+	commandTool := event.Part.Tool == "shell" || event.Part.Tool == "bash"
+	errorText := nativeToolError(state.Error)
+	facts := rules.ToolOutcomeFacts{NativeStatus: state.Status, CommandTool: commandTool, ErrorText: errorText, Interrupted: state.Metadata.Interrupted}
+	if state.Metadata.Exit != nil {
+		facts.ExitKnown, facts.ExitCode = true, *state.Metadata.Exit
 	}
-	output := boundedtext.String(event.Part.State.Output, s.config.MaxTextBytes)
-	s.emit(provider.ToolCompletedEvent{ToolCallID: callID, Outcome: outcome, Output: output})
+	decision := rules.DecideToolOutcome(facts)
+	outputText := toolOutputText(state.Output, errorText)
+	output := boundedtext.String(outputText, s.config.MaxTextBytes)
+	s.emit(provider.ToolCompletedEvent{ToolCallID: callID, Outcome: toolOutcome(decision.Kind), Output: output})
 	var input map[string]json.RawMessage
-	_ = json.Unmarshal(event.Part.State.Input, &input)
-	if event.Part.Tool == "shell" || event.Part.Tool == "bash" {
+	_ = json.Unmarshal(state.Input, &input)
+	if commandTool {
 		var command string
 		_ = json.Unmarshal(input["command"], &command)
 		commandID := provider.NativeCommandID(id)
 		s.emit(provider.CommandStartedEvent{CommandID: commandID, Display: boundedtext.String(command, s.config.MaxTextBytes), CWD: s.workspace})
-		if event.Part.State.Output != "" {
+		if outputText != "" {
 			s.emit(provider.CommandOutputEvent{CommandID: commandID, Stream: provider.CommandStreamUnknown, Output: output, Mode: provider.UpdateSnapshot})
 		}
 		exit := provider.None[int]()
-		if event.Part.State.Metadata.Metadata.Exit != nil {
-			exit = provider.Some(*event.Part.State.Metadata.Metadata.Exit)
+		if facts.ExitKnown {
+			exit = provider.Some(facts.ExitCode)
 		}
 		s.emit(provider.CommandCompletedEvent{CommandID: commandID, ExitCode: exit, Output: output})
 	}
 	if event.Part.Tool == "write" || event.Part.Tool == "edit" || event.Part.Tool == "read" {
-		var path string
-		_ = json.Unmarshal(input["path"], &path)
+		path := toolFilePath(input)
 		op := provider.FileUnknown
 		switch event.Part.Tool {
 		case "write":
@@ -132,6 +135,57 @@ func (s *session) normalizeTool(event nativeEvent) {
 		}
 		s.emit(provider.FileActivityEvent{Operation: op, NativePath: path, ToolCallID: provider.Some(callID)})
 	}
+}
+
+func toolOutcome(kind rules.ToolOutcomeKind) provider.ToolOutcome {
+	switch kind {
+	case rules.ToolOutcomeSucceeded:
+		return provider.ToolSucceeded
+	case rules.ToolOutcomeFailed:
+		return provider.ToolFailed
+	case rules.ToolOutcomeCancelled:
+		return provider.ToolCancelled
+	}
+	return provider.ToolUnknown
+}
+
+// nativeToolError decodes `state.error`, which recorded parts carry as a string.
+func nativeToolError(raw json.RawMessage) string {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return text
+	}
+	var object struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(raw, &object) == nil {
+		return object.Message
+	}
+	return ""
+}
+
+// toolOutputText keeps both native output and error text; an errored part
+// normally carries only the error.
+func toolOutputText(output, errorText string) string {
+	switch {
+	case errorText == "":
+		return output
+	case output == "":
+		return errorText
+	}
+	return output + "\n\n" + errorText
+}
+
+// toolFilePath reads the file path OpenCode tools record as `filePath`, with
+// `path` and `file` accepted as older or alternative spellings.
+func toolFilePath(input map[string]json.RawMessage) string {
+	for _, key := range []string{"filePath", "path", "file"} {
+		var path string
+		if json.Unmarshal(input[key], &path) == nil && path != "" {
+			return path
+		}
+	}
+	return ""
 }
 
 func (s *session) failID(err error) {

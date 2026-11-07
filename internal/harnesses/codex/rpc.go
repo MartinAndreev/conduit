@@ -54,6 +54,8 @@ func (e *rpcError) Error() string {
 type rpcClient struct {
 	process processruntime.Process
 	writer  *bufio.Writer
+	// maxLineBytes bounds one native line; set it before start.
+	maxLineBytes int
 
 	mu       sync.Mutex
 	nextID   uint64
@@ -72,12 +74,13 @@ type rpcClient struct {
 
 func newRPCClient(proc processruntime.Process) *rpcClient {
 	return &rpcClient{
-		process: proc,
-		writer:  bufio.NewWriter(proc.Stdin()),
-		nextID:  1,
-		pending: make(map[uint64]*pendingRequest),
-		writes:  make(chan writeJob, 64),
-		done:    make(chan struct{}),
+		process:      proc,
+		writer:       bufio.NewWriter(proc.Stdin()),
+		maxLineBytes: defaultMaxLineBytes,
+		nextID:       1,
+		pending:      make(map[uint64]*pendingRequest),
+		writes:       make(chan writeJob, 64),
+		done:         make(chan struct{}),
 	}
 }
 
@@ -279,7 +282,7 @@ func (c *rpcClient) abandon(id uint64, response chan rpcResponse, late func(rpcR
 
 func (c *rpcClient) readLoop() {
 	scanner := bufio.NewScanner(c.process.Stdout())
-	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	scanner.Buffer(make([]byte, 0, min(64*1024, c.maxLineBytes)), c.maxLineBytes)
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		var envelope rpcEnvelope

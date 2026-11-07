@@ -64,7 +64,12 @@ var robustnessContract = provider.ResultContractRef{Schema: json.RawMessage(`{"t
 
 func openStartedSession(t *testing.T, launcher processruntime.Launcher) (provider.Session, provider.EventStream) {
 	t.Helper()
-	adapter := New(Config{Launcher: launcher, CloseGrace: 20 * time.Millisecond})
+	return openStartedSessionWith(t, Config{Launcher: launcher, CloseGrace: 20 * time.Millisecond})
+}
+
+func openStartedSessionWith(t *testing.T, config Config) (provider.Session, provider.EventStream) {
+	t.Helper()
+	adapter := New(config)
 	opened, err := adapter.OpenSession(context.Background(), provider.OpenSessionRequest{Assignment: testAssignment(1), Workspace: provider.WorkspaceBinding{Path: t.TempDir(), Writable: true}, Model: provider.ModelSelection{ModelID: "model"}, ResultContract: robustnessContract, PermissionMode: provider.PermissionDeny})
 	if err != nil {
 		t.Fatal(err)
@@ -126,11 +131,11 @@ func TestTurnStartReplyIsCommittedBeforeFollowingNotifications(t *testing.T) {
 // A native line beyond the reader bound must end the session visibly instead
 // of leaving it "open" with a silent stream and a blocked App Server.
 func TestTransportStopLosesSessionVisibly(t *testing.T) {
-	huge := strings.Repeat("a", 5*1024*1024)
+	huge := strings.Repeat("a", 2*1024*1024)
 	launcher := &burstLauncher{afterTurnStart: func(turnID string) []byte {
 		return nativeNotification("item/completed", map[string]any{"threadId": "thread-1", "turnId": turnID, "item": map[string]any{"id": "command", "type": "commandExecution", "aggregatedOutput": huge}})
 	}}
-	session, stream := openStartedSession(t, launcher)
+	session, stream := openStartedSessionWith(t, Config{Launcher: launcher, CloseGrace: 20 * time.Millisecond, MaxLineBytes: 1024 * 1024})
 	_, err := receiveUntilQuiet(stream, 2*time.Second)
 	var providerErr *provider.ProviderError
 	if !errors.As(err, &providerErr) || providerErr.Code != provider.ErrorSessionLost {
@@ -139,6 +144,33 @@ func TestTransportStopLosesSessionVisibly(t *testing.T) {
 	snapshot, _ := session.ObserveState(context.Background(), provider.ObserveStateRequest{Session: session.Ref()})
 	if snapshot.SessionState != provider.SessionLost {
 		t.Fatalf("session state = %s, want lost", snapshot.SessionState)
+	}
+}
+
+// The default line bound admits a large command item that the former fixed
+// 4 MiB reader bound turned into a lost session.
+func TestDefaultLineBoundAcceptsLargeCommandItem(t *testing.T) {
+	huge := strings.Repeat("a", 5*1024*1024)
+	launcher := &burstLauncher{afterTurnStart: func(turnID string) []byte {
+		return nativeNotification("item/completed", map[string]any{"threadId": "thread-1", "turnId": turnID, "item": map[string]any{"id": "command", "type": "commandExecution", "status": "completed", "exitCode": 0, "aggregatedOutput": huge}})
+	}}
+	session, stream := openStartedSession(t, launcher)
+	events, err := receiveUntilQuiet(stream, 500*time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("stream ended: %v", err)
+	}
+	completed := false
+	for _, event := range events {
+		if body, ok := event.Body().(provider.CommandCompletedEvent); ok {
+			completed = body.Output.Truncated && body.Output.OriginalBytes.Value == uint64(len(huge))
+		}
+	}
+	if !completed {
+		t.Fatal("large command item was not normalized as a bounded completion")
+	}
+	snapshot, _ := session.ObserveState(context.Background(), provider.ObserveStateRequest{Session: session.Ref()})
+	if snapshot.SessionState == provider.SessionLost {
+		t.Fatal("large native line lost the session")
 	}
 }
 

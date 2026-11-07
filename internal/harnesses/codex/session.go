@@ -42,9 +42,13 @@ type session struct {
 	closeResult  provider.CloseSessionResult
 	closeDone    chan struct{}
 	closeOnce    sync.Once
-	exitResult   processruntime.Result
-	exitDone     chan struct{}
-	exitOnce     sync.Once
+	// usage tracks Codex's thread-wide token totals and the active turn's
+	// baseline; reroutedModel attributes usage after model/rerouted.
+	usage         usageTracker
+	reroutedModel provider.Optional[provider.ModelSelection]
+	exitResult    processruntime.Result
+	exitDone      chan struct{}
+	exitOnce      sync.Once
 
 	eventMu      sync.Mutex
 	eventSeq     uint64
@@ -84,16 +88,15 @@ func (s *session) initialize(ctx context.Context, request provider.OpenSessionRe
 		return adaptererror.Delivery(provider.OperationOpenSession, request.RequestID, sent, err)
 	}
 	params := struct {
-		CWD                        string   `json:"cwd"`
-		Model                      string   `json:"model,omitempty"`
-		AllowProviderModelFallback bool     `json:"allowProviderModelFallback"`
-		Sandbox                    string   `json:"sandbox"`
-		ApprovalPolicy             string   `json:"approvalPolicy"`
-		Ephemeral                  bool     `json:"ephemeral"`
-		RuntimeWorkspaceRoots      []string `json:"runtimeWorkspaceRoots"`
+		CWD                   string   `json:"cwd"`
+		Model                 string   `json:"model,omitempty"`
+		Sandbox               string   `json:"sandbox"`
+		ApprovalPolicy        string   `json:"approvalPolicy"`
+		Ephemeral             bool     `json:"ephemeral"`
+		RuntimeWorkspaceRoots []string `json:"runtimeWorkspaceRoots"`
 	}{
 		CWD: request.Workspace.Path, Model: request.Model.ModelID,
-		AllowProviderModelFallback: false, Sandbox: string(s.config.Sandbox),
+		Sandbox:        string(s.config.Sandbox),
 		ApprovalPolicy: string(s.config.Approval), Ephemeral: s.config.Ephemeral,
 		RuntimeWorkspaceRoots: []string{request.Workspace.Path},
 	}
@@ -259,6 +262,12 @@ func (s *session) commitTurnStart(request provider.StartTurnRequest, actual prov
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
 		s.turnPending = false
 		s.active = provider.Some(turn)
+		// The usage baseline is captured in the same critical section in which
+		// the turn becomes active, so no thread total is attributed to the
+		// wrong side of the boundary. Each turn/start names the configured
+		// model again, so a reroute of an earlier turn no longer applies.
+		s.usage.beginTurn()
+		s.reroutedModel = provider.None[provider.ModelSelection]()
 		s.assignment = request.Assignment
 		s.contract = provider.ResultContractNegotiation{Contract: request.ResultContract, Actual: actual}
 		return nil

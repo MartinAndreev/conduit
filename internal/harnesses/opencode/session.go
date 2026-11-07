@@ -96,7 +96,9 @@ func (s *session) StartTurn(ctx context.Context, request provider.StartTurnReque
 		}
 		turn = provider.TurnRef{AdapterTurnID: provider.AdapterTurnID(turnID)}
 		text := joinParts(request.Input)
-		proc, err = s.config.Launcher.Start(processruntime.Spec{Path: s.config.ExecutablePath, Args: []string{"run", "--session", string(s.nativeSession), "--format", "json", "--model", s.model.ProviderID + "/" + s.model.ModelID, text}, Dir: s.workspace})
+		// "--" ends flag parsing so prompt text starting with "-" stays the message.
+		args := []string{"run", "--session", string(s.nativeSession), "--format", "json", "--model", s.model.ProviderID + "/" + s.model.ModelID, "--", text}
+		proc, err = s.config.Launcher.Start(processruntime.Spec{Path: s.config.ExecutablePath, Args: args, Dir: s.workspace})
 		if err != nil {
 			return adaptererror.NewWithDetail(provider.OperationStartTurn, provider.ErrorExecutableMissing, provider.RemoteEffectNotSent, "could not start OpenCode", err)
 		}

@@ -2,6 +2,8 @@
 
 Status: approved implementation slice, 2026-09-21. Robustness fixes
 2026-10-10 (branch `fix/harness-adapter-robustness`) are reflected below.
+Native-fidelity fixes from the T3 Code comparison, 2026-11-07, are reflected
+below.
 
 ## Scope
 
@@ -62,9 +64,12 @@ storage, result acceptance, CLI wiring, or live model calls.
 ## Codex App Server mapping
 
 - Opening starts `codex app-server`, initializes JSON-RPC, and calls
-  `thread/start` with an explicit workspace, model ID, sandbox, approval policy,
-  and disabled model fallback. This slice accepts only deny/never permission
-  policy because permission round-trips are not fixture-backed.
+  `thread/start` with an explicit workspace, model ID, sandbox and approval
+  policy. Codex has no `thread/start` field that disables server-side model
+  rerouting; a `model/rerouted` notification emits a `model_rerouted` warning
+  and attributes the active turn's later usage to the new model until the next
+  `turn/start`. This slice accepts only deny/never permission policy because
+  permission round-trips are not fixture-backed.
 - `turn/start` sends text inputs and the negotiated native `outputSchema`.
   Shape enforcement is recorded as a native observation; semantic correctness
   and completion remain outside the adapter.
@@ -75,7 +80,8 @@ storage, result acceptance, CLI wiring, or live model calls.
   `turn/completed` can clear the active turn. The waiting caller or late
   callback only reports the committed outcome.
 - When the JSON-RPC transport stops (reader EOF or error, including a native line
-  above the 4 MiB reader bound, or a failed write), the session becomes
+  above the `MaxLineBytes` reader bound, default 128 MiB because a large
+  command item arrives as one line, or a failed write), the session becomes
   `SessionLost`, the stream ends with `session_lost`, and the owned App Server is
   terminated. Requests already queued to the writer fail with the transport
   error instead of waiting for their context.
@@ -101,13 +107,43 @@ storage, result acceptance, CLI wiring, or live model calls.
   offsets advance by that original byte count even when the emitted text is
   shorter. Nonpositive limits emit empty text with explicit truncation metadata.
 - `thread/status/changed:idle` is an idle observation. It is never rewritten as
-  `turn/completed`.
+  `turn/completed`. A late idle/active status cannot overwrite a closing, closed
+  or lost session (`rules.DecideThreadStatusTransition`). `systemError` emits a
+  `native_thread_system_error` warning without a local state transition.
+- `thread/tokenUsage/updated` `total` is thread-wide. The per-turn cumulative
+  snapshot is that total minus the thread total captured when the turn became
+  active. A total below the baseline reports the native `last` breakdown with
+  unknown measurement and a `usage_total_regressed` warning. A counter absent
+  from the payload is unknown, never zero.
+- A non-retried `error` notification or `turn/completed` `turn.error` emits one
+  `native_turn_error` warning per turn with the error kind and message;
+  `TerminalReason` stays the native status because the contract has no failure
+  reason field. A retried error emits `native_error_retrying` once per turn.
+- A file change whose native status is not completed emits no file activity,
+  only `file_change_not_applied`. A declined command reports no exit code and
+  `command_declined`; a failed command without an exit code adds
+  `command_failed`, because `CommandCompletedEvent` has no outcome field.
+- Known administrative notifications (`thread/started`, `thread/settings/updated`,
+  `account/updated`, `mcpServer/startupStatus/updated`,
+  `remoteControl/status/changed`, command output deltas) are ignored;
+  `configWarning` emits a bounded `native_config_warning` once per summary.
 
 ## OpenCode mapping
 
 - Session creation uses the explicit API session command and provider/model
   selection. A turn runs an owned JSONL CLI observer bound to that native
-  session and workspace.
+  session and workspace; the prompt follows `--` so text starting with `-` is
+  never parsed as a flag.
+- The only accepted mode (writable workspace, `PermissionDeny`) sends an
+  explicit session rule set, last match wins: allow `*`, then deny
+  `external_directory`, `webfetch`, `websearch` and `question`. An `ask` in the
+  user's OpenCode config therefore cannot hang the turn on an unanswerable
+  request, matching Codex `workspace-write` with approval `never`.
+- Tool outcome is a technical rule (`rules.DecideToolOutcome`): a completed
+  shell tool with a known nonzero `state.metadata.exit` is failed; an errored
+  tool with `Tool execution aborted` or `metadata.interrupted` is cancelled.
+  `state.error` text becomes the bounded tool output. File paths are read from
+  `filePath`, then `path`, then `file`.
 - Active-turn steering uses the explicit `session.prompt` delivery control and
   a serialized session lease. An accepted receipt advances only the dispatched
   Conduit revision; it does not prove that the model applied the amendment.

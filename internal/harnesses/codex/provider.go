@@ -84,6 +84,7 @@ func (a *Adapter) OpenSession(ctx context.Context, request provider.OpenSessionR
 	}
 	s.rpc = newRPCClient(proc)
 	s.rpc.onClosed = s.handleTransportClosed
+	s.rpc.maxLineBytes = a.config.MaxLineBytes
 	s.rpc.start(s.handleNotification, s.handleServerRequest)
 	go s.observeProcessExit()
 	s.emit(provider.SessionStateEvent{Previous: provider.SessionStateUnknown, Current: provider.SessionOpening})
