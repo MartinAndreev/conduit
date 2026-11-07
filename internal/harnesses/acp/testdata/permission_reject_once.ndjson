@@ -1,0 +1,12 @@
+# Permission request answered automatically with the reject_once option.
+{"from":"client","kind":"request","method":"initialize"}
+{"from":"agent","kind":"response","method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"close":{}}},"agentInfo":{"name":"fx","version":"0.0.14"},"authMethods":[]}}
+{"from":"client","kind":"request","method":"session/new"}
+{"from":"agent","kind":"response","method":"session/new","result":{"sessionId":"fx-session-01"}}
+{"from":"client","kind":"request","method":"session/prompt"}
+{"from":"agent","kind":"notification","method":"session/update","params":{"sessionId":"fx-session-01","update":{"sessionUpdate":"tool_call","toolCallId":"call-write-1","name":"write_file","title":"Writing","kind":"edit","status":"pending","rawInput":{"path":"denied.txt","content":"x"}}}}
+{"from":"agent","kind":"request","id":0,"method":"session/request_permission","params":{"sessionId":"fx-session-01","toolCall":{"toolCallId":"call-write-1","name":"write_file","title":"file_mutation","kind":"edit","status":"pending","rawInput":{"path":"denied.txt","content":"x"}},"options":[{"optionId":"allow_once","name":"Allow once","kind":"allow_once"},{"optionId":"allow_always","name":"Allow for this session","kind":"allow_always"},{"optionId":"reject_once","name":"Reject","kind":"reject_once"}]}}
+{"from":"client","kind":"response","id":0,"match":{"outcome":{"outcome":"selected","optionId":"reject_once"}}}
+{"from":"agent","kind":"notification","method":"session/update","params":{"sessionId":"fx-session-01","update":{"sessionUpdate":"tool_call_update","toolCallId":"call-write-1","status":"failed","content":[{"type":"content","content":{"type":"text","text":"{\"error\":{\"type\":\"tool_permission_denied\",\"denied\":true}}"}}]}}}
+{"from":"agent","kind":"notification","method":"session/update","params":{"sessionId":"fx-session-01","update":{"sessionUpdate":"agent_message_chunk","messageId":"msg-1","content":{"type":"text","text":"write permission denied"}}}}
+{"from":"agent","kind":"response","method":"session/prompt","result":{"stopReason":"end_turn","usage":{"inputTokens":100,"outputTokens":5,"reasoningTokens":0}}}

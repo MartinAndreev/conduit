@@ -15,7 +15,10 @@ func (ExecLauncher) Start(spec Spec) (started Process, err error) {
 	}
 	cmd := exec.Command(spec.Path, spec.Args...)
 	cmd.Dir = spec.Dir
-	if spec.Env != nil {
+	switch {
+	case spec.ReplaceEnv:
+		cmd.Env = append([]string{}, spec.Env...)
+	case spec.Env != nil:
 		cmd.Env = append(os.Environ(), spec.Env...)
 	}
 	owned, err := prepareOwnedProcess(cmd)

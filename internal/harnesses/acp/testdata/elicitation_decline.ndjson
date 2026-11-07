@@ -1,0 +1,10 @@
+# Generic ACP agent asks a form question; the client declines.
+{"from":"client","kind":"request","method":"initialize"}
+{"from":"agent","kind":"response","method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true},"authMethods":[{"id":"replay","name":"Replay"}],"agentInfo":{"name":"generic-acp","version":"1"}}}
+{"from":"client","kind":"request","method":"session/new"}
+{"from":"agent","kind":"response","method":"session/new","result":{"sessionId":"fx-session-01"}}
+{"from":"client","kind":"request","method":"session/prompt"}
+{"from":"agent","kind":"request","id":"elicit-1","method":"elicitation/create","params":{"sessionId":"fx-session-01","mode":"form","message":"Choose a preference.","requestedSchema":{"type":"object","properties":{"choice":{"type":"string","enum":["A","B"]}},"required":["choice"]}}}
+{"from":"client","kind":"response","id":"elicit-1","match":{"action":"decline"}}
+{"from":"agent","kind":"notification","method":"session/update","params":{"sessionId":"fx-session-01","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"no answer received"}}}}
+{"from":"agent","kind":"response","method":"session/prompt","result":{"stopReason":"end_turn"}}

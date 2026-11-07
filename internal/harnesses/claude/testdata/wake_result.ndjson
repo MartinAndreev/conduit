@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"<task-notification>done</task-notification>"},"origin":{"kind":"task-notification"},"parent_tool_use_id":null,"session_id":"{{SESSION}}","uuid":"00000000-0000-4000-8000-000000000401"}
+{"type":"result","subtype":"success","is_error":false,"result":"woke","session_id":"{{SESSION}}","terminal_reason":"completed","origin":{"kind":"task-notification"},"uuid":"00000000-0000-4000-8000-000000000402","user_message_uuid":"00000000-0000-4000-8000-000000000401","user_message_uuids":["00000000-0000-4000-8000-000000000401"]}

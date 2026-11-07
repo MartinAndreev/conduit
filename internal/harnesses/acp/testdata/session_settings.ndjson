@@ -1,0 +1,10 @@
+# A descriptor-required setting (mode=auto) is applied after session/new; the
+# fx-shaped mode option starts at "ask".
+{"from":"client","kind":"request","method":"initialize"}
+{"from":"agent","kind":"response","method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"close":{}}},"agentInfo":{"name":"fx","version":"0.0.14"},"authMethods":[]}}
+{"from":"client","kind":"request","method":"session/new"}
+{"from":"agent","kind":"response","method":"session/new","result":{"sessionId":"fx-session-01","configOptions":[{"id":"mode","name":"Mode","category":"mode","type":"select","currentValue":"ask","options":[{"value":"auto","name":"Auto"},{"value":"ask","name":"Ask"},{"value":"full-access","name":"Full access"}]},{"id":"fast","name":"Fast","category":"model","type":"select","currentValue":false,"options":[{"value":"false","name":"off"},{"value":"true","name":"on"}]}]}}
+{"from":"client","kind":"request","method":"session/set_config_option","match":{"sessionId":"fx-session-01","configId":"mode","value":"auto"}}
+{"from":"agent","kind":"response","method":"session/set_config_option","result":{"configOptions":[{"id":"mode","name":"Mode","category":"mode","type":"select","currentValue":"auto","options":[{"value":"auto","name":"Auto"},{"value":"ask","name":"Ask"},{"value":"full-access","name":"Full access"}]}]}}
+{"from":"client","kind":"request","method":"session/close"}
+{"from":"agent","kind":"response","method":"session/close","result":null}

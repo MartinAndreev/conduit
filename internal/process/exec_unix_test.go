@@ -74,3 +74,43 @@ func TestOwnedProcessHelper(t *testing.T) {
 	_ = child.Wait()
 	os.Exit(0)
 }
+
+func TestReplaceEnvRemovesInheritedVariables(t *testing.T) {
+	t.Setenv("CONDUIT_PROCESS_PARENT_ONLY", "leak")
+	for _, tc := range []struct {
+		replace bool
+		want    string
+	}{{replace: true, want: "absent"}, {replace: false, want: "present:leak"}} {
+		proc, err := (ExecLauncher{}).Start(Spec{
+			Path: os.Args[0], Args: []string{"-test.run=^TestEnvironmentHelper$"},
+			Env: []string{"CONDUIT_PROCESS_ENV_HELPER=1"}, ReplaceEnv: tc.replace,
+		})
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		_ = proc.Stdin().Close()
+		go io.Copy(io.Discard, proc.Stderr())
+		output, err := io.ReadAll(proc.Stdout())
+		if err != nil {
+			t.Fatalf("read helper output: %v", err)
+		}
+		if result := proc.Wait(); result.ExitCode != 0 {
+			t.Fatalf("helper exit %d: %v", result.ExitCode, result.Err)
+		}
+		if got := strings.TrimSpace(string(output)); got != tc.want {
+			t.Fatalf("ReplaceEnv=%v: parent variable %q, want %q", tc.replace, got, tc.want)
+		}
+	}
+}
+
+func TestEnvironmentHelper(t *testing.T) {
+	if os.Getenv("CONDUIT_PROCESS_ENV_HELPER") != "1" {
+		return
+	}
+	if value, ok := os.LookupEnv("CONDUIT_PROCESS_PARENT_ONLY"); ok {
+		fmt.Println("present:" + value)
+	} else {
+		fmt.Println("absent")
+	}
+	os.Exit(0)
+}

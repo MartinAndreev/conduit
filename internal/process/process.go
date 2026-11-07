@@ -11,6 +11,11 @@ type Spec struct {
 	Args []string
 	Dir  string
 	Env  []string
+	// ReplaceEnv selects how Env is applied. When true, Env is the complete
+	// child environment, even when empty, so inherited variables can be
+	// removed. When false, a non-nil Env is appended to the inherited
+	// os.Environ (the last duplicate key wins) and a nil Env inherits it.
+	ReplaceEnv bool
 }
 
 // Result is the observed result of reaping an owned process.

@@ -1,0 +1,8 @@
+# The prompt fails natively: a JSON-RPC error is the failed turn's terminal.
+{"from":"client","kind":"request","method":"initialize"}
+{"from":"agent","kind":"response","method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{},"agentInfo":{"name":"generic-acp","version":"1"},"authMethods":[]}}
+{"from":"client","kind":"request","method":"session/new"}
+{"from":"agent","kind":"response","method":"session/new","result":{"sessionId":"fx-session-01"}}
+{"from":"client","kind":"request","method":"session/prompt"}
+{"from":"agent","kind":"notification","method":"session/update","params":{"sessionId":"fx-session-01","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking"}}}}
+{"from":"agent","kind":"response","method":"session/prompt","error":{"code":-32603,"message":"Internal error","data":{"message":"API error (status 400): invalid request","http_status":400}}}

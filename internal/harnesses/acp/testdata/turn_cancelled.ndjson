@@ -1,0 +1,9 @@
+# Interrupt: session/cancel is a notification; the turn ends with the prompt response.
+{"from":"client","kind":"request","method":"initialize"}
+{"from":"agent","kind":"response","method":"initialize","result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"close":{}}},"agentInfo":{"name":"fx","version":"0.0.13"},"authMethods":[]}}
+{"from":"client","kind":"request","method":"session/new"}
+{"from":"agent","kind":"response","method":"session/new","result":{"sessionId":"fx-session-01"}}
+{"from":"client","kind":"request","method":"session/prompt"}
+{"from":"client","kind":"notification","method":"session/cancel","match":{"sessionId":"fx-session-01"}}
+{"from":"agent","kind":"notification","method":"session/update","params":{"sessionId":"fx-session-01","update":{"sessionUpdate":"session_info_update","title":"Long Task"}}}
+{"from":"agent","kind":"response","method":"session/prompt","result":{"stopReason":"cancelled","usage":{}}}
