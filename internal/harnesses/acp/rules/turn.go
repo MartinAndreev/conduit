@@ -52,6 +52,9 @@ const (
 	StartTurnBindingDiffers StartTurnKind = "binding_differs"
 	StartTurnUnavailable    StartTurnKind = "unavailable"
 	StartTurnOccupied       StartTurnKind = "occupied"
+	// StartTurnStaleRelease: the caller released an unresolved steer, but
+	// ACP has no steering, so nothing is ever unresolved.
+	StartTurnStaleRelease StartTurnKind = "stale_release"
 )
 
 type StartTurnFacts struct {
@@ -59,6 +62,9 @@ type StartTurnFacts struct {
 	AssignmentIdentityMatches bool
 	Closing                   bool
 	SessionLost               bool
+	// SteerReleaseRequested is true when the request names an unresolved
+	// steer to release (StartTurnRequest.ReleaseUnresolvedSteer).
+	SteerReleaseRequested bool
 	// TurnUnresolved is true while a session/prompt request has no response
 	// yet, including one whose caller stopped waiting.
 	TurnUnresolved bool
@@ -77,6 +83,12 @@ func DecideStartTurn(f StartTurnFacts) StartTurnDecision {
 		return StartTurnDecision{
 			Kind:   StartTurnBindingDiffers,
 			Reason: "session or assignment binding differs",
+		}
+	}
+	if f.SteerReleaseRequested {
+		return StartTurnDecision{
+			Kind:   StartTurnStaleRelease,
+			Reason: "no unresolved steer exists to release; ACP has no steering",
 		}
 	}
 	if f.Closing || f.SessionLost {

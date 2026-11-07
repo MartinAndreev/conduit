@@ -102,6 +102,17 @@ type StartTurnRequest struct {
 	Assignment     AssignmentRef
 	Input          []InputPart
 	ResultContract ResultContractRef
+	// ReleaseUnresolvedSteer is Conduit's explicit release of a steer whose
+	// native delivery the adapter could not reconcile and which therefore
+	// blocks new turns. When present, it must name exactly the MessageID of
+	// that unresolved steer. Conduit thereby accepts that the steer's delivery
+	// stays unknown: output observed while it was unresolved keeps unknown
+	// assignment attribution forever and is never relabelled to any revision.
+	// The release clears the block, and the turn then starts under the
+	// ordinary eligibility rules. A release naming a different message, or a
+	// release when no steer is unresolved, is ErrorStaleBinding and starts
+	// nothing. Absent means no release.
+	ReleaseUnresolvedSteer Optional[MessageID]
 }
 
 type StartTurnResult struct {

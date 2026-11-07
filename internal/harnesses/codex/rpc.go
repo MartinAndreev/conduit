@@ -64,6 +64,10 @@ type rpcClient struct {
 	closeErr error
 	writes   chan writeJob
 	done     chan struct{}
+	// readersDone closes once the stdout reader and the stderr drain ended.
+	readersDone chan struct{}
+	// routed closes once the stdout reader routed its last line.
+	routed chan struct{}
 
 	onNotification func(string, json.RawMessage)
 	onRequest      func(json.RawMessage, string, json.RawMessage)
@@ -81,15 +85,20 @@ func newRPCClient(proc processruntime.Process) *rpcClient {
 		pending:      make(map[uint64]*pendingRequest),
 		writes:       make(chan writeJob, 64),
 		done:         make(chan struct{}),
+		readersDone:  make(chan struct{}),
+		routed:       make(chan struct{}),
 	}
 }
 
 func (c *rpcClient) start(onNotification func(string, json.RawMessage), onRequest func(json.RawMessage, string, json.RawMessage)) {
 	c.onNotification = onNotification
 	c.onRequest = onRequest
+	var readers sync.WaitGroup
+	readers.Add(2)
 	go c.writeLoop()
-	go c.readLoop()
-	go io.Copy(io.Discard, c.process.Stderr())
+	go func() { defer readers.Done(); c.readLoop() }()
+	go func() { defer readers.Done(); _, _ = io.Copy(io.Discard, c.process.Stderr()) }()
+	go func() { readers.Wait(); close(c.readersDone) }()
 }
 
 // call returns sent=true once the request has been queued to the owned writer.
@@ -313,6 +322,7 @@ func (c *rpcClient) readLoop() {
 	if err == nil {
 		err = io.EOF
 	}
+	close(c.routed)
 	c.finish(err)
 }
 

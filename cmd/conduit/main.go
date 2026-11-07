@@ -29,7 +29,7 @@ func main() {
 		fmt.Println("conduit go-rewrite-a (development scaffold)")
 		return
 	}
-	if err := tui.RunLocale(startup.Service{Repository: startupinfra.Files{}, Detector: startupinfra.Detector{}}, i18n.Normalize(*language)); err != nil {
+	if err := tui.RunLocale(startup.Service{Repository: startupinfra.Files{}, Detector: startupinfra.Detector{}, Migrator: startupinfra.Files{}}, i18n.Normalize(*language)); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

@@ -28,7 +28,7 @@ func (f fixtureRepository) Read(context.Context, string) startup.ReadResult {
 	if f.name == "blocked" {
 		return startup.ReadResult{Kind: startup.Invalid, Err: configuration.ErrInvalid}
 	}
-	return startup.ReadResult{Kind: startup.Valid, Config: configuration.Config{SchemaVersion: 1, Harnesses: map[configuration.HarnessID]configuration.Harness{configuration.Codex: {}, configuration.OpenCode: {}}, Assignments: map[string]string{}}}
+	return startup.ReadResult{Kind: startup.Valid, Config: configuration.Config{SchemaVersion: configuration.CurrentSchema, Harnesses: map[configuration.HarnessID]configuration.Harness{configuration.Codex: {}, configuration.OpenCode: {}}, Assignments: map[string]string{}}}
 }
 func (f fixtureRepository) Publish(context.Context, string, configuration.Config) (startup.PublishKind, error) {
 	return startup.Published, nil

@@ -21,6 +21,7 @@ const (
 type fileReadFacts struct {
 	kind fileReadKind
 	data []byte
+	info os.FileInfo // identity of the opened file; set only when readable
 	err  error
 }
 
@@ -91,5 +92,5 @@ func readConfigurationFile(ctx context.Context, path string, source configuratio
 	if len(data) > maxConfigBytes {
 		return fileReadFacts{kind: fileTooLarge}
 	}
-	return fileReadFacts{kind: fileReadable, data: data}
+	return fileReadFacts{kind: fileReadable, data: data, info: actual}
 }

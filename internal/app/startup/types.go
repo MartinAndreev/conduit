@@ -4,6 +4,7 @@ package startup
 import (
 	"context"
 	"errors"
+	"os"
 	"sync"
 
 	"github.com/MartinAndreev/conduit/internal/configuration"
@@ -98,6 +99,15 @@ type ReadResult struct {
 	Kind   ReadKind
 	Config configuration.Config
 	Err    error
+	// Source is the file the Config was decoded from, present for a readable
+	// file. Migration compares it with the target immediately before replacing.
+	Source ConfigSource
+}
+
+// ConfigSource holds the exact bytes and file identity that a read decided on.
+type ConfigSource struct {
+	Data     []byte
+	Identity os.FileInfo
 }
 type PublishKind string
 
@@ -111,6 +121,28 @@ type Repository interface {
 	Read(context.Context, string) ReadResult
 	Publish(context.Context, string, configuration.Config) (PublishKind, error)
 }
+
+type MigrationKind string
+
+const (
+	// MigrationReplaced: the target now holds v2. An error alongside it is a
+	// post-replacement durability failure, as with Published.
+	MigrationReplaced MigrationKind = "replaced"
+	// MigrationSourceChanged: the target differed from Source before the
+	// replacement, so nothing was written. Startup re-reads and decides again.
+	MigrationSourceChanged MigrationKind = "source_changed"
+)
+
+// ConfigMigrator replaces a valid v1 configuration file with its v2 equivalent
+// (spec 009, "Замяна на v1 файла"). Unless the kind is MigrationReplaced the
+// original file is byte-for-byte unchanged; every failure is returned.
+type ConfigMigrator interface {
+	PublishMigration(ctx context.Context, path string, source ConfigSource, next configuration.Config) (MigrationKind, error)
+}
+
+// ErrMigrationBackupConflict means an existing v1 backup differs from the read
+// original. It is never overwritten, so migration stops without writing.
+var ErrMigrationBackupConflict = errors.New("existing configuration backup differs from the original")
 
 // ErrProbeCleanup means discovery could not confirm cleanup of an owned probe.
 // Adapters preserve the underlying cause; callers must stop further effects.

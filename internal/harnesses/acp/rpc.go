@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/MartinAndreev/conduit/internal/lockscope"
 	processruntime "github.com/MartinAndreev/conduit/internal/process"
@@ -68,13 +69,25 @@ type rpcClient struct {
 	pending  map[uint64]func(rpcResponse)
 	closed   bool
 	closeErr error
-	writes   chan writeJob
-	done     chan struct{}
+	// inFlight counts reply callbacks taken from pending and still running;
+	// finish waits (bounded by callbackGrace) for them to drain, so a reply
+	// already being handled publishes its outcome before onClosed.
+	inFlight      int
+	drained       chan struct{}
+	callbackGrace time.Duration
+	writes        chan writeJob
+	done          chan struct{}
 	// finished closes after finish has failed pending replies and run onClosed.
 	finished chan struct{}
 
 	onNotification func(method string, params json.RawMessage)
 	onRequest      func(id json.RawMessage, method string, params json.RawMessage)
+	// onStopping runs once, outside rpc locks, before pending replies are
+	// failed. It must not wait on anything: it starts owned-agent
+	// termination so a write blocked on a live but unresponsive agent
+	// fails, letting reply callbacks that wait for that write's settlement
+	// proceed.
+	onStopping func(error)
 	// onClosed runs once, outside rpc locks, after pending replies were failed.
 	onClosed func(error)
 }
@@ -335,16 +348,23 @@ func (c *rpcClient) route(envelope rpcEnvelope) {
 	}
 }
 
+// deliverResponse runs the reply callback as an in-flight callback: it is
+// taken from pending and counted in one critical section, so finish either
+// fails it itself or waits for it.
 func (c *rpcClient) deliverResponse(id uint64, envelope rpcEnvelope) {
 	var onReply func(rpcResponse)
 	_ = lockscope.WithMutexLock(&c.mu, func() error {
 		onReply = c.pending[id]
 		delete(c.pending, id)
+		if onReply != nil {
+			c.inFlight++
+		}
 		return nil
 	})
 	if onReply == nil {
 		return
 	}
+	defer c.callbackDone()
 	if envelope.Error != nil {
 		onReply(rpcResponse{err: envelope.Error})
 		return
@@ -352,10 +372,22 @@ func (c *rpcClient) deliverResponse(id uint64, envelope rpcEnvelope) {
 	onReply(rpcResponse{result: envelope.Result})
 }
 
+func (c *rpcClient) callbackDone() {
+	_ = lockscope.WithMutexLock(&c.mu, func() error {
+		c.inFlight--
+		if c.inFlight == 0 && c.drained != nil {
+			close(c.drained)
+			c.drained = nil
+		}
+		return nil
+	})
+}
+
 // finish stops the transport once, fails every pending reply with cause and
 // then reports the stop.
 func (c *rpcClient) finish(cause error) {
 	var pending map[uint64]func(rpcResponse)
+	var drained chan struct{}
 	first := false
 	_ = lockscope.WithMutexLock(&c.mu, func() error {
 		if c.closed {
@@ -366,14 +398,29 @@ func (c *rpcClient) finish(cause error) {
 		pending = c.pending
 		c.pending = make(map[uint64]func(rpcResponse))
 		close(c.done)
+		if c.inFlight > 0 {
+			drained = make(chan struct{})
+			c.drained = drained
+		}
 		first = true
 		return nil
 	})
 	if !first {
 		return
 	}
+	if c.onStopping != nil {
+		c.onStopping(cause)
+	}
 	for _, onReply := range pending {
 		onReply(rpcResponse{err: &transportError{cause: cause}})
+	}
+	if drained != nil {
+		timer := time.NewTimer(c.callbackGrace)
+		select {
+		case <-drained:
+		case <-timer.C:
+		}
+		timer.Stop()
 	}
 	if c.onClosed != nil {
 		c.onClosed(cause)

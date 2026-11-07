@@ -13,12 +13,15 @@ import (
 // nativeResult is the subset of a stream-json `result` message the adapter
 // interprets. It is a native observation; the adapter never invents one.
 type nativeResult struct {
-	Subtype          string          `json:"subtype"`
-	IsError          bool            `json:"is_error"`
-	Result           string          `json:"result"`
-	TerminalReason   string          `json:"terminal_reason"`
-	UserMessageUUID  string          `json:"user_message_uuid"`
-	UserMessageUUIDs []string        `json:"user_message_uuids"`
+	Subtype          string   `json:"subtype"`
+	IsError          bool     `json:"is_error"`
+	Result           string   `json:"result"`
+	TerminalReason   string   `json:"terminal_reason"`
+	UserMessageUUID  string   `json:"user_message_uuid"`
+	UserMessageUUIDs []string `json:"user_message_uuids"`
+	// QueuedTurnCount is nil when the field is absent, which is unknown and
+	// never treated as zero.
+	QueuedTurnCount  *uint64         `json:"queued_turn_count"`
 	Usage            *nativeUsage    `json:"usage"`
 	StructuredOutput json.RawMessage `json:"structured_output"`
 	Origin           *struct {
@@ -106,6 +109,11 @@ func (s *session) normalizeResult(line []byte) {
 	case rules.ResultTerminal:
 		s.completeTurn(result, facts)
 	}
+	// Only a final result proves that the named inputs (including a released
+	// steer) can produce no more output; an intermediate one does not.
+	if rules.DecideResultFinality(result.TerminalReason).Kind == rules.ResultFinal {
+		s.observeInputsFinished(result.inputUUIDs())
+	}
 }
 
 // decideResult evaluates DecideResultTerminal and, for a terminal result,
@@ -175,8 +183,9 @@ func (s *session) reportIntermediateResult(result nativeResult, facts resultFact
 }
 
 // completeTurn publishes the terminal observations in order (failure warning,
-// usage, result candidate, turn state) and then clears the turn. A correction
-// still lacking evidence keeps attribution unresolved.
+// usage, result candidate, turn state) and then clears the turn. Those events
+// are published while a correction may still lack evidence, so they keep
+// unresolved attribution. Then the unresolved correction is reconciled.
 func (s *session) completeTurn(result nativeResult, facts resultFacts) {
 	outcome := rules.DecideResultOutcome(rules.ResultOutcomeFacts{Subtype: result.Subtype, IsError: result.IsError})
 	if outcome.Kind == rules.ResultFailed {
@@ -195,19 +204,83 @@ func (s *session) completeTurn(result nativeResult, facts resultFacts) {
 	s.emitResultCandidate(result, facts)
 	s.emit(provider.TurnStateEvent{Previous: provider.TurnActive, Current: provider.TurnNativeTerminal, TerminalReason: result.reason()})
 
-	steerUnresolved := false
+	reconciliation := s.endTurn(facts.turn, result)
+	s.normalization.resetTurnItems()
+	s.reportSteerReconciliation(reconciliation)
+}
+
+// steerReconciliation is the copied outcome of DecideUnobservedSteer.
+type steerReconciliation struct {
+	decision rules.UnobservedSteerDecision
+	// released is the steer cleared as not observed.
+	released *pendingSteer
+}
+
+// endTurn clears the finished turn and, in the same critical section, decides
+// whether an unresolved correction was proven not observed. A not-observed
+// correction is released without advancing the assignment, so the session can
+// start the next turn; otherwise the doubt remains for late evidence or an
+// explicit Conduit release.
+func (s *session) endTurn(turn *activeTurn, result nativeResult) steerReconciliation {
+	var reconciliation steerReconciliation
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
-		if s.turn == facts.turn {
+		if s.turn == turn {
 			s.turn = nil
 		}
-		steerUnresolved = s.steer != nil
+		facts := rules.UnobservedSteerFacts{SteerUnresolved: s.steer != nil}
+		if s.steer != nil {
+			facts.LifecycleObserved = s.steer.lifecycleObserved
+			facts.Dispatch = s.steer.dispatch
+		}
+		if result.QueuedTurnCount != nil {
+			facts.QueuedTurnCountKnown = true
+			facts.QueuedTurnCount = *result.QueuedTurnCount
+		}
+		reconciliation.decision = rules.DecideUnobservedSteer(facts)
+		switch reconciliation.decision.Kind {
+		case rules.UnobservedSteerNotObserved:
+			reconciliation.released = s.steer
+			s.steer = nil
+		case rules.UnobservedSteerWithdrawn:
+			// Steer's dispatch claim sees withdrawn and sends nothing.
+			s.steer.withdrawn = true
+			reconciliation.released = s.steer
+			s.steer = nil
+		}
 		return nil
 	})
-	s.normalization.resetTurnItems()
-	if steerUnresolved {
+	return reconciliation
+}
+
+// reportSteerReconciliation publishes the reconciliation outcome after the
+// session mutex is released. A not-observed correction yields a warning and a
+// rejected, receipt-less control receipt that names no dispatched assignment:
+// the steer was not delivered and the assignment did not advance.
+func (s *session) reportSteerReconciliation(reconciliation steerReconciliation) {
+	switch reconciliation.decision.Kind {
+	case rules.UnobservedSteerNotObserved:
+		steer := reconciliation.released
+		s.emit(provider.ProtocolWarningEvent{
+			Code:                "steer_not_observed",
+			Detail:              provider.BoundedText{Text: reconciliation.decision.Reason},
+			OffendingNativeKind: "result",
+		})
+		s.emit(provider.ControlReceiptEvent{Receipt: provider.DeliveryReceipt{
+			RequestID: steer.request.RequestID, MessageID: steer.request.MessageID,
+			Disposition: provider.DeliveryRejected, Receipt: provider.ReceiptNone,
+			Targeting: provider.TargetSessionLease, DispatchedFor: provider.None[provider.AssignmentRef](),
+			ObservedAt: s.config.Now(),
+		}})
+	case rules.UnobservedSteerWithdrawn:
+		s.emit(provider.ProtocolWarningEvent{
+			Code:                "steer_withdrawn",
+			Detail:              provider.BoundedText{Text: reconciliation.decision.Reason},
+			OffendingNativeKind: "result",
+		})
+	case rules.UnobservedSteerDoubtRemains:
 		s.emit(provider.ProtocolWarningEvent{
 			Code:                "steer_delivery_unknown",
-			Detail:              provider.BoundedText{Text: "the turn ended without evidence that claude received the correction"},
+			Detail:              provider.BoundedText{Text: "the turn ended without evidence that claude received the correction: " + reconciliation.decision.Reason},
 			OffendingNativeKind: "result",
 		})
 	}

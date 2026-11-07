@@ -49,6 +49,10 @@ type session struct {
 	exitResult    processruntime.Result
 	exitDone      chan struct{}
 	exitOnce      sync.Once
+	// lossKillOnce guards the single group kill after an unexpected stop.
+	lossKillOnce sync.Once
+	// rootExited is set (under mu) once the App Server root's exit was observed.
+	rootExited bool
 
 	eventMu      sync.Mutex
 	eventSeq     uint64
@@ -167,15 +171,19 @@ func (s *session) StartTurn(ctx context.Context, request provider.StartTurnReque
 	}
 	var threadID string
 	err = lockscope.WithMutexLock(&s.mu, func() error {
+		release := request.ReleaseUnresolvedSteer
 		decision := rules.DecideStartTurn(rules.StartTurnFacts{
 			Closing: s.closing, TurnPending: s.turnPending, ActiveTurn: s.active.Present,
-			SessionMatches:            request.Session == s.ref,
-			AssignmentIdentityMatches: request.Assignment.SameIdentity(s.assignment),
+			SessionMatches:                request.Session == s.ref,
+			AssignmentIdentityMatches:     request.Assignment.SameIdentity(s.assignment),
+			SteerUnresolved:               s.steerPending != nil,
+			ReleaseRequested:              release.Present,
+			ReleaseMatchesUnresolvedSteer: release.Present && s.steerPending != nil && s.steerPending.request.MessageID == release.Value,
 		})
 		switch decision.Kind {
 		case rules.StartTurnClosing:
 			return adaptererror.New(provider.OperationStartTurn, provider.ErrorSessionLost, provider.RemoteEffectNotSent, nil, decision.Reason)
-		case rules.StartTurnOccupied:
+		case rules.StartTurnOccupied, rules.StartTurnReleaseNothingUnresolved, rules.StartTurnReleaseMismatch:
 			return adaptererror.New(provider.OperationStartTurn, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, nil, decision.Reason)
 		case rules.StartTurnBindingDiffers:
 			return adaptererror.New(provider.OperationStartTurn, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, nil, decision.Reason)
@@ -437,33 +445,91 @@ func (s *session) terminateOwnedProcess() {
 	s.closeOnce.Do(func() { close(s.closeDone) })
 }
 
-func (s *session) abortOpen() {
+// abortOpen hands the App Server of a failed open to one retained cleanup
+// owner (stdin close, group kill, pipe close, root reap and reader drain) and
+// waits for it within what remains of the caller's context, at most
+// CloseGrace. It returns cause with any cleanup failure joined; when the wait
+// ends first, the joined CleanupPendingError keeps the owner observable.
+func (s *session) abortOpen(ctx context.Context, cause error) error {
 	_ = lockscope.WithMutexLock(&s.mu, func() error { s.closing = true; return nil })
-	_ = s.rpc.closeInput()
-	_ = s.process.KillTree()
-	<-s.exitDone
+	owner := processruntime.NewCleanupOwnerWithDrain(s.process, s.rpc.readersDone)
+	owner.BeginCleanup()
+	waitCtx, cancel := context.WithTimeout(ctx, s.config.CloseGrace)
+	defer cancel()
+	state, waitErr := owner.Await(waitCtx)
 	s.broker.Finish(io.EOF)
+	if waitErr != nil {
+		return withCleanupFailure(cause, &CleanupPendingError{Owner: owner, Cause: waitErr})
+	}
+	return withCleanupFailure(cause, errors.Join(state.TreeTerminationErr, state.PipeCloseErr, state.StdinCloseErr, state.RootResult.ReleaseErr))
 }
 
+// CleanupPendingError reports that an aborted open returned before its owned
+// App Server was fully cleaned up. Owner keeps the cleanup observable: Done
+// closes on completion and Latest reports its state. Cause is the ended wait.
+type CleanupPendingError struct {
+	Owner *processruntime.CleanupOwner
+	Cause error
+}
+
+func (e *CleanupPendingError) Error() string { return "owned App Server cleanup is still pending" }
+func (e *CleanupPendingError) Unwrap() error { return e.Cause }
+
+// withCleanupFailure joins a cleanup failure into the open failure's cause
+// while keeping the open failure's public classification.
+func withCleanupFailure(cause, cleanup error) error {
+	if cleanup == nil {
+		return cause
+	}
+	var providerErr *provider.ProviderError
+	if errors.As(cause, &providerErr) {
+		joined := *providerErr
+		joined.Cause = errors.Join(providerErr.Cause, cleanup)
+		return &joined
+	}
+	return errors.Join(cause, cleanup)
+}
+
+// observeProcessExit reacts to the App Server root's exit as soon as it is
+// reaped, even while a descendant still holds stdout or stderr open
+// (process.Wait would block on those pipes). Group termination and stream
+// finalization are separate: an unexpected exit kills the group at once,
+// which ends the pipes; the loss is published only after the reader routed
+// every line it already received (turn/completed, usage, a final answer),
+// bounded by CloseGrace, so it follows those events. The full Wait result is
+// recorded and exitDone closes once Wait returned.
 func (s *session) observeProcessExit() {
+	rootExited, rootResult := processruntime.ObserveRootExit(s.process)
+	<-rootExited
+	closing := false
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		s.rootExited = true
+		closing = s.closing
+		return nil
+	})
+	if !closing {
+		s.lossKillOnce.Do(func() { _ = s.process.KillTree() })
+		timer := time.NewTimer(s.config.CloseGrace)
+		select {
+		case <-s.rpc.routed:
+		case <-timer.C:
+		}
+		timer.Stop()
+	}
+	var loss sessionLoss
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		loss = s.markLostLocked()
+		return nil
+	})
+	s.handleUnexpectedStop(loss, "app_server_process_exit",
+		adaptererror.New(provider.OperationReceiveEvent, provider.ErrorSessionLost, provider.RemoteEffectUnknown, rootResult().Err, "App Server process exited"))
 	result := s.process.Wait()
 	s.exitOnce.Do(func() {
-		var closing bool
-		var previous provider.SessionState
 		_ = lockscope.WithMutexLock(&s.mu, func() error {
 			s.exitResult = result
-			closing = s.closing
-			previous = s.state
-			if !closing {
-				s.state = provider.SessionLost
-			}
 			return nil
 		})
 		close(s.exitDone)
-		if !closing && previous != provider.SessionLost {
-			s.emit(provider.SessionStateEvent{Previous: previous, Current: provider.SessionLost, NativeStatus: "app_server_process_exit"})
-			s.broker.Finish(adaptererror.New(provider.OperationReceiveEvent, provider.ErrorSessionLost, provider.RemoteEffectUnknown, result.Err, "App Server process exited"))
-		}
 	})
 }
 
@@ -471,24 +537,58 @@ func (s *session) observeProcessExit() {
 // error such as an oversized line, or a failed write). The adapter can no longer
 // observe or control the App Server, so the session is lost and the owned
 // process is terminated instead of silently blocking on a full stdout pipe.
+// After a root exit, observeProcessExit owns the loss publication.
 func (s *session) handleTransportClosed(cause error) {
-	var previous provider.SessionState
-	lost := false
+	var loss sessionLoss
+	rootExited := false
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
-		if s.closing || s.state == provider.SessionLost {
-			return nil
+		rootExited = s.rootExited
+		if !rootExited {
+			loss = s.markLostLocked()
 		}
-		previous = s.state
-		s.state = provider.SessionLost
-		lost = true
 		return nil
 	})
-	if !lost {
+	if rootExited {
 		return
 	}
-	s.emit(provider.SessionStateEvent{Previous: previous, Current: provider.SessionLost, NativeStatus: "app_server_transport_closed"})
-	s.broker.Finish(adaptererror.New(provider.OperationReceiveEvent, provider.ErrorSessionLost, provider.RemoteEffectUnknown, cause, "App Server transport closed"))
-	_ = s.process.KillTree()
+	s.handleUnexpectedStop(loss, "app_server_transport_closed",
+		adaptererror.New(provider.OperationReceiveEvent, provider.ErrorSessionLost, provider.RemoteEffectUnknown, cause, "App Server transport closed"))
+}
+
+// sessionLoss is the outcome of markLostLocked: whether this caller performed
+// the state transition and whether Close or a failed open owns cleanup.
+type sessionLoss struct {
+	published bool
+	previous  provider.SessionState
+	closing   bool
+}
+
+// markLostLocked moves an open session to SessionLost once; s.mu must be held.
+// A closing session is not marked lost: its close or abort owns the outcome.
+func (s *session) markLostLocked() sessionLoss {
+	loss := sessionLoss{closing: s.closing}
+	if s.closing || s.state == provider.SessionLost {
+		return loss
+	}
+	loss.previous = s.state
+	s.state = provider.SessionLost
+	loss.published = true
+	return loss
+}
+
+// handleUnexpectedStop is the single cleanup owner for an unexpected App
+// Server exit and a transport failure, whichever is observed first. State
+// publication is deduplicated by markLostLocked; the group kill is a separate
+// obligation that runs once, because a root that exited on its own does not
+// prove that its descendants are gone.
+func (s *session) handleUnexpectedStop(loss sessionLoss, nativeStatus string, terminal error) {
+	if loss.published {
+		s.emit(provider.SessionStateEvent{Previous: loss.previous, Current: provider.SessionLost, NativeStatus: nativeStatus})
+		s.broker.Finish(terminal)
+	}
+	if !loss.closing {
+		s.lossKillOnce.Do(func() { _ = s.process.KillTree() })
+	}
 }
 
 func (s *session) emit(body provider.EventBody) {

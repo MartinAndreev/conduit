@@ -27,14 +27,21 @@ func (s *session) Steer(ctx context.Context, request provider.SteerRequest) (pro
 	if err != nil {
 		return provider.DeliveryReceipt{}, adaptererror.New(provider.OperationSteer, provider.ErrorProtocolViolation, provider.RemoteEffectNotSent, err, "could not allocate native message UUID")
 	}
-	steer := &pendingSteer{request: request, uuid: uuid}
+	steer := &pendingSteer{request: request, uuid: uuid, dispatch: rules.SteerReserved}
 	if err := s.reserveSteer(request, steer); err != nil {
+		return provider.DeliveryReceipt{}, err
+	}
+	if s.afterSteerReserved != nil {
+		s.afterSteerReserved()
+	}
+	if err := s.claimSteerDispatch(steer); err != nil {
 		return provider.DeliveryReceipt{}, err
 	}
 	sent, err := s.transport.send(ctx, s.userMessage(content, uuid, "now"))
 	if err != nil {
 		return provider.DeliveryReceipt{}, s.handleSteerDispatchFailure(request, steer, sent, err)
 	}
+	s.markSteerWritten(steer)
 	return provider.DeliveryReceipt{
 		RequestID: request.RequestID, MessageID: request.MessageID,
 		Disposition: provider.DeliveryTransportAccepted, Receipt: provider.ReceiptNone,
@@ -67,6 +74,30 @@ func (s *session) reserveSteer(request provider.SteerRequest, steer *pendingStee
 		}
 		s.steer = steer
 		s.turn.inputs[steer.uuid] = struct{}{}
+		return nil
+	})
+}
+
+// claimSteerDispatch moves a reserved steer to dispatching, unless the turn's
+// terminal result already withdrew it: then nothing is sent and the caller
+// gets stale_binding with RemoteEffectNotSent. Withdrawal and the claim are
+// decided under the session mutex, so exactly one of them wins.
+func (s *session) claimSteerDispatch(steer *pendingSteer) error {
+	return lockscope.WithMutexLock(&s.mu, func() error {
+		if steer.withdrawn {
+			return adaptererror.New(provider.OperationSteer, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, nil, "the turn ended before the correction was sent; it was withdrawn")
+		}
+		steer.dispatch = rules.SteerDispatching
+		return nil
+	})
+}
+
+// markSteerWritten records that the steer's write completed. The terminal
+// result reader judges "not observed" only for a steer marked written before
+// it read the result.
+func (s *session) markSteerWritten(steer *pendingSteer) {
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		steer.dispatch = rules.SteerWritten
 		return nil
 	})
 }
@@ -124,4 +155,35 @@ func (s *session) observeDeliveryEvidence(uuid string) {
 			NativeReceiptID: provider.Some(provider.NativeReceiptID(accepted.uuid)), ObservedAt: s.config.Now(),
 		}})
 	}
+}
+
+// observeSteerLifecycle records that claude reported a command lifecycle for
+// the unresolved correction. It is not delivery evidence by itself.
+// observeInputStarted records the input claude started processing (lifecycle
+// started or replay echo); output that follows belongs to it.
+func (s *session) observeInputStarted(uuid string) {
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		s.activeInput = uuid
+		return nil
+	})
+}
+
+// observeInputsFinished forgets released steers that a result named: once
+// claude reported their result, they can no longer produce output.
+func (s *session) observeInputsFinished(uuids []string) {
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		for _, uuid := range uuids {
+			delete(s.released, uuid)
+		}
+		return nil
+	})
+}
+
+func (s *session) observeSteerLifecycle(uuid string) {
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		if s.steer != nil && s.steer.uuid == uuid {
+			s.steer.lifecycleObserved = true
+		}
+		return nil
+	})
 }

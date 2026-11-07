@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -16,9 +17,25 @@ type HarnessID string
 const (
 	Codex    HarnessID = "codex"
 	OpenCode HarnessID = "opencode"
+	Claude   HarnessID = "claude"
+	FX       HarnessID = "fx"
 )
 
-func Supported() []HarnessID { return []HarnessID{Codex, OpenCode} }
+// Supported lists harnesses with implemented adapters. Consumers derive counts
+// from it; new IDs are added here only when their adapter is ready.
+func Supported() []HarnessID { return []HarnessID{Codex, OpenCode, Claude, FX} }
+
+// SchemaV1 and CurrentSchema are the schema versions this build understands.
+// Only v1 is accepted as a migration source; any version above CurrentSchema is
+// ErrFutureSchema and is never rewritten.
+const (
+	SchemaV1      = 1
+	CurrentSchema = 2
+)
+
+// schemaV1Harnesses is the frozen v1 membership: a v1 file has exactly these
+// entries. It is schema history, not the supported list.
+func schemaV1Harnesses() []HarnessID { return []HarnessID{Codex, OpenCode} }
 
 type DiscoveryKind string
 
@@ -28,6 +45,10 @@ const (
 	ProbeFailed  DiscoveryKind = "probe_failed"
 	ProbeTimeout DiscoveryKind = "probe_timeout"
 )
+
+// Conclusive reports whether discovery established the harness's presence or
+// absence. Probe failure and timeout are inconclusive.
+func (k DiscoveryKind) Conclusive() bool { return k == Found || k == Missing }
 
 type Observation struct {
 	Kind    DiscoveryKind `yaml:"kind"`
@@ -69,7 +90,7 @@ func Decode(data []byte) (Config, error) {
 			if root.Content[i].Value == "schema_version" {
 				var version int
 				if value := root.Content[i+1]; value.Kind == yaml.ScalarNode && value.Tag == "!!int" {
-					if err := value.Decode(&version); err == nil && version > 1 {
+					if err := value.Decode(&version); err == nil && version > CurrentSchema {
 						return Config{}, ErrFutureSchema
 					}
 				}
@@ -85,7 +106,7 @@ func Decode(data []byte) (Config, error) {
 	if err := d.Decode(&c); err != nil {
 		return Config{}, ErrInvalid
 	}
-	if c.SchemaVersion > 1 {
+	if c.SchemaVersion > CurrentSchema {
 		return Config{}, ErrFutureSchema
 	}
 	if err := Validate(c); err != nil {
@@ -115,7 +136,7 @@ func strictNode(n *yaml.Node) error {
 	return nil
 }
 
-// v1 rejects scalar coercion only after structural validation and version
+// v1 and v2 reject scalar coercion only after structural validation and version
 // recognition. Future schemas may define boolean, integer, or null fields.
 func strictScalarTypes(n *yaml.Node) error {
 	for i, child := range n.Content {
@@ -136,49 +157,121 @@ func strictScalarTypes(n *yaml.Node) error {
 	return nil
 }
 
+// Validate accepts a v1 file (exactly the v1 harness set, readable only as a
+// migration source) or a v2 file. In v2 a missing supported harness means "not
+// discovered yet"; an unknown harness ID is invalid. The remaining checks are
+// shared by both versions.
 func Validate(c Config) error {
-	if c.SchemaVersion != 1 || len(c.Harnesses) != len(Supported()) || c.Assignments == nil || len(c.Assignments) != 0 {
+	if c.Harnesses == nil || c.Assignments == nil || len(c.Assignments) != 0 {
 		return ErrInvalid
 	}
-	for _, id := range Supported() {
-		h, ok := c.Harnesses[id]
-		if !ok {
+	switch c.SchemaVersion {
+	case SchemaV1:
+		if len(c.Harnesses) != len(schemaV1Harnesses()) {
 			return ErrInvalid
 		}
-		if h.Executable != "" && (!filepath.IsAbs(h.Executable) || strings.ContainsAny(h.Executable, "\x00\r\n")) {
-			return ErrInvalid
+		for _, id := range schemaV1Harnesses() {
+			if _, ok := c.Harnesses[id]; !ok {
+				return ErrInvalid
+			}
 		}
-		if o := h.InitialDiscovery; o != nil {
-			switch o.Kind {
-			case Missing:
-				if o.Path != "" || o.Version != "" {
-					return ErrInvalid
-				}
-			case Found, ProbeFailed, ProbeTimeout:
-				if !filepath.IsAbs(o.Path) {
-					return ErrInvalid
-				}
-			default:
+	case CurrentSchema:
+		for id := range c.Harnesses {
+			if !slices.Contains(Supported(), id) {
 				return ErrInvalid
 			}
-			if o.Version != "" && o.Kind != Found {
-				return ErrInvalid
-			}
+		}
+	default:
+		return ErrInvalid
+	}
+	for _, h := range c.Harnesses {
+		if err := validateHarness(h); err != nil {
+			return err
 		}
 	}
 	return nil
 }
+func validateHarness(h Harness) error {
+	if h.Executable != "" && (!filepath.IsAbs(h.Executable) || strings.ContainsAny(h.Executable, "\x00\r\n")) {
+		return ErrInvalid
+	}
+	if o := h.InitialDiscovery; o != nil {
+		switch o.Kind {
+		case Missing:
+			if o.Path != "" || o.Version != "" {
+				return ErrInvalid
+			}
+		case Found, ProbeFailed, ProbeTimeout:
+			if !filepath.IsAbs(o.Path) {
+				return ErrInvalid
+			}
+		default:
+			return ErrInvalid
+		}
+		if o.Version != "" && o.Kind != Found {
+			return ErrInvalid
+		}
+	}
+	return nil
+}
+
+// Encode writes only the current schema; a v1 value must be migrated first.
 func Encode(c Config) ([]byte, error) {
+	if c.SchemaVersion != CurrentSchema {
+		return nil, ErrInvalid
+	}
 	if err := Validate(c); err != nil {
 		return nil, err
 	}
 	return yaml.Marshal(c)
 }
 func Initial(observations map[HarnessID]Observation) Config {
-	c := Config{SchemaVersion: 1, Harnesses: map[HarnessID]Harness{}, Assignments: map[string]string{}}
+	c := Config{SchemaVersion: CurrentSchema, Harnesses: map[HarnessID]Harness{}, Assignments: map[string]string{}}
 	for _, id := range Supported() {
 		o := observations[id]
 		c.Harnesses[id] = Harness{InitialDiscovery: &o}
 	}
 	return c
+}
+
+// MissingHarnesses lists supported harnesses without an entry, in Supported order.
+func MissingHarnesses(c Config) []HarnessID {
+	var missing []HarnessID
+	for _, id := range Supported() {
+		if _, ok := c.Harnesses[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	return missing
+}
+
+// MigrateV1 returns the v2 equivalent of a valid v1 file. Existing entries are
+// copied unchanged; only harnesses without an entry receive an initial
+// discovery observation, taken from discovered. It performs no I/O.
+func MigrateV1(c Config, discovered map[HarnessID]Observation) (Config, error) {
+	if c.SchemaVersion != SchemaV1 {
+		return Config{}, ErrInvalid
+	}
+	if err := Validate(c); err != nil {
+		return Config{}, err
+	}
+	next := Config{SchemaVersion: CurrentSchema, Harnesses: map[HarnessID]Harness{}, Assignments: map[string]string{}}
+	for id, h := range c.Harnesses {
+		if h.InitialDiscovery != nil {
+			o := *h.InitialDiscovery
+			h.InitialDiscovery = &o
+		}
+		next.Harnesses[id] = h
+	}
+	for _, id := range MissingHarnesses(c) {
+		o, ok := discovered[id]
+		if !ok {
+			return Config{}, ErrInvalid
+		}
+		next.Harnesses[id] = Harness{InitialDiscovery: &o}
+	}
+	if err := Validate(next); err != nil {
+		return Config{}, err
+	}
+	return next, nil
 }

@@ -26,6 +26,18 @@ func TestParseVersion(t *testing.T) {
 		{"codex bare", configuration.Codex, "0.159.3\n", "0.159.3"},
 		{"codex rejects opencode prefix", configuration.Codex, "opencode v2.0.22\n", ""},
 		{"codex rejects warning", configuration.Codex, "codex-cli 0.159.3\nwarning\n", ""},
+		{"claude live output", configuration.Claude, "2.1.316 (Claude Code)\n", "2.1.316"},
+		{"claude bare", configuration.Claude, "2.1.316\n", "2.1.316"},
+		{"claude other suffix", configuration.Claude, "2.1.316 (Other)\n", ""},
+		{"claude missing space", configuration.Claude, "2.1.316(Claude Code)\n", ""},
+		{"claude warning", configuration.Claude, "warning\n2.1.316 (Claude Code)\n", ""},
+		{"fx bare", configuration.FX, "1.4.0\n", "1.4.0"},
+		{"fx name prefix", configuration.FX, "fx 1.4.0\n", "1.4.0"},
+		{"fx v prefix", configuration.FX, "v1.4.0-rc.1\n", "1.4.0-rc.1"},
+		{"fx both prefixes", configuration.FX, "fx v1.4.0\n", ""},
+		{"fx unrecorded format", configuration.FX, "fx version 1.4.0\n", ""},
+		{"fx incomplete", configuration.FX, "fx 1.4\n", ""},
+		{"fx empty", configuration.FX, "", ""},
 		{"unsupported harness", configuration.HarnessID("unsupported"), "2.0.22", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

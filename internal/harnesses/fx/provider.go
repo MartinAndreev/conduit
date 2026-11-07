@@ -47,6 +47,12 @@ func Descriptor() acp.Descriptor {
 		Executable:     executable,
 		Args:           []string{"acp"},
 		ParseVersion:   ParseVersion,
+		// Martin, 2026-11-07: ProviderID selects the paying subscription
+		// through fx's "provider" option; Variant is reasoning effort
+		// through "effort" (recorded values auto, none, minimal, low,
+		// medium, high, xhigh).
+		ProviderConfigID: "provider",
+		VariantConfigID:  "effort",
 		// Martin, 2026-11-07: fx runs in mode "auto", the closest match to
 		// Codex workspace-write with approval never. fx's default "ask"
 		// would turn every change into an auto-rejected permission request.

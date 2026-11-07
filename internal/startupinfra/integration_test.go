@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 
@@ -110,5 +111,84 @@ func TestConcurrentInvalidWinnerRemains(t *testing.T) {
 	data, _ := os.ReadFile(path)
 	if string(data) != "schema_version: invalid\n" {
 		t.Fatal("invalid winner changed")
+	}
+}
+
+type failingMigration struct{ cause error }
+
+func (m failingMigration) PublishMigration(context.Context, string, startup.ConfigSource, configuration.Config) (startup.MigrationKind, error) {
+	return "", m.cause
+}
+
+// Real file adapter: a v1 file whose migration write fails, and a v3 file, both
+// stay byte-for-byte unchanged and block startup visibly.
+func TestApplicationFilesKeepV1AndFutureSchemaUntouched(t *testing.T) {
+	for name, tc := range map[string]struct {
+		data string
+		code string
+		err  error
+	}{
+		"v1 write failure": {"schema_version: 1\nharnesses: {codex: {}, opencode: {}}\nassignments: {}\n", "configuration_migration_failed", errors.New("disk full")},
+		"v3 future":        {"schema_version: 3\nharnesses: {codex: {}}\nassignments: {}\n", "configuration_future_schema", configuration.ErrFutureSchema},
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			f := Files{Home: func() (string, error) { return home, nil }}
+			path, _ := f.Resolve(context.Background())
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(tc.data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cause := tc.err
+			out := (startup.Service{Repository: f, Detector: localMissing{}, Migrator: failingMigration{cause}}).Initialize(context.Background(), nil)
+			if out.Snapshot.Status != startup.Blocked || out.Published || !errors.Is(out.Err, cause) {
+				t.Fatal(out)
+			}
+			diagnostics := out.Snapshot.Diagnostics
+			if diagnostics[len(diagnostics)-1].Code != tc.code {
+				t.Fatal(diagnostics)
+			}
+			after, _ := os.ReadFile(path)
+			if string(after) != tc.data {
+				t.Fatal("configuration changed")
+			}
+			entries, _ := os.ReadDir(filepath.Dir(path))
+			if len(entries) != 1 {
+				t.Fatal(entries)
+			}
+		})
+	}
+}
+
+type timeoutFor struct{ harness configuration.HarnessID }
+
+func (d timeoutFor) Discover(_ context.Context, h configuration.HarnessID, _ string) (configuration.Observation, error) {
+	if h == d.harness {
+		return configuration.Observation{Kind: configuration.ProbeTimeout, Path: filepath.Join(os.TempDir(), "conduit-fixture", string(h))}, nil
+	}
+	return configuration.Observation{Kind: configuration.Missing}, nil
+}
+
+// Real files: inconclusive discovery for a new harness leaves v1 byte-for-byte
+// unchanged (no backup either) and startup continues with a warning.
+func TestApplicationDefersMigrationOnInconclusiveDiscovery(t *testing.T) {
+	home := t.TempDir()
+	f := Files{Home: func() (string, error) { return home, nil }}
+	path, _ := f.Resolve(context.Background())
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(v1Data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out := (startup.Service{Repository: f, Detector: timeoutFor{configuration.Claude}, Migrator: f}).Initialize(context.Background(), nil)
+	if out.Snapshot.Status != startup.ReadyWithWarnings || out.Published {
+		t.Fatal(out)
+	}
+	assertFile(t, path, v1Data)
+	if names := directoryNames(t, path); !slices.Equal(names, []string{"config.yaml"}) {
+		t.Fatal(names)
 	}
 }

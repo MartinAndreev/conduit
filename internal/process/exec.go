@@ -31,43 +31,83 @@ func (ExecLauncher) Start(spec Spec) (started Process, err error) {
 			err = errors.Join(err, owned.close())
 		}
 	}()
-	stdin, err := cmd.StdinPipe()
+	pipes, err := newStdioPipes()
 	if err != nil {
 		return nil, err
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		_ = stdin.Close()
-		return nil, err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		_ = stdin.Close()
-		_ = stdout.Close()
-		return nil, err
-	}
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = pipes.childStdin, pipes.childStdout, pipes.childStderr
 	if err := cmd.Start(); err != nil {
-		_ = stdin.Close()
-		_ = stdout.Close()
-		_ = stderr.Close()
+		pipes.closeAll()
 		return nil, err
 	}
+	// The child holds its own copies now; the parent keeps only its ends, so
+	// stdout/stderr reach EOF once the root and every descendant closed them.
+	pipes.closeChildEnds()
 	if err := owned.activate(cmd.Process.Pid); err != nil {
 		_ = cmd.Process.Kill()
-		_ = stdin.Close()
-		_ = stdout.Close()
-		_ = stderr.Close()
 		_ = cmd.Wait()
+		pipes.closeParentEnds()
 		return nil, err
 	}
 	transferred = true
-	return &execProcess{
-		owned:  owned,
-		cmd:    cmd,
-		stdin:  stdin,
-		stdout: newTrackedReadCloser(stdout),
-		stderr: newTrackedReadCloser(stderr),
-	}, nil
+	proc := &execProcess{
+		owned:      owned,
+		cmd:        cmd,
+		stdin:      &onceWriteCloser{WriteCloser: pipes.stdin},
+		stdout:     newTrackedReadCloser(pipes.stdout),
+		stderr:     newTrackedReadCloser(pipes.stderr),
+		rootExited: make(chan struct{}),
+	}
+	go proc.reapRoot()
+	return proc, nil
+}
+
+// stdioPipes are created by the launcher instead of exec.Cmd's *Pipe helpers.
+// The child's ends are *os.File values, so exec.Cmd starts no copy goroutines
+// and its Wait does not close the parent's read ends; Wait can therefore reap
+// the root as soon as it exits, while descendants may still hold the pipes.
+type stdioPipes struct {
+	stdin                                *os.File
+	stdout, stderr                       *os.File
+	childStdin, childStdout, childStderr *os.File
+}
+
+func newStdioPipes() (*stdioPipes, error) {
+	var pipes stdioPipes
+	var err error
+	if pipes.childStdin, pipes.stdin, err = os.Pipe(); err != nil {
+		return nil, err
+	}
+	if pipes.stdout, pipes.childStdout, err = os.Pipe(); err != nil {
+		pipes.closeAll()
+		return nil, err
+	}
+	if pipes.stderr, pipes.childStderr, err = os.Pipe(); err != nil {
+		pipes.closeAll()
+		return nil, err
+	}
+	return &pipes, nil
+}
+
+func (p *stdioPipes) closeChildEnds() {
+	for _, file := range []*os.File{p.childStdin, p.childStdout, p.childStderr} {
+		if file != nil {
+			_ = file.Close()
+		}
+	}
+}
+
+func (p *stdioPipes) closeParentEnds() {
+	for _, file := range []*os.File{p.stdin, p.stdout, p.stderr} {
+		if file != nil {
+			_ = file.Close()
+		}
+	}
+}
+
+func (p *stdioPipes) closeAll() {
+	p.closeChildEnds()
+	p.closeParentEnds()
 }
 
 type execProcess struct {
@@ -77,9 +117,39 @@ type execProcess struct {
 	stdout *trackedReadCloser
 	stderr *trackedReadCloser
 
+	// rootExited closes when the reaper's single exec.Cmd.Wait returned;
+	// rootResult is written before that close and read only after it.
+	rootExited chan struct{}
+	rootResult Result
+
 	waitOnce sync.Once
 	result   Result
 }
+
+// reapRoot is the only caller of exec.Cmd.Wait. With *os.File stdio it
+// returns as soon as the root exits, regardless of descendants that still
+// hold the pipes, and it closes no parent pipe end.
+func (p *execProcess) reapRoot() {
+	err := p.cmd.Wait()
+	result := Result{ExitCode: -1, Err: err, ExitedAt: time.Now()}
+	if state := p.cmd.ProcessState; state != nil {
+		result.ExitCode = state.ExitCode()
+		result.Signal = processSignal(state)
+	}
+	p.rootResult = result
+	close(p.rootExited)
+}
+
+// RootResult is the root's exit status. It is valid once RootExited closed;
+// ReleaseErr stays empty because owned resources are released only by Wait.
+func (p *execProcess) RootResult() Result {
+	<-p.rootExited
+	return p.rootResult
+}
+
+// RootExited closes when the root process has exited and been reaped, even
+// while a descendant keeps stdout or stderr open.
+func (p *execProcess) RootExited() <-chan struct{} { return p.rootExited }
 
 type trackedReadCloser struct {
 	io.ReadCloser
@@ -114,21 +184,36 @@ func (p *execProcess) Interrupt() error        { return interruptOwnedProcess(p.
 func (p *execProcess) KillTree() error         { return p.owned.kill(p.cmd.Process.Pid) }
 func (p *execProcess) TreeKillSupported() bool { return ownedTreeKillSupported() }
 
+// Wait returns once the root was reaped and both output pipes reached EOF or
+// were closed. Descendants that retain either pipe keep it blocked, which is
+// why adapters observe RootExited and use KillTree before claiming
+// quiescence. Afterwards it releases the parent's pipe ends and the owned
+// resources (on Windows, the kill-on-close job).
 func (p *execProcess) Wait() Result {
 	p.waitOnce.Do(func() {
-		// StdoutPipe/StderrPipe require reads to complete before Wait. Descendants
-		// that retain either pipe keep this blocked, which is why adapters must use
-		// KillTree before claiming quiescence.
+		<-p.rootExited
 		<-p.stdout.done
 		<-p.stderr.done
-		err := p.cmd.Wait()
-		releaseErr := p.owned.close()
-		result := Result{ExitCode: -1, Err: err, ReleaseErr: releaseErr, ExitedAt: time.Now()}
-		if state := p.cmd.ProcessState; state != nil {
-			result.ExitCode = state.ExitCode()
-			result.Signal = processSignal(state)
-		}
+		_ = p.stdout.Close()
+		_ = p.stderr.Close()
+		_ = p.stdin.Close()
+		result := p.rootResult
+		result.ReleaseErr = p.owned.close()
 		p.result = result
 	})
 	return p.result
+}
+
+// onceWriteCloser closes stdin once and reports the first result to every
+// caller, like exec.Cmd's StdinPipe, so a later Close after Wait is not an
+// error.
+type onceWriteCloser struct {
+	io.WriteCloser
+	once sync.Once
+	err  error
+}
+
+func (w *onceWriteCloser) Close() error {
+	w.once.Do(func() { w.err = w.WriteCloser.Close() })
+	return w.err
 }

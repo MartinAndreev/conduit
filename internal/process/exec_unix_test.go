@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -71,6 +72,10 @@ func TestOwnedProcessHelper(t *testing.T) {
 		os.Exit(2)
 	}
 	fmt.Println(child.Process.Pid)
+	if slices.Contains(os.Args, "orphan") {
+		// The root exits at once; the descendant keeps stdout and stderr.
+		os.Exit(0)
+	}
 	_ = child.Wait()
 	os.Exit(0)
 }
@@ -113,4 +118,66 @@ func TestEnvironmentHelper(t *testing.T) {
 		fmt.Println("absent")
 	}
 	os.Exit(0)
+}
+
+// The root exits while its descendant keeps stdout open: RootExited fires
+// although Wait still blocks on the pipe; KillTree then lets Wait complete.
+func TestRootExitIsObservedWhileDescendantHoldsPipes(t *testing.T) {
+	proc, err := (ExecLauncher{}).Start(Spec{
+		Path: os.Args[0], Args: []string{"-test.run=TestOwnedProcessHelper", "--", "orphan"},
+		Env: []string{"CONDUIT_PROCESS_HELPER=1"},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	go io.Copy(io.Discard, proc.Stderr())
+	reader := bufio.NewReader(proc.Stdout())
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("read descendant PID: %v", err)
+	}
+	childPID, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil {
+		t.Fatalf("parse descendant PID %q: %v", line, err)
+	}
+	go io.Copy(io.Discard, reader)
+	rootExited, rootResult := ObserveRootExit(proc)
+	select {
+	case <-rootExited:
+	case <-time.After(5 * time.Second):
+		_ = proc.KillTree()
+		t.Fatal("root exit was not observed while a descendant held the pipes")
+	}
+	done := make(chan Result, 1)
+	if result := rootResult(); result.ExitCode != 0 || result.Err != nil {
+		t.Fatalf("root result = %+v, want a clean exit", result)
+	}
+	go func() { done <- proc.Wait() }()
+	select {
+	case <-done:
+		t.Fatal("Wait returned while a descendant still held stdout")
+	case <-time.After(200 * time.Millisecond):
+	}
+	if err := proc.KillTree(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		t.Fatalf("KillTree after root exit: %v", err)
+	}
+	select {
+	case result := <-done:
+		if result.ExitCode != 0 {
+			t.Fatalf("root result = %+v, want its own exit code 0", result)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Wait did not complete after the group kill")
+	}
+	if err := proc.Stdin().Close(); err != nil {
+		t.Fatalf("stdin Close after Wait = %v, want the first close result", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if syscall.Kill(childPID, 0) == syscall.ESRCH {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("descendant %d survived the group kill", childPID)
 }

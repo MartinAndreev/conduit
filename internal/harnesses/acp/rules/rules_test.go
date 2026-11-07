@@ -150,6 +150,8 @@ func TestDecideStartTurn(t *testing.T) {
 		{"closing", StartTurnFacts{SessionMatches: true, AssignmentIdentityMatches: true, Closing: true}, StartTurnUnavailable},
 		{"lost", StartTurnFacts{SessionMatches: true, AssignmentIdentityMatches: true, SessionLost: true}, StartTurnUnavailable},
 		{"occupied", StartTurnFacts{SessionMatches: true, AssignmentIdentityMatches: true, TurnUnresolved: true}, StartTurnOccupied},
+		{"steer release is stale", StartTurnFacts{SessionMatches: true, AssignmentIdentityMatches: true, SteerReleaseRequested: true}, StartTurnStaleRelease},
+		{"binding precedes release", StartTurnFacts{SteerReleaseRequested: true}, StartTurnBindingDiffers},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -247,14 +249,37 @@ func TestDecideSessionSetting(t *testing.T) {
 		facts SessionSettingFacts
 		want  SessionSettingKind
 	}{
-		{"apply", SessionSettingFacts{OptionAdvertised: true, ValueListed: true}, SessionSettingApply},
-		{"already current", SessionSettingFacts{OptionAdvertised: true, ValueListed: true, AlreadyCurrent: true}, SessionSettingAlreadyCurrent},
-		{"option missing", SessionSettingFacts{}, SessionSettingUnsupported},
-		{"value not listed", SessionSettingFacts{OptionAdvertised: true}, SessionSettingUnsupported},
+		{"apply", SessionSettingFacts{Requested: true, Mapped: true, OptionAdvertised: true, ValueListed: true}, SessionSettingApply},
+		{"already current", SessionSettingFacts{Requested: true, Mapped: true, OptionAdvertised: true, ValueListed: true, AlreadyCurrent: true}, SessionSettingAlreadyCurrent},
+		{"not requested", SessionSettingFacts{Mapped: true, OptionAdvertised: true}, SessionSettingNotRequested},
+		{"not requested without mapping", SessionSettingFacts{}, SessionSettingNotRequested},
+		{"no descriptor mapping", SessionSettingFacts{Requested: true, OptionAdvertised: true, ValueListed: true}, SessionSettingUnsupported},
+		{"option missing", SessionSettingFacts{Requested: true, Mapped: true}, SessionSettingUnsupported},
+		{"value not listed", SessionSettingFacts{Requested: true, Mapped: true, OptionAdvertised: true}, SessionSettingUnsupported},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := DecideSessionSetting(tc.facts); got.Kind != tc.want || got.Reason == "" {
+				t.Fatalf("decision = %+v", got)
+			}
+		})
+	}
+}
+
+func TestDecideSettingConfirmation(t *testing.T) {
+	cases := []struct {
+		name  string
+		facts SettingConfirmationFacts
+		want  SettingConfirmationKind
+	}{
+		{"confirmed", SettingConfirmationFacts{OptionsReported: true, OptionPresent: true, CurrentMatches: true}, SettingConfirmed},
+		{"other current value", SettingConfirmationFacts{OptionsReported: true, OptionPresent: true}, SettingNotApplied},
+		{"option dropped", SettingConfirmationFacts{OptionsReported: true}, SettingNotApplied},
+		{"no options reported", SettingConfirmationFacts{OptionPresent: true, CurrentMatches: true}, SettingUnverifiable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := DecideSettingConfirmation(tc.facts); got.Kind != tc.want || got.Reason == "" {
 				t.Fatalf("decision = %+v", got)
 			}
 		})

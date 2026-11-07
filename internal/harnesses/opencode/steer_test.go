@@ -83,7 +83,7 @@ func TestSteerUnsentFailureReleasesReservation(t *testing.T) {
 	if !errors.As(err, &e) || e.RemoteEffect != provider.RemoteEffectNotSent {
 		t.Fatalf("failure=%v", err)
 	}
-	if s.steerPending || s.deliveryUnknown || s.assignment != r.CurrentAssignment {
+	if s.steerPending || s.deliveryUnresolved() || s.assignment != r.CurrentAssignment {
 		t.Fatal("unsent failure left uncertainty or changed assignment")
 	}
 	control.promptErr = nil
@@ -108,7 +108,7 @@ func TestSteerNativeRejectionReleasesReservation(t *testing.T) {
 	if !errors.As(err, &e) || e.Code != provider.ErrorDeliveryRejected || e.RemoteEffect != provider.RemoteEffectNotSent || e.Retry != provider.RetryNever || e.Cause != nil {
 		t.Fatalf("rejection=%#v", e)
 	}
-	if s.steerPending || s.deliveryUnknown || s.assignment != r.CurrentAssignment || control.promptCalls != 1 {
+	if s.steerPending || s.deliveryUnresolved() || s.assignment != r.CurrentAssignment || control.promptCalls != 1 {
 		t.Fatal("native rejection left pending/uncertain state or changed assignment")
 	}
 	if !s.mu.TryLock() {
@@ -126,7 +126,7 @@ func TestSteerTransportFailureRemainsUncertain(t *testing.T) {
 	if !errors.As(err, &e) || e.Code != provider.ErrorDeliveryUnknown || e.RemoteEffect != provider.RemoteEffectPossiblySent || e.Retry != provider.RetryAfterReconcile || e.Cause != cause {
 		t.Fatalf("failure=%#v", e)
 	}
-	if s.steerPending || !s.deliveryUnknown || s.assignment != r.CurrentAssignment {
+	if s.steerPending || s.unresolvedSteer == nil || s.assignment != r.CurrentAssignment {
 		t.Fatal("transport failure lost uncertainty or changed assignment")
 	}
 	if !s.mu.TryLock() {

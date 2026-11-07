@@ -213,7 +213,8 @@ func (s *session) observeStatus(status string) {
 }
 
 // normalizeCommandLifecycle treats `started` as delivery evidence. Other states
-// (queued, cancelled, ...) are observations that never end a turn.
+// (queued, cancelled, ...) are observations that never end a turn; any state
+// naming the unresolved correction keeps its fate open at the turn's end.
 func (s *session) normalizeCommandLifecycle(line []byte) {
 	var message struct {
 		CommandUUID string `json:"command_uuid"`
@@ -222,7 +223,9 @@ func (s *session) normalizeCommandLifecycle(line []byte) {
 	if json.Unmarshal(line, &message) != nil {
 		return
 	}
+	s.observeSteerLifecycle(message.CommandUUID)
 	if message.State == "started" {
+		s.observeInputStarted(message.CommandUUID)
 		s.observeDeliveryEvidence(message.CommandUUID)
 	}
 }
@@ -254,6 +257,7 @@ func (s *session) normalizeUser(envelope messageEnvelope, line []byte) {
 		return
 	}
 	if message.IsReplay {
+		s.observeInputStarted(envelope.UUID)
 		s.observeDeliveryEvidence(envelope.UUID)
 		return
 	}

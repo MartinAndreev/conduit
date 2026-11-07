@@ -90,8 +90,7 @@ func (a *Adapter) OpenSession(ctx context.Context, request provider.OpenSessionR
 	s.emit(provider.SessionStateEvent{Previous: provider.SessionStateUnknown, Current: provider.SessionOpening})
 
 	if err := s.initialize(ctx, request); err != nil {
-		s.abortOpen()
-		return provider.OpenSessionResult{}, err
+		return provider.OpenSessionResult{}, s.abortOpen(ctx, err)
 	}
 	return provider.OpenSessionResult{Session: s, Contract: s.contract}, nil
 }

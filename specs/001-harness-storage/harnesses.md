@@ -165,6 +165,43 @@ storage, result acceptance, CLI wiring, or live model calls.
   close. With no proven final phase or native schema field, the adapter withholds
   `ResultCandidate` in this slice.
 
+## Unresolved steer reconciliation (accepted 2026-11-07)
+
+A steer whose native delivery is unknown must not block a session forever,
+and it must never be resolved by a silent timeout. Two layers:
+
+1. **Native reconcile.** The adapter resolves the doubt itself where the harness
+   can answer:
+   - **Claude:** a terminal result with no echo, no `command_lifecycle` for the
+     steer UUID and `queued_turn_count == 0` proves the message was not
+     observed. A rule in `claude/rules` decides this, and the binding is
+     released as "not observed".
+   - **OpenCode:** the session message history (`opencode api`) is queried
+     for the adapter-chosen native message ID. Presence in the history proves
+     delivery. A message still in the inbox keeps the doubt. Non-delivery is
+     proven only by history miss, inbox miss, history miss (delivery can move
+     the message between the reads); this assumes the move is monotonic. The
+     query is a named step with its own failure semantics. A failed query
+     keeps the doubt.
+2. **Explicit Conduit release.** When native reconcile cannot decide,
+   Conduit, which owns revisions, may start the next turn with
+   `StartTurnRequest.ReleaseUnresolvedSteer` naming the unresolved steer
+   `MessageID`.
+   - The adapter accepts the release only for exactly that message.
+   - Output from the affected turn keeps unknown attribution forever and is
+     never relabelled to the new revision.
+   - Any other value, or a release when nothing is unresolved, is
+     `stale_binding`.
+   - A released steer may still run natively. Claude attributes output only
+     when it is correlated to an input of the new turn, until a final result
+     names the released steer. OpenCode output carries no correlation to the
+     user message, so the adapter keeps every released message and attributes
+     no output until each is settled: in the history with a later idle marker
+     (an ended execution), or in neither history nor inbox. History presence
+     alone never settles it.
+
+ACP adapters have no steer, so the release does not apply to them.
+
 ## Implementation tasks
 
 | Area | Implemented slice |
@@ -192,3 +229,31 @@ storage, result acceptance, CLI wiring, or live model calls.
 - Archived evidence under adapter `testdata/` is sanitized; raw account,
   credential, rate-limit, and private reasoning records are excluded.
 - Run `gofmt`, `go test ./...`, `go vet ./...`, and `go build ./...`.
+
+## Known limitations after review (2026-11-07)
+
+The changes went through six independent Astra (`gpt-6-astra`, medium) review
+rounds. The final round reported one P2, which is fixed. The following limits
+remain accepted:
+
+- **No live evidence.** Claude was recorded only without a login. Tool events,
+  active-turn steer, `structured_output` and sandbox enforcement are
+  fixture-only and their capabilities stay `unknown`. fx, Grok, Cursor and
+  Antigravity are not installed on the development machine.
+- **OpenCode released steer:**
+  - After an explicit release, all output stays unattributed until a turn-end
+    query proves every released message settled. Settled means a durable
+    `idle` history message newer than it, or never admitted.
+  - The proof assumes the inbox → history transfer is monotonic.
+  - The history scan is bounded to 50 pages of 100 messages. Exceeding it is a
+    query failure and keeps the guard.
+- **Claude released steer.** A released steer that never produces a final
+  result keeps every later turn's output unattributed until that turn's own
+  input is positively correlated.
+- **OpenCode clean root exit.** A clean exit of `opencode run` does not kill
+  its process group, because the group may contain an intentionally detached
+  service.
+- **Platforms.** Windows code paths are cross-vetted and their tests are
+  compiled, but nothing has run on Windows. Linux has not been run natively.
+- **Local toolchain.** `go test -race ./internal/sessions` does not link with
+  the local MacOSX27 SDK. `internal/sessions/provider` races are covered.

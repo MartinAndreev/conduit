@@ -146,7 +146,7 @@ func TestUnresolvedSteerLeavesEnvelopeAttributionAbsent(t *testing.T) {
 	s := &session{config: withDefaults(Config{NewID: func(prefix string) (string, error) { return prefix, nil }}), ref: provider.SessionRef{AdapterSessionID: "s"}, nativeSession: "n", assignment: provider.AssignmentRef{Revision: 1}, broker: eventstream.New(8)}
 	stream, _ := s.broker.Subscribe()
 	s.emit(provider.SessionStateEvent{})
-	s.deliveryUnknown = true
+	s.unresolvedSteer = &unresolvedSteer{}
 	s.emit(provider.SessionStateEvent{})
 	resolved, _ := stream.Receive(context.Background())
 	unresolved, _ := stream.Receive(context.Background())

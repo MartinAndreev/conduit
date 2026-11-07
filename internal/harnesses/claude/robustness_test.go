@@ -196,7 +196,9 @@ func TestEventBufferOverflowFailsVisibly(t *testing.T) {
 		t.Fatal(err)
 	}
 	stream, _ := opened.Session.Events(context.Background(), provider.EventCursor{})
-	startTurn(t, opened.Session, noneContract)
+	// The overflow stops the owned process and its transport in reaction to
+	// the user message, so it may beat the completion of the StartTurn write.
+	startTurnRacingLoss(t, opened.Session)
 	time.Sleep(100 * time.Millisecond)
 	_, err = receiveUntilQuiet(stream, time.Second)
 	var providerErr *provider.ProviderError

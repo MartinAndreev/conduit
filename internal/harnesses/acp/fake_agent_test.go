@@ -45,6 +45,9 @@ type agentConn struct {
 	output *io.PipeWriter
 	killed <-chan struct{}
 	writeM sync.Mutex
+	// descendantHoldsStdout, set by serve before it returns, makes the root
+	// exit at once while stdout stays open until the group is killed.
+	descendantHoldsStdout bool
 }
 
 func (c *agentConn) write(value any) {
@@ -101,11 +104,13 @@ func (c *agentConn) next() (clientFrame, bool) {
 
 // fakeLauncher starts an in-process agent driven by serve.
 type fakeLauncher struct {
-	mu     sync.Mutex
-	serve  func(*agentConn)
-	specs  []processruntime.Spec
-	procs  []*fakeProcess
-	frames []clientFrame
+	// killErr, when set, makes KillTree fail without terminating anything.
+	killErr error
+	mu      sync.Mutex
+	serve   func(*agentConn)
+	specs   []processruntime.Spec
+	procs   []*fakeProcess
+	frames  []clientFrame
 }
 
 func (l *fakeLauncher) Start(spec processruntime.Spec) (processruntime.Process, error) {
@@ -114,7 +119,7 @@ func (l *fakeLauncher) Start(spec processruntime.Spec) (processruntime.Process, 
 	proc := &fakeProcess{
 		stdin: clientInput, stdout: clientOutput, stderr: io.NopCloser(eofReader{}),
 		serverInput: serverInput, serverOutput: serverOutput, done: make(chan struct{}),
-		killed: make(chan struct{}),
+		killed: make(chan struct{}), rootExited: make(chan struct{}), killErr: l.killErr,
 	}
 	_ = lockscope.WithMutexLock(&l.mu, func() error {
 		l.specs = append(l.specs, spec)
@@ -123,12 +128,21 @@ func (l *fakeLauncher) Start(spec processruntime.Spec) (processruntime.Process, 
 	})
 	recorder := &recordingReader{launcher: l, reader: serverInput}
 	conn := &agentConn{input: bufio.NewReader(recorder), output: serverOutput, killed: proc.killed}
+	// Like the production process: the root exits when serve returns (after
+	// stdin EOF unless a descendant keeps stdout), and Wait completes only
+	// after stdout closed as well.
 	go func() {
-		defer close(proc.done)
-		defer serverOutput.Close()
 		l.serve(conn)
-		// Drain until the adapter closes stdin or kills the process.
-		_, _ = io.Copy(io.Discard, conn.input)
+		if !conn.descendantHoldsStdout {
+			// Drain until the adapter closes stdin or kills the process.
+			_, _ = io.Copy(io.Discard, conn.input)
+		}
+		close(proc.rootExited)
+		if conn.descendantHoldsStdout {
+			<-proc.killed
+		}
+		_ = serverOutput.Close()
+		close(proc.done)
 	}()
 	return proc, nil
 }
@@ -211,7 +225,9 @@ type fakeProcess struct {
 	serverInput  *io.PipeReader
 	serverOutput *io.PipeWriter
 	done         chan struct{}
+	rootExited   chan struct{}
 	killed       chan struct{}
+	killErr      error
 	killOnce     sync.Once
 	kills        atomic.Int32
 	waits        atomic.Int32
@@ -226,6 +242,9 @@ func (*fakeProcess) TreeKillSupported() bool { return true }
 
 func (p *fakeProcess) KillTree() error {
 	p.kills.Add(1)
+	if p.killErr != nil {
+		return p.killErr
+	}
 	select {
 	case <-p.done:
 		return os.ErrProcessDone
@@ -244,6 +263,16 @@ func (p *fakeProcess) Wait() processruntime.Result {
 	<-p.done
 	return processruntime.Result{ExitedAt: time.Now()}
 }
+
+// RootExited and RootResult implement processruntime.RootExitObserver.
+func (p *fakeProcess) RootExited() <-chan struct{} { return p.rootExited }
+
+func (p *fakeProcess) RootResult() processruntime.Result {
+	<-p.rootExited
+	return processruntime.Result{ExitedAt: time.Now()}
+}
+
+var _ processruntime.RootExitObserver = (*fakeProcess)(nil)
 
 func (p *fakeProcess) reaped() bool {
 	select {
@@ -300,6 +329,7 @@ type testHarness struct {
 	adapter  *Adapter
 	session  provider.Session
 	stream   provider.EventStream
+	released chan struct{}
 }
 
 var testAssignment = provider.AssignmentRef{AssignmentID: "assignment-1", Revision: 1}
@@ -335,21 +365,49 @@ func openRequest(workspace string) provider.OpenSessionRequest {
 
 func openHarness(t *testing.T, serve func(*agentConn), mutate func(*Config)) *testHarness {
 	t.Helper()
-	launcher := &fakeLauncher{serve: serve}
+	return openHarnessFull(t, &fakeLauncher{serve: serve}, mutate, nil)
+}
+
+// openHarnessFull opens a session with optional test hooks. It always adds a
+// turn-release barrier so tests can start the next turn deterministically.
+func openHarnessFull(t *testing.T, launcher *fakeLauncher, mutate func(*Config), hooks testHooks) *testHarness {
+	t.Helper()
 	adapter := newTestAdapter(launcher, mutate)
+	released := make(chan struct{}, 64)
+	adapter.hooks = testHooks{}
+	for point, hook := range hooks {
+		adapter.hooks[point] = hook
+	}
+	userReleased := hooks[hookTurnReleased]
+	adapter.hooks[hookTurnReleased] = func(s *session) {
+		if userReleased != nil {
+			userReleased(s)
+		}
+		released <- struct{}{}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	opened, err := adapter.OpenSession(ctx, openRequest(t.TempDir()))
 	if err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
-	h := &testHarness{t: t, launcher: launcher, adapter: adapter, session: opened.Session}
+	h := &testHarness{t: t, launcher: launcher, adapter: adapter, session: opened.Session, released: released}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_, _ = h.session.Close(ctx, provider.CloseSessionRequest{Session: h.session.Ref(), Policy: provider.CloseInterruptThenClose})
 	})
 	return h
+}
+
+// awaitTurnReleased blocks until the next turn released its ending lease.
+func (h *testHarness) awaitTurnReleased() {
+	h.t.Helper()
+	select {
+	case <-h.released:
+	case <-time.After(5 * time.Second):
+		h.t.Fatal("timed out waiting for turn release")
+	}
 }
 
 func (h *testHarness) events() provider.EventStream {

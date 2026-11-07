@@ -55,7 +55,7 @@ func (Files) Read(ctx context.Context, path string) startup.ReadResult {
 	if err := ctx.Err(); err != nil {
 		return startup.ReadResult{Kind: startup.Unreadable, Err: err}
 	}
-	return startup.ReadResult{Kind: startup.Valid, Config: config}
+	return startup.ReadResult{Kind: startup.Valid, Config: config, Source: startup.ConfigSource{Data: facts.data, Identity: facts.info}}
 }
 
 // Publish syncs and closes a private same-directory temp file, then creates a

@@ -31,6 +31,15 @@ type controlReply struct {
 	err      error
 }
 
+// pendingControl is one control request awaiting its control_response.
+// commit, when set, runs on the reader goroutine with the native reply before
+// any later stdout line is routed, so its observation keeps wire order. It
+// does not run for a transport failure or after the caller stopped waiting.
+type pendingControl struct {
+	reply  chan controlReply
+	commit func(controlReply)
+}
+
 type writeJob struct {
 	payload []byte
 	result  chan error
@@ -62,11 +71,16 @@ type transport struct {
 
 	mu       sync.Mutex
 	nextID   uint64
-	pending  map[string]chan controlReply
+	pending  map[string]pendingControl
 	closed   bool
 	closeErr error
 	writes   chan writeJob
 	done     chan struct{}
+	// readersDone closes once the stdout reader and the stderr drain ended.
+	readersDone chan struct{}
+	// routed closes once the stdout reader routed its last line; every
+	// native event already received has then been handed to the handlers.
+	routed chan struct{}
 
 	// Handlers run on the reader goroutine in wire order. Set them before start.
 	onMessage        func(messageType string, line []byte)
@@ -83,16 +97,21 @@ func newTransport(proc processruntime.Process, maxLineBytes, stderrTailBytes int
 		maxLineBytes: maxLineBytes,
 		stderrTail:   newTailBuffer(stderrTailBytes),
 		nextID:       1,
-		pending:      make(map[string]chan controlReply),
+		pending:      make(map[string]pendingControl),
 		writes:       make(chan writeJob, 64),
 		done:         make(chan struct{}),
+		readersDone:  make(chan struct{}),
+		routed:       make(chan struct{}),
 	}
 }
 
 func (t *transport) start() {
+	var readers sync.WaitGroup
+	readers.Add(2)
 	go t.writeLoop()
-	go t.readLoop()
-	go func() { _, _ = io.Copy(t.stderrTail, t.process.Stderr()) }()
+	go func() { defer readers.Done(); t.readLoop() }()
+	go func() { defer readers.Done(); _, _ = io.Copy(t.stderrTail, t.process.Stderr()) }()
+	go func() { readers.Wait(); close(t.readersDone) }()
 }
 
 // send writes one message. sent is true once the message reached the owned
@@ -121,6 +140,12 @@ func (t *transport) send(ctx context.Context, message any) (bool, error) {
 // the caller stopped waiting is dropped, because both control requests used
 // here (initialize, interrupt) carry no state that needs late reconciliation.
 func (t *transport) control(ctx context.Context, request any) (json.RawMessage, bool, error) {
+	return t.controlCommitting(ctx, request, nil)
+}
+
+// controlCommitting is control with a commit callback that observes the
+// native reply on the reader goroutine in wire order (see pendingControl).
+func (t *transport) controlCommitting(ctx context.Context, request any, commit func(controlReply)) (json.RawMessage, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
@@ -136,7 +161,7 @@ func (t *transport) control(ctx context.Context, request any) (json.RawMessage, 
 		requestID = "conduit_req_" + strconv.FormatUint(t.nextID, 10)
 		t.nextID++
 		reply = make(chan controlReply, 1)
-		t.pending[requestID] = reply
+		t.pending[requestID] = pendingControl{reply: reply, commit: commit}
 		return nil
 	})
 	if err != nil {
@@ -239,6 +264,7 @@ func (t *transport) readLoop() {
 	if stopErr == nil {
 		stopErr = io.EOF
 	}
+	close(t.routed)
 	t.finish(stopErr)
 	// Keep draining so the owned process never blocks on a full stdout pipe and
 	// Process.Wait can observe the pipe's end.
@@ -265,20 +291,24 @@ func (t *transport) route(envelope inboundEnvelope, line []byte) {
 }
 
 func (t *transport) deliverControlResponse(envelope inboundEnvelope) {
-	var reply chan controlReply
+	var pending pendingControl
+	found := false
 	_ = lockscope.WithMutexLock(&t.mu, func() error {
-		reply = t.pending[envelope.Response.RequestID]
+		pending, found = t.pending[envelope.Response.RequestID]
 		delete(t.pending, envelope.Response.RequestID)
 		return nil
 	})
-	if reply == nil {
+	if !found {
 		return
 	}
+	reply := controlReply{response: envelope.Response.Response}
 	if envelope.Response.Subtype == "error" {
-		reply <- controlReply{err: &nativeControlError{Message: envelope.Response.Error}}
-		return
+		reply = controlReply{err: &nativeControlError{Message: envelope.Response.Error}}
 	}
-	reply <- controlReply{response: envelope.Response.Response}
+	if pending.commit != nil {
+		pending.commit(reply)
+	}
+	pending.reply <- reply
 }
 
 func (t *transport) removePending(requestID string) {
@@ -301,7 +331,7 @@ func (t *transport) terminalErr() error {
 }
 
 func (t *transport) finish(err error) {
-	var pending map[string]chan controlReply
+	var pending map[string]pendingControl
 	first := false
 	_ = lockscope.WithMutexLock(&t.mu, func() error {
 		if t.closed {
@@ -310,7 +340,7 @@ func (t *transport) finish(err error) {
 		t.closed = true
 		t.closeErr = err
 		pending = t.pending
-		t.pending = make(map[string]chan controlReply)
+		t.pending = make(map[string]pendingControl)
 		close(t.done)
 		first = true
 		return nil
@@ -318,8 +348,8 @@ func (t *transport) finish(err error) {
 	if !first {
 		return
 	}
-	for _, reply := range pending {
-		reply <- controlReply{err: err}
+	for _, waiting := range pending {
+		waiting.reply <- controlReply{err: err}
 	}
 	if t.onClosed != nil {
 		t.onClosed(err)

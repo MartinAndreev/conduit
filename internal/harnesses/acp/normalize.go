@@ -98,7 +98,7 @@ func (s *session) chunkItemID(nativeKind, messageID string) string {
 	scope := "session"
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
 		if s.turn != nil {
-			scope = "turn:" + string(s.turn.ref.AdapterTurnID)
+			scope = "turn:" + string(s.turn.bound.ref.AdapterTurnID)
 		}
 		return nil
 	})

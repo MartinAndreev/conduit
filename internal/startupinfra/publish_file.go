@@ -9,6 +9,12 @@ import (
 // prepareConfigurationTemp returns a complete, synced, closed file. Failure
 // removes only the temp created here; the destination has not been touched.
 func prepareConfigurationTemp(directory string, data []byte) (string, error) {
+	return prepareConfigurationTempWith(directory, data, func(f *os.File) writableConfigurationTemp { return f })
+}
+
+// prepareConfigurationTempWith lets tests substitute write/sync/close failures
+// on the real temp file; production always passes the *os.File itself.
+func prepareConfigurationTempWith(directory string, data []byte, writer func(*os.File) writableConfigurationTemp) (string, error) {
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return "", err
 	}
@@ -26,7 +32,7 @@ func prepareConfigurationTemp(directory string, data []byte) (string, error) {
 		return "", err
 	}
 	name := temp.Name()
-	if err := writeAndCloseConfigurationTemp(temp, data); err != nil {
+	if err := writeAndCloseConfigurationTemp(writer(temp), data); err != nil {
 		return "", errors.Join(err, removeConfigurationTemp(name))
 	}
 	return name, nil

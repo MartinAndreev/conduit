@@ -16,6 +16,7 @@ import (
 type Adapter struct {
 	descriptor Descriptor
 	config     Config
+	hooks      testHooks
 }
 
 // New composes the shared ACP client with a harness descriptor.
@@ -73,8 +74,7 @@ func (a *Adapter) OpenSession(ctx context.Context, request provider.OpenSessionR
 	s.startTransport()
 	s.emit(provider.SessionStateEvent{Previous: provider.SessionStateUnknown, Current: provider.SessionOpening})
 	if err := s.open(ctx, request); err != nil {
-		s.abortOpen()
-		return provider.OpenSessionResult{}, err
+		return provider.OpenSessionResult{}, s.abortOpen(ctx, err)
 	}
 	return provider.OpenSessionResult{Session: s, Contract: s.contract}, nil
 }
@@ -82,6 +82,7 @@ func (a *Adapter) OpenSession(ctx context.Context, request provider.OpenSessionR
 func newSession(a *Adapter, proc processruntime.Process, ref provider.SessionRef, request provider.OpenSessionRequest, actual provider.SchemaEnforcement) *session {
 	return &session{
 		adapter:      a,
+		hooks:        a.hooks,
 		config:       a.config,
 		descriptor:   a.descriptor,
 		ref:          ref,

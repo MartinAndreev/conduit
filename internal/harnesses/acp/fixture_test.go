@@ -127,6 +127,7 @@ func TestFixtureInterruptEndsWithCancelledResponse(t *testing.T) {
 		t.Fatalf("empty native usage must not emit usage: %+v", usage)
 	}
 	awaitReplay(t, failures)
+	h.awaitTurnReleased()
 	snapshot, err := h.session.ObserveState(context.Background(), provider.ObserveStateRequest{Session: h.session.Ref()})
 	if err != nil || snapshot.ActiveTurn.Present || snapshot.SessionState != provider.SessionOpen {
 		t.Fatalf("snapshot = %+v, %v", snapshot, err)
@@ -196,6 +197,7 @@ func TestFixturePromptErrorFailsTurn(t *testing.T) {
 		t.Fatalf("turn states = %+v", turns)
 	}
 	// The session stays usable after a failed turn.
+	h.awaitTurnReleased()
 	snapshot, _ := h.session.ObserveState(context.Background(), provider.ObserveStateRequest{Session: h.session.Ref()})
 	if snapshot.SessionState != provider.SessionOpen || snapshot.ActiveTurn.Present {
 		t.Fatalf("snapshot = %+v", snapshot)

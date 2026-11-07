@@ -188,9 +188,8 @@ resume/fork, `can_use_tool`, MCP конфигурация, фонови зада
 Прието (Martin, 2026-11-07): permission режимът е `acceptEdits` + sandbox за
 Bash + забранени web tools. Остава live проверка на sandbox settings ключовете.
 
-1. **Config schema v2.** Добавянето на `claude` към `configuration.Supported()`
-   чупи schema v1 проверката `len(Harnesses) == len(Supported())`. Нужни са
-   миграция или нова версия.
+Прието (Martin, 2026-11-07): config schema v2, виж
+`specs/009-harness-config-v2/spec.md`.
 Прието (Martin, 2026-11-07): абонаментът е единственият път, без API key режим.
 
 ## Реализация — 2026-11-07
@@ -205,8 +204,9 @@ Bash + забранени web tools. Остава live проверка на san
   `ErrorAuthFailed` с `RetryNever`.
 - Steer без доказателство за доставка към края на тура оставя сесията с
   неразрешена атрибуция. `StartTurn`/`Steer` получават `stale_binding`, докато
-  не дойде късно доказателство. Това е същият проблем като при OpenCode
-  `deliveryUnknown` и чака общо решение за reconcile.
+  не дойде късно доказателство. Решение (Martin, 2026-11-07): двуслойният
+  reconcile в `specs/001-harness-storage/harnesses.md` („Unresolved steer
+  reconciliation“) отключва сесията.
 - `explicit_detach` винаги се отказва. `require_quiescent` е разрешен при
   idle сесия.
 - Всички native-зависими capabilities са `unknown` до live запис с login.

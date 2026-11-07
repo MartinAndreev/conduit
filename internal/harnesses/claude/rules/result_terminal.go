@@ -43,7 +43,7 @@ func DecideResultTerminal(f ResultTerminalFacts) ResultTerminalDecision {
 			Reason: "result does not reference an input of the active turn",
 		}
 	}
-	if f.TerminalReason == TerminalReasonAbortedStreaming || f.TerminalReason == TerminalReasonAbortedTools {
+	if DecideResultFinality(f.TerminalReason).Kind == ResultFinalIntermediate {
 		return ResultTerminalDecision{
 			Kind:   ResultIntermediate,
 			Reason: "result was aborted by a steer and the turn continues",
@@ -52,6 +52,36 @@ func DecideResultTerminal(f ResultTerminalFacts) ResultTerminalDecision {
 	return ResultTerminalDecision{
 		Kind:   ResultTerminal,
 		Reason: "result references the active turn and ends it",
+	}
+}
+
+// ResultFinalityKind classifies a native result by its terminal reason alone,
+// independent of whether its inputs belong to the local active turn.
+type ResultFinalityKind string
+
+const (
+	ResultFinal             ResultFinalityKind = "final"
+	ResultFinalIntermediate ResultFinalityKind = "intermediate"
+)
+
+type ResultFinalityDecision struct {
+	Kind   ResultFinalityKind
+	Reason string
+}
+
+// DecideResultFinality answers whether a native result ends the native work
+// for the inputs it names. aborted_streaming and aborted_tools are
+// intermediate: claude continues the same work after a steer preempted it.
+func DecideResultFinality(terminalReason string) ResultFinalityDecision {
+	if terminalReason == TerminalReasonAbortedStreaming || terminalReason == TerminalReasonAbortedTools {
+		return ResultFinalityDecision{
+			Kind:   ResultFinalIntermediate,
+			Reason: "result was aborted by a steer and the native work continues",
+		}
+	}
+	return ResultFinalityDecision{
+		Kind:   ResultFinal,
+		Reason: "result ends the native work for its inputs",
 	}
 }
 

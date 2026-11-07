@@ -131,8 +131,10 @@ func TestOpenSessionRefusesMissingLoginAndReapsProcess(t *testing.T) {
 		t.Fatalf("err = %v, want auth_failed", err)
 	}
 	proc := fake.process()
-	if !proc.killed.Load() || !proc.exited() {
-		t.Fatalf("owned process killed=%v exited=%v", proc.killed.Load(), proc.exited())
+	// The cleanup owner closes stdin and kills the group concurrently, so the
+	// fake may exit before the kill; the group kill is still requested.
+	if proc.killCalls.Load() == 0 || !proc.exited() {
+		t.Fatalf("owned process kill requests=%d exited=%v", proc.killCalls.Load(), proc.exited())
 	}
 	deadline := time.Now().Add(time.Second)
 	for !proc.waited.Load() && time.Now().Before(deadline) {

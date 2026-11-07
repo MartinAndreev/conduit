@@ -3,6 +3,7 @@ package startup
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"sync"
@@ -10,6 +11,11 @@ import (
 
 	"github.com/MartinAndreev/conduit/internal/configuration"
 )
+
+// testRoot is absolute on every OS (os.TempDir is absolute); nothing is
+// created under it. Paths that configuration validation checks use it.
+var testRoot = filepath.Join(os.TempDir(), "conduit-startup-test")
+var explicitCodex = filepath.Join(testRoot, "explicit", "codex")
 
 type fakeRepository struct {
 	reads        []ReadResult
@@ -65,7 +71,7 @@ func (d *fakeDetector) Discover(_ context.Context, h configuration.HarnessID, ov
 		if d.kind == configuration.Missing {
 			return ""
 		}
-		return filepath.Join("/", "tools", string(h))
+		return filepath.Join(testRoot, "tools", string(h))
 	}(), Version: d.version}, d.err
 }
 func setup(t *testing.T) (*fakeRepository, *fakeDetector, *[]string) {
@@ -78,11 +84,11 @@ func setup(t *testing.T) (*fakeRepository, *fakeDetector, *[]string) {
 func TestFirstRunOrder(t *testing.T) {
 	r, d, events := setup(t)
 	p := NewProgress()
-	result := (Service{r, d}).Initialize(context.Background(), p)
+	result := (Service{Repository: r, Detector: d}).Initialize(context.Background(), p)
 	if result.Snapshot.Status != Ready || !result.Published {
 		t.Fatal(result)
 	}
-	if !reflect.DeepEqual(*events, []string{"resolve", "read", "codex:", "opencode:", "publish", "read"}) {
+	if !reflect.DeepEqual(*events, []string{"resolve", "read", "codex:", "opencode:", "claude:", "fx:", "publish", "read"}) {
 		t.Fatal(*events)
 	}
 	if len(r.proposed.Assignments) != 0 {
@@ -97,15 +103,15 @@ func TestNoHarnessWarning(t *testing.T) {
 	r, d, _ := setup(t)
 	d.kind = configuration.Missing
 	d.version = ""
-	result := (Service{r, d}).Initialize(context.Background(), nil)
-	if result.Snapshot.Status != ReadyWithWarnings || len(result.Snapshot.Diagnostics) != 2 {
+	result := (Service{Repository: r, Detector: d}).Initialize(context.Background(), nil)
+	if result.Snapshot.Status != ReadyWithWarnings || len(result.Snapshot.Diagnostics) != len(configuration.Supported()) {
 		t.Fatal(result)
 	}
 }
 func TestExistingConfigUsesOverridesWithoutWrite(t *testing.T) {
 	r, d, _ := setup(t)
-	r.reads = []ReadResult{{Kind: Valid, Config: configuration.Config{Harnesses: map[configuration.HarnessID]configuration.Harness{configuration.Codex: {Executable: "/explicit"}}}}}
-	out := (Service{r, d}).Initialize(context.Background(), nil)
+	r.reads = []ReadResult{{Kind: Valid, Config: configuration.Config{SchemaVersion: configuration.CurrentSchema, Harnesses: map[configuration.HarnessID]configuration.Harness{configuration.Codex: {Executable: "/explicit"}}}}}
+	out := (Service{Repository: r, Detector: d}).Initialize(context.Background(), nil)
 	if out.Snapshot.Status != Ready || r.publishes != 0 {
 		t.Fatal(out)
 	}
@@ -118,7 +124,7 @@ func TestBadInitialConfigStopsEffects(t *testing.T) {
 		t.Run(string(kind), func(t *testing.T) {
 			r, d, _ := setup(t)
 			r.reads = []ReadResult{{Kind: kind, Err: errors.New("unsafe-secret")}}
-			out := (Service{r, d}).Initialize(context.Background(), nil)
+			out := (Service{Repository: r, Detector: d}).Initialize(context.Background(), nil)
 			if out.Snapshot.Status != Blocked || d.calls != 0 || r.publishes != 0 {
 				t.Fatal(out)
 			}
@@ -142,7 +148,7 @@ func TestCancellationBeforeDuringAndAfterPublish(t *testing.T) {
 			case "publish":
 				r.afterPublish = cancel
 			}
-			out := (Service{r, d}).Initialize(ctx, nil)
+			out := (Service{Repository: r, Detector: d}).Initialize(ctx, nil)
 			if out.Snapshot.Status != Cancelled || !errors.Is(out.Err, context.Canceled) {
 				t.Fatal(out)
 			}
@@ -171,7 +177,7 @@ func TestPublicationReconciliationAndFailures(t *testing.T) {
 			r.publishKind = tc.kind
 			r.publishErr = tc.publishErr
 			r.reads[1] = ReadResult{Kind: tc.final, Err: errors.New("read failed")}
-			out := (Service{r, d}).Initialize(context.Background(), nil)
+			out := (Service{Repository: r, Detector: d}).Initialize(context.Background(), nil)
 			want := Blocked
 			if tc.kind == AlreadyExists && tc.final == Valid {
 				want = Ready
@@ -184,8 +190,8 @@ func TestPublicationReconciliationAndFailures(t *testing.T) {
 }
 func TestRetryCreatesNewOperationAndRereads(t *testing.T) {
 	r, d, _ := setup(t)
-	r.reads = []ReadResult{{Kind: Invalid}, {Kind: Valid}}
-	s := Service{r, d}
+	r.reads = []ReadResult{{Kind: Invalid}, {Kind: Valid, Config: configuration.Config{SchemaVersion: configuration.CurrentSchema}}}
+	s := Service{Repository: r, Detector: d}
 	first := s.Initialize(context.Background(), nil)
 	second := s.Initialize(context.Background(), nil)
 	if first.Snapshot.Status != Blocked || second.Snapshot.Status != Ready || first.Snapshot.OperationID == second.Snapshot.OperationID {
@@ -234,17 +240,17 @@ func TestClosedMailboxDoesNotLoseTerminalOutcome(t *testing.T) {
 	r, d, _ := setup(t)
 	p := NewProgress()
 	p.Close()
-	out := (Service{r, d}).Initialize(context.Background(), p)
+	out := (Service{Repository: r, Detector: d}).Initialize(context.Background(), p)
 	if out.Snapshot.Status != Ready {
 		t.Fatal(out)
 	}
 }
 func TestExplicitMissingHasSpecificDiagnostic(t *testing.T) {
 	r, d, _ := setup(t)
-	r.reads = []ReadResult{{Kind: Valid, Config: configuration.Config{Harnesses: map[configuration.HarnessID]configuration.Harness{configuration.Codex: {Executable: "/explicit"}}}}}
+	r.reads = []ReadResult{{Kind: Valid, Config: configuration.Config{SchemaVersion: configuration.CurrentSchema, Harnesses: map[configuration.HarnessID]configuration.Harness{configuration.Codex: {Executable: "/explicit"}}}}}
 	d.kind = configuration.Missing
 	d.version = ""
-	out := (Service{r, d}).Initialize(context.Background(), nil)
+	out := (Service{Repository: r, Detector: d}).Initialize(context.Background(), nil)
 	if out.Snapshot.Diagnostics[0].Code != "harness_override_missing" {
 		t.Fatal(out)
 	}
@@ -261,7 +267,7 @@ func TestProbeCleanupFailureStopsStartupAndPreservesCause(t *testing.T) {
 			if cancelled {
 				detector.cancel = cancel
 			}
-			outcome := (Service{repository, detector}).Initialize(ctx, nil)
+			outcome := (Service{Repository: repository, Detector: detector}).Initialize(ctx, nil)
 			want := Blocked
 			if cancelled {
 				want = Cancelled
@@ -306,7 +312,7 @@ func TestOutcomeRetainsPendingCleanupObserver(t *testing.T) {
 	repository, detector, _ := setup(t)
 	observer := &testCleanupObserver{done: make(chan struct{})}
 	detector.err = testPendingCleanup{observer, context.DeadlineExceeded}
-	outcome := (Service{repository, detector}).Initialize(context.Background(), nil)
+	outcome := (Service{Repository: repository, Detector: detector}).Initialize(context.Background(), nil)
 	if outcome.PendingCleanup != observer || repository.publishes != 0 || outcome.Snapshot.Status != Blocked {
 		t.Fatal(outcome)
 	}
@@ -319,7 +325,7 @@ func TestCancelledDiscoveryPreservesLaunchCause(t *testing.T) {
 	cause := errors.New("launch failed")
 	detector.cancel = cancel
 	detector.err = errors.Join(context.Canceled, cause)
-	outcome := (Service{repository, detector}).Initialize(ctx, nil)
+	outcome := (Service{Repository: repository, Detector: detector}).Initialize(ctx, nil)
 	if outcome.Snapshot.Status != Cancelled || !errors.Is(outcome.Err, context.Canceled) || !errors.Is(outcome.Err, cause) || repository.publishes != 0 {
 		t.Fatal(outcome)
 	}
@@ -332,8 +338,320 @@ func TestCancelledPublishedConfigurationPreservesSyncCause(t *testing.T) {
 	repository.publishKind = Published
 	repository.publishErr = cause
 	repository.afterPublish = cancel
-	outcome := (Service{repository, detector}).Initialize(ctx, nil)
+	outcome := (Service{Repository: repository, Detector: detector}).Initialize(ctx, nil)
 	if outcome.Snapshot.Status != Cancelled || !outcome.Published || !errors.Is(outcome.Err, context.Canceled) || !errors.Is(outcome.Err, cause) {
 		t.Fatal(outcome)
 	}
+}
+
+type fakeMigrator struct {
+	events  *[]string
+	calls   int
+	next    configuration.Config
+	source  ConfigSource
+	results []MigrationKind
+	err     error
+	file    *[]byte
+}
+
+// The fake returns results in order; the last one repeats.
+func (m *fakeMigrator) PublishMigration(_ context.Context, _ string, source ConfigSource, next configuration.Config) (MigrationKind, error) {
+	*m.events = append(*m.events, "migrate")
+	m.calls++
+	m.next = next
+	m.source = source
+	kind := m.results[0]
+	if len(m.results) > 1 {
+		m.results = m.results[1:]
+	}
+	if m.err == nil && kind == MigrationReplaced && m.file != nil {
+		*m.file = []byte("schema_version: 2\n")
+	}
+	return kind, m.err
+}
+
+func v1Config() configuration.Config {
+	return configuration.Config{SchemaVersion: configuration.SchemaV1, Assignments: map[string]string{}, Harnesses: map[configuration.HarnessID]configuration.Harness{
+		configuration.Codex:    {Executable: explicitCodex, InitialDiscovery: &configuration.Observation{Kind: configuration.Found, Path: explicitCodex, Version: "0.1.0"}},
+		configuration.OpenCode: {},
+	}}
+}
+
+func TestV1MigrationRecordsOnlyMissingHarnesses(t *testing.T) {
+	r, d, events := setup(t)
+	r.reads = []ReadResult{{Kind: Valid, Config: v1Config()}, {Kind: Valid}}
+	m := &fakeMigrator{events: events, results: []MigrationKind{MigrationReplaced}}
+	out := (Service{Repository: r, Detector: d, Migrator: m}).Initialize(context.Background(), nil)
+	if out.Snapshot.Status != Ready || !out.Published || r.publishes != 0 || m.calls != 1 {
+		t.Fatal(out, r.publishes, m.calls)
+	}
+	// One discovery pass per supported harness, then the migration write and
+	// the final reread. No extra probes run for the migration.
+	if !reflect.DeepEqual(*events, []string{"resolve", "read", "codex:" + explicitCodex, "opencode:", "claude:", "fx:", "migrate", "read"}) {
+		t.Fatal(*events)
+	}
+	original := v1Config()
+	if m.next.SchemaVersion != configuration.CurrentSchema || !reflect.DeepEqual(m.next.Harnesses[configuration.Codex], original.Harnesses[configuration.Codex]) || !reflect.DeepEqual(m.next.Harnesses[configuration.OpenCode], original.Harnesses[configuration.OpenCode]) {
+		t.Fatal("existing v1 entries changed", m.next)
+	}
+	for _, id := range []configuration.HarnessID{configuration.Claude, configuration.FX} {
+		o := m.next.Harnesses[id].InitialDiscovery
+		if o == nil || o.Kind != configuration.Found || o.Path != filepath.Join(testRoot, "tools", string(id)) {
+			t.Fatal(id, o)
+		}
+	}
+	if out.Snapshot.Steps[2].Status != Completed {
+		t.Fatal(out.Snapshot.Steps)
+	}
+}
+
+func TestV1MigrationFailureKeepsOriginalAndIsVisible(t *testing.T) {
+	for name, m := range map[string]*fakeMigrator{
+		"write failure":   {err: errors.New("disk full"), results: []MigrationKind{""}},
+		"backup conflict": {err: ErrMigrationBackupConflict, results: []MigrationKind{""}},
+		"unknown result":  {results: []MigrationKind{"other"}},
+		"no migrator":     nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, d, events := setup(t)
+			original := []byte("schema_version: 1\nharnesses: {codex: {}, opencode: {}}\nassignments: {}\n")
+			file := append([]byte(nil), original...)
+			r.reads = []ReadResult{{Kind: Valid, Config: v1Config()}}
+			s := Service{Repository: r, Detector: d}
+			if m != nil {
+				m.events = events
+				m.file = &file
+				s.Migrator = m
+			}
+			out := s.Initialize(context.Background(), nil)
+			if out.Snapshot.Status != Blocked || out.Published || out.Err == nil || r.publishes != 0 {
+				t.Fatal(out)
+			}
+			if string(file) != string(original) {
+				t.Fatal("v1 file changed")
+			}
+			if m != nil && m.err != nil && !errors.Is(out.Err, m.err) {
+				t.Fatal("cause lost", out.Err)
+			}
+			last := out.Snapshot.Diagnostics[len(out.Snapshot.Diagnostics)-1]
+			want := "configuration_migration_failed"
+			if m == nil {
+				want = "configuration_migration_unavailable"
+			} else if errors.Is(m.err, ErrMigrationBackupConflict) {
+				want = "configuration_migration_backup_conflict"
+			}
+			if last.Code != want || last.Severity != Error || last.Step != CreateSettings {
+				t.Fatal(last)
+			}
+		})
+	}
+}
+
+func TestV1MigrationStopsOnDiscoveryFailure(t *testing.T) {
+	r, d, events := setup(t)
+	r.reads = []ReadResult{{Kind: Valid, Config: v1Config()}}
+	d.err = errors.Join(ErrProbeCleanup, errors.New("cleanup"))
+	m := &fakeMigrator{events: events, results: []MigrationKind{MigrationReplaced}}
+	out := (Service{Repository: r, Detector: d, Migrator: m}).Initialize(context.Background(), nil)
+	if out.Snapshot.Status != Blocked || m.calls != 0 || out.Published {
+		t.Fatal(out, m.calls)
+	}
+}
+
+func TestV1MigrationCancelledBeforeWrite(t *testing.T) {
+	r, d, events := setup(t)
+	r.reads = []ReadResult{{Kind: Valid, Config: v1Config()}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d.cancel = cancel
+	m := &fakeMigrator{events: events, results: []MigrationKind{MigrationReplaced}}
+	out := (Service{Repository: r, Detector: d, Migrator: m}).Initialize(ctx, nil)
+	if out.Snapshot.Status != Cancelled || m.calls != 0 {
+		t.Fatal(out, m.calls)
+	}
+}
+
+func TestCurrentAndPartialV2DoNotMigrate(t *testing.T) {
+	r, d, events := setup(t)
+	partial := configuration.Config{SchemaVersion: configuration.CurrentSchema, Assignments: map[string]string{}, Harnesses: map[configuration.HarnessID]configuration.Harness{configuration.Codex: {}}}
+	r.reads = []ReadResult{{Kind: Valid, Config: partial}, {Kind: Valid}}
+	m := &fakeMigrator{events: events, results: []MigrationKind{MigrationReplaced}}
+	out := (Service{Repository: r, Detector: d, Migrator: m}).Initialize(context.Background(), nil)
+	if out.Snapshot.Status != Ready || m.calls != 0 || r.publishes != 0 || out.Snapshot.Steps[2].Status != Skipped {
+		t.Fatal(out)
+	}
+}
+
+func TestMigrationRuleRejectsUndefinedValidVersions(t *testing.T) {
+	for name, version := range map[string]int{"future": configuration.CurrentSchema + 1, "zero": 0} {
+		t.Run(name, func(t *testing.T) {
+			r, d, events := setup(t)
+			r.reads = []ReadResult{{Kind: Valid, Config: configuration.Config{SchemaVersion: version}}}
+			m := &fakeMigrator{events: events, results: []MigrationKind{MigrationReplaced}}
+			out := (Service{Repository: r, Detector: d, Migrator: m}).Initialize(context.Background(), nil)
+			want := "configuration_invalid"
+			if version > configuration.CurrentSchema {
+				want = "configuration_future_schema"
+			}
+			if out.Snapshot.Status != Blocked || d.calls != 0 || m.calls != 0 || out.Snapshot.Diagnostics[0].Code != want {
+				t.Fatal(out)
+			}
+		})
+	}
+}
+
+func v1Read() ReadResult {
+	return ReadResult{Kind: Valid, Config: v1Config(), Source: ConfigSource{Data: []byte("v1 bytes")}}
+}
+
+func TestV1MigrationPassesReadSource(t *testing.T) {
+	r, d, events := setup(t)
+	r.reads = []ReadResult{v1Read(), {Kind: Valid}}
+	m := &fakeMigrator{events: events, results: []MigrationKind{MigrationReplaced}}
+	out := (Service{Repository: r, Detector: d, Migrator: m}).Initialize(context.Background(), nil)
+	if out.Snapshot.Status != Ready || string(m.source.Data) != "v1 bytes" {
+		t.Fatal(out, m.source)
+	}
+}
+
+func TestV1MigrationSourceChangedRereadsOnce(t *testing.T) {
+	current := ReadResult{Kind: Valid, Config: configuration.Config{SchemaVersion: configuration.CurrentSchema}}
+	for name, tc := range map[string]struct {
+		reread   ReadResult
+		results  []MigrationKind
+		status   Status
+		code     string
+		migrates int
+		events   []string
+	}{
+		"other instance migrated": {current, []MigrationKind{MigrationSourceChanged}, Ready, "", 1,
+			[]string{"resolve", "read", "codex:" + explicitCodex, "opencode:", "claude:", "fx:", "migrate", "read", "read"}},
+		"still v1 then replaced": {v1Read(), []MigrationKind{MigrationSourceChanged, MigrationReplaced}, Ready, "", 2,
+			[]string{"resolve", "read", "codex:" + explicitCodex, "opencode:", "claude:", "fx:", "migrate", "read", "migrate", "read"}},
+		"changed twice": {v1Read(), []MigrationKind{MigrationSourceChanged}, Blocked, "configuration_migration_conflict", 2,
+			[]string{"resolve", "read", "codex:" + explicitCodex, "opencode:", "claude:", "fx:", "migrate", "read", "migrate"}},
+		"now invalid": {ReadResult{Kind: Invalid, Err: configuration.ErrInvalid}, []MigrationKind{MigrationSourceChanged}, Blocked, "configuration_invalid", 1,
+			[]string{"resolve", "read", "codex:" + explicitCodex, "opencode:", "claude:", "fx:", "migrate", "read"}},
+		"now deleted": {ReadResult{Kind: Absent}, []MigrationKind{MigrationSourceChanged}, Ready, "", 1,
+			[]string{"resolve", "read", "codex:" + explicitCodex, "opencode:", "claude:", "fx:", "migrate", "read", "publish", "read"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, d, events := setup(t)
+			r.reads = []ReadResult{v1Read(), tc.reread, current}
+			m := &fakeMigrator{events: events, results: tc.results}
+			out := (Service{Repository: r, Detector: d, Migrator: m}).Initialize(context.Background(), nil)
+			if out.Snapshot.Status != tc.status || m.calls != tc.migrates || d.calls != len(configuration.Supported()) {
+				t.Fatal(out, m.calls, d.calls)
+			}
+			if !reflect.DeepEqual(*events, tc.events) {
+				t.Fatal(*events)
+			}
+			if tc.code != "" {
+				last := out.Snapshot.Diagnostics[len(out.Snapshot.Diagnostics)-1]
+				if last.Code != tc.code || last.Step != CreateSettings {
+					t.Fatal(last)
+				}
+			}
+		})
+	}
+}
+
+func TestV1MigrationDurabilityFailureIsReplaced(t *testing.T) {
+	r, d, events := setup(t)
+	r.reads = []ReadResult{v1Read()}
+	cause := errors.New("directory sync failed")
+	m := &fakeMigrator{events: events, results: []MigrationKind{MigrationReplaced}, err: cause}
+	out := (Service{Repository: r, Detector: d, Migrator: m}).Initialize(context.Background(), nil)
+	if out.Snapshot.Status != Blocked || !out.Published || !errors.Is(out.Err, cause) {
+		t.Fatal(out)
+	}
+	last := out.Snapshot.Diagnostics[len(out.Snapshot.Diagnostics)-1]
+	if last.Code != "configuration_migration_unconfirmed" || last.Step != CreateSettings {
+		t.Fatal(last)
+	}
+}
+
+type cancellingMigrator struct {
+	*fakeMigrator
+	cancel context.CancelFunc
+}
+
+func (m cancellingMigrator) PublishMigration(ctx context.Context, path string, source ConfigSource, next configuration.Config) (MigrationKind, error) {
+	kind, err := m.fakeMigrator.PublishMigration(ctx, path, source, next)
+	m.cancel()
+	return kind, err
+}
+
+func TestV1MigrationDurabilityFailureWithCancellationKeepsDiagnostic(t *testing.T) {
+	r, d, events := setup(t)
+	r.reads = []ReadResult{v1Read()}
+	cause := errors.New("directory sync failed")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := cancellingMigrator{&fakeMigrator{events: events, results: []MigrationKind{MigrationReplaced}, err: cause}, cancel}
+	out := (Service{Repository: r, Detector: d, Migrator: m}).Initialize(ctx, nil)
+	if out.Snapshot.Status != Cancelled || !out.Published || !errors.Is(out.Err, cause) || !errors.Is(out.Err, context.Canceled) {
+		t.Fatal(out)
+	}
+	last := out.Snapshot.Diagnostics[len(out.Snapshot.Diagnostics)-1]
+	if last.Code != "configuration_migration_unconfirmed" || last.Step != CreateSettings || out.Snapshot.Steps[2].Status != StepCancelled {
+		t.Fatal(out.Snapshot)
+	}
+}
+
+// Inconclusive discovery for a harness the migration would record defers the
+// migration: no write, a visible warning, and startup continues on v1.
+func TestV1MigrationDeferredOnInconclusiveDiscovery(t *testing.T) {
+	for _, kind := range []configuration.DiscoveryKind{configuration.ProbeFailed, configuration.ProbeTimeout} {
+		t.Run(string(kind), func(t *testing.T) {
+			r, d, events := setup(t)
+			d.kind = kind
+			d.version = ""
+			r.reads = []ReadResult{v1Read(), v1Read()}
+			m := &fakeMigrator{events: events, results: []MigrationKind{MigrationReplaced}}
+			out := (Service{Repository: r, Detector: d, Migrator: m}).Initialize(context.Background(), nil)
+			if out.Snapshot.Status != ReadyWithWarnings || m.calls != 0 || r.publishes != 0 || out.Published || out.Err != nil {
+				t.Fatal(out, m.calls)
+			}
+			if out.Snapshot.Steps[2].Status != Skipped {
+				t.Fatal(out.Snapshot.Steps)
+			}
+			deferred := 0
+			for _, diagnostic := range out.Snapshot.Diagnostics {
+				if diagnostic.Code == "configuration_migration_deferred" && diagnostic.Severity == Warning && diagnostic.Step == CreateSettings {
+					deferred++
+				}
+			}
+			if deferred != 1 {
+				t.Fatal(out.Snapshot.Diagnostics)
+			}
+		})
+	}
+}
+
+// Inconclusive discovery of a harness that already has a v1 entry is not
+// recorded by the migration and does not defer it.
+func TestV1MigrationIgnoresInconclusiveExistingHarness(t *testing.T) {
+	r, d, events := setup(t)
+	r.reads = []ReadResult{v1Read(), {Kind: Valid}}
+	failing := &kindByHarness{fakeDetector: d, kinds: map[configuration.HarnessID]configuration.DiscoveryKind{configuration.Codex: configuration.ProbeFailed}}
+	m := &fakeMigrator{events: events, results: []MigrationKind{MigrationReplaced}}
+	out := (Service{Repository: r, Detector: failing, Migrator: m}).Initialize(context.Background(), nil)
+	if out.Snapshot.Status != ReadyWithWarnings || m.calls != 1 || !out.Published {
+		t.Fatal(out, m.calls)
+	}
+}
+
+type kindByHarness struct {
+	*fakeDetector
+	kinds map[configuration.HarnessID]configuration.DiscoveryKind
+}
+
+func (d *kindByHarness) Discover(ctx context.Context, h configuration.HarnessID, override string) (configuration.Observation, error) {
+	o, err := d.fakeDetector.Discover(ctx, h, override)
+	if kind, ok := d.kinds[h]; ok {
+		o.Kind = kind
+		o.Version = ""
+	}
+	return o, err
 }

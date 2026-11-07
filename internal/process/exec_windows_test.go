@@ -30,6 +30,16 @@ func TestOwnedWindowsHelper(t *testing.T) {
 		}
 		fmt.Println(cmd.Process.Pid)
 		time.Sleep(30 * time.Second)
+	case "orphan":
+		// The root exits at once; the descendant inherits and keeps stdout.
+		executable, _ := os.Executable()
+		cmd := exec.Command(executable, "-test.run=^TestOwnedWindowsHelper$")
+		cmd.Env = append(os.Environ(), "CONDUIT_WINDOWS_JOB_TEST=sleep")
+		cmd.Stdout = os.Stdout
+		if err := cmd.Start(); err != nil {
+			os.Exit(4)
+		}
+		fmt.Println(cmd.Process.Pid)
 	case "sleep":
 		time.Sleep(30 * time.Second)
 	}
@@ -117,5 +127,38 @@ func TestWindowsJobReleasedWhenLaunchFails(t *testing.T) {
 	}
 	if err = owned.close(); err != nil {
 		t.Fatal("close is not idempotent", err)
+	}
+}
+
+func TestWindowsRootExitIsObservedWhileDescendantHoldsPipes(t *testing.T) {
+	executable, _ := os.Executable()
+	p, err := (ExecLauncher{}).Start(Spec{Path: executable, Args: []string{"-test.run=^TestOwnedWindowsHelper$"}, Env: []string{"CONDUIT_WINDOWS_JOB_TEST=orphan"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.KillTree()
+	_ = p.Stdin().Close()
+	go io.Copy(io.Discard, p.Stdout())
+	go io.Copy(io.Discard, p.Stderr())
+	rootExited, _ := ObserveRootExit(p)
+	select {
+	case <-rootExited:
+	case <-time.After(10 * time.Second):
+		t.Fatal("root exit was not observed while a descendant held stdout")
+	}
+	done := make(chan Result, 1)
+	go func() { done <- p.Wait() }()
+	select {
+	case <-done:
+		t.Fatal("Wait returned while a descendant still held stdout")
+	case <-time.After(200 * time.Millisecond):
+	}
+	if err = p.KillTree(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Wait did not complete after the job kill")
 	}
 }

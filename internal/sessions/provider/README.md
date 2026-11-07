@@ -30,6 +30,16 @@ only contract reference.
 - Active-turn and next-boundary steering are distinct explicit delivery modes.
 - Steering carries the current reconciled assignment and the proposed new
   revision. Unknown delivery does not attribute later candidates to that revision.
+- A steer whose delivery an adapter cannot reconcile blocks new turns; it is
+  never resolved by a silent timeout. Conduit may release it explicitly with
+  `StartTurnRequest.ReleaseUnresolvedSteer` naming exactly that steer's
+  `MessageID`. Output observed while it was unresolved keeps unknown
+  attribution forever and is never relabelled. Any other value, or a release
+  when nothing is unresolved, is `stale_binding`. An adapter that never blocks
+  a turn on a steer still applies these rejections; a matching release then
+  changes nothing (Codex settles delivery through the `turn/steer` reply or
+  loses the session). See
+  `specs/001-harness-storage/harnesses.md`, "Unresolved steer reconciliation".
 - A native receipt is separate from verified application of a correction.
 - Permission answers, question answers, interruption, and close are separate calls.
 - RPC context cancellation stops waiting; it does not imply remote cancellation.

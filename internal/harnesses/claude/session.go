@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -35,11 +34,20 @@ type activeTurn struct {
 
 // pendingSteer is a dispatched correction without delivery evidence. While it
 // exists, the current assignment revision is unresolved and events carry no
-// attribution. It survives the end of its turn: late evidence still resolves
-// it, and until then no new turn or correction can be attributed.
+// attribution. It survives the end of its turn unless the terminal result
+// proves it was not observed (rules.DecideUnobservedSteer): late evidence still
+// resolves it, and otherwise only Conduit's explicit
+// StartTurnRequest.ReleaseUnresolvedSteer naming request.MessageID clears it.
 type pendingSteer struct {
 	request provider.SteerRequest
 	uuid    string
+	// lifecycleObserved is set when any command_lifecycle named uuid.
+	lifecycleObserved bool
+	// dispatch is the local write progress (rules.SteerReserved until Steer
+	// claims the write). withdrawn is set when a terminal result withdrew a
+	// steer that was never handed to the writer; Steer then must not send it.
+	dispatch  rules.SteerDispatch
+	withdrawn bool
 }
 
 // sessionBinding is the immutable launch binding of one session.
@@ -65,19 +73,38 @@ type session struct {
 	transport    *transport
 	broker       *eventstream.Broker
 
-	mu            sync.Mutex
-	state         provider.SessionState
-	assignment    provider.AssignmentRef
-	contract      provider.ResultContractNegotiation
-	turn          *activeTurn
-	steer         *pendingSteer
-	closing       bool
-	observedModel string
-	closeResult   provider.CloseSessionResult
-	closeDone     chan struct{}
-	closeOnce     sync.Once
-	exitDone      chan struct{}
-	exitOnce      sync.Once
+	mu         sync.Mutex
+	state      provider.SessionState
+	assignment provider.AssignmentRef
+	contract   provider.ResultContractNegotiation
+	turn       *activeTurn
+	steer      *pendingSteer
+	// released holds the UUIDs of steers Conduit explicitly released. Such a
+	// steer may still be queued in claude and run later; until a result names
+	// it, output is attributed only when it is positively correlated to the
+	// active turn (activeInput is one of its inputs).
+	released map[string]struct{}
+	// activeInput is the input UUID claude most recently started (lifecycle
+	// started or replay echo), which identifies the input that later output
+	// belongs to.
+	activeInput string
+	// afterSteerReserved is a test seam between steer reservation and the
+	// dispatch claim; it is nil in production.
+	afterSteerReserved func()
+	// beforeTransportLoss is a test seam at the start of
+	// handleTransportClosed; it is nil in production.
+	beforeTransportLoss func()
+	closing             bool
+	observedModel       string
+	closeResult         provider.CloseSessionResult
+	closeDone           chan struct{}
+	closeOnce           sync.Once
+	exitDone            chan struct{}
+	exitOnce            sync.Once
+	// lossKillOnce guards the single group kill after an unexpected stop.
+	lossKillOnce sync.Once
+	// rootExited is set (under mu) once the root's exit was observed.
+	rootExited bool
 
 	eventMu  sync.Mutex
 	eventSeq uint64
@@ -105,6 +132,7 @@ func newSession(config Config, binding sessionBinding, proc processruntime.Proce
 		closeDone:     make(chan struct{}),
 		exitDone:      make(chan struct{}),
 		warned:        make(map[string]struct{}),
+		released:      make(map[string]struct{}),
 		normalization: newNormalizationState(),
 	}
 }
@@ -214,32 +242,59 @@ func modelListed(model string, response initializeResponse) bool {
 	return false
 }
 
-// abortOpen stops the owned process after a failed open: it closes stdin,
-// kills the process group and waits up to StopGrace for the reap. A reap that
-// is still pending is reported with the open failure; the exit observer stays
-// the single owner that completes it.
-func (s *session) abortOpen(cause error) error {
+// abortOpen hands the process of a failed open to one retained cleanup owner
+// (stdin close, group kill, pipe close, root reap and reader drain) and waits
+// for it within what remains of the caller's context, at most StopGrace. It
+// returns cause with any cleanup failure joined; when the wait ends first, the
+// joined CleanupPendingError keeps the owner observable until it completes.
+func (s *session) abortOpen(ctx context.Context, cause error) error {
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
 		s.closing = true
 		return nil
 	})
-	_ = s.transport.closeInput()
-	killErr := s.process.KillTree()
-	if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
-		cause = errors.Join(cause, fmt.Errorf("terminate owned claude process: %w", killErr))
-	}
-	timer := time.NewTimer(s.config.StopGrace)
-	defer timer.Stop()
-	select {
-	case <-s.exitDone:
-	case <-timer.C:
-		cause = errors.Join(cause, errors.New("owned claude process reaping remains pending"))
+	owner := processruntime.NewCleanupOwnerWithDrain(s.process, s.transport.readersDone)
+	owner.BeginCleanup()
+	waitCtx, cancel := context.WithTimeout(ctx, s.config.StopGrace)
+	defer cancel()
+	state, waitErr := owner.Await(waitCtx)
+	s.broker.Finish(io.EOF)
+	var cleanup error
+	if waitErr != nil {
+		cleanup = &CleanupPendingError{Owner: owner, Cause: waitErr}
+	} else {
+		cleanup = errors.Join(state.TreeTerminationErr, state.PipeCloseErr, state.StdinCloseErr, state.RootResult.ReleaseErr)
 	}
 	if tail := s.transport.stderrTail.String(); tail != "" {
-		cause = errors.Join(cause, &stderrTail{Text: tail})
+		cleanup = errors.Join(cleanup, &stderrTail{Text: tail})
 	}
-	s.broker.Finish(io.EOF)
-	return cause
+	return withCleanupFailure(cause, cleanup)
+}
+
+// CleanupPendingError reports that an aborted open returned before its owned
+// claude process was fully cleaned up. Owner keeps the cleanup observable:
+// Done closes on completion and Latest reports its state. Cause is the ended
+// wait.
+type CleanupPendingError struct {
+	Owner *processruntime.CleanupOwner
+	Cause error
+}
+
+func (e *CleanupPendingError) Error() string { return "owned claude process cleanup is still pending" }
+func (e *CleanupPendingError) Unwrap() error { return e.Cause }
+
+// withCleanupFailure joins a cleanup failure into the open failure's cause
+// while keeping the open failure's public classification.
+func withCleanupFailure(cause, cleanup error) error {
+	if cleanup == nil {
+		return cause
+	}
+	var providerErr *provider.ProviderError
+	if errors.As(cause, &providerErr) {
+		joined := *providerErr
+		joined.Cause = errors.Join(providerErr.Cause, cleanup)
+		return &joined
+	}
+	return errors.Join(cause, cleanup)
 }
 
 // stderrTail carries bounded native diagnostics in an error cause only; it is
@@ -277,6 +332,20 @@ func (s *session) ObserveState(ctx context.Context, request provider.ObserveStat
 	})
 	snapshot.ObservedAt = s.config.Now()
 	return snapshot, nil
+}
+
+// outputCorrelatedLocked reports whether current output can be attributed:
+// always when no released steer may still run, otherwise only when claude
+// most recently started an input of the active turn. s.mu must be held.
+func (s *session) outputCorrelatedLocked() bool {
+	if len(s.released) == 0 {
+		return true
+	}
+	if s.turn == nil {
+		return false
+	}
+	_, ok := s.turn.inputs[s.activeInput]
+	return ok
 }
 
 // activeTurnRef must be called with s.mu held.
@@ -342,17 +411,17 @@ func (s *session) StartTurn(ctx context.Context, request provider.StartTurnReque
 		inputUUID: inputUUID,
 		inputs:    map[string]struct{}{inputUUID: {}},
 	}
-	previousAssignment, actual, err := s.reserveTurn(request, turn)
+	reservation, err := s.reserveTurn(request, turn)
 	if err != nil {
 		return provider.StartTurnResult{}, err
 	}
 	sent, err := s.transport.send(ctx, s.userMessage(content, inputUUID, ""))
 	if err != nil {
-		return provider.StartTurnResult{}, s.handleTurnDispatchFailure(request, turn, previousAssignment, sent, err)
+		return provider.StartTurnResult{}, s.handleTurnDispatchFailure(request, turn, reservation, sent, err)
 	}
 	return provider.StartTurnResult{
 		Turn: turn.ref, Assignment: request.Assignment, TargetingStrength: provider.TargetSessionLease,
-		ResultEnforcement: actual,
+		ResultEnforcement: reservation.actual,
 		Native: provider.NativeIDs{
 			Session: provider.Some(provider.NativeSessionID(s.nativeSession)),
 			Turn:    provider.Some(provider.NativeTurnID(inputUUID)),
@@ -360,46 +429,70 @@ func (s *session) StartTurn(ctx context.Context, request provider.StartTurnReque
 	}, nil
 }
 
-// reserveTurn evaluates eligibility and installs the turn lease in one critical
-// section, before dispatch, so the reader can correlate an immediate echo.
-func (s *session) reserveTurn(request provider.StartTurnRequest, turn *activeTurn) (provider.AssignmentRef, provider.SchemaEnforcement, error) {
-	var previous provider.AssignmentRef
-	var actual provider.SchemaEnforcement
+// turnReservation is what reserveTurn changed, so an unsent dispatch can undo
+// exactly that.
+type turnReservation struct {
+	previous provider.AssignmentRef
+	actual   provider.SchemaEnforcement
+	// released is the unresolved steer cleared by an explicit release.
+	released *pendingSteer
+}
+
+// reserveTurn evaluates eligibility (including an explicit steer release) and
+// installs the turn lease in one critical section, before dispatch, so the
+// reader can correlate an immediate echo.
+func (s *session) reserveTurn(request provider.StartTurnRequest, turn *activeTurn) (turnReservation, error) {
+	var reservation turnReservation
 	err := lockscope.WithMutexLock(&s.mu, func() error {
+		release := request.ReleaseUnresolvedSteer
 		decision := rules.DecideStartTurn(rules.StartTurnFacts{
-			Closing:                   s.closing || s.state == provider.SessionLost,
-			ActiveTurn:                s.turn != nil,
-			SteerUnresolved:           s.steer != nil,
-			SessionMatches:            request.Session == s.ref,
-			AssignmentIdentityMatches: request.Assignment.SameIdentity(s.assignment),
-			ResultContractMatches:     sameResultContract(request.ResultContract, s.contract.Contract),
+			Closing:                       s.closing || s.state == provider.SessionLost,
+			ActiveTurn:                    s.turn != nil,
+			SteerUnresolved:               s.steer != nil,
+			ReleaseRequested:              release.Present,
+			ReleaseMatchesUnresolvedSteer: release.Present && s.steer != nil && s.steer.request.MessageID == release.Value,
+			SessionMatches:                request.Session == s.ref,
+			AssignmentIdentityMatches:     request.Assignment.SameIdentity(s.assignment),
+			ResultContractMatches:         sameResultContract(request.ResultContract, s.contract.Contract),
 		})
 		switch decision.Kind {
 		case rules.StartTurnClosing:
 			return adaptererror.New(provider.OperationStartTurn, provider.ErrorSessionLost, provider.RemoteEffectNotSent, nil, decision.Reason)
-		case rules.StartTurnOccupied, rules.StartTurnBindingDiffers:
+		case rules.StartTurnOccupied, rules.StartTurnBindingDiffers, rules.StartTurnReleaseNothingUnresolved, rules.StartTurnReleaseMismatch:
 			return adaptererror.New(provider.OperationStartTurn, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, nil, decision.Reason)
 		case rules.StartTurnContractChanged:
 			return adaptererror.New(provider.OperationStartTurn, provider.ErrorProtocolViolation, provider.RemoteEffectNotSent, nil, decision.Reason)
+		case rules.StartTurnAllowedReleasingSteer:
+			// The released steer's delivery stays unknown; the assignment it
+			// proposed is never adopted, and earlier output stays unattributed.
+			reservation.released = s.steer
+			s.released[s.steer.uuid] = struct{}{}
+			s.steer = nil
 		}
-		previous = s.assignment
-		actual = s.contract.Actual
+		reservation.previous = s.assignment
+		reservation.actual = s.contract.Actual
 		s.turn = turn
 		s.assignment = request.Assignment
 		return nil
 	})
-	return previous, actual, err
+	return reservation, err
 }
 
 // handleTurnDispatchFailure releases a lease whose message was never handed to
-// the writer. A possibly sent message keeps its lease, because a later native
-// result may still reference it; the caller sees delivery_unknown.
-func (s *session) handleTurnDispatchFailure(request provider.StartTurnRequest, turn *activeTurn, previous provider.AssignmentRef, sent bool, cause error) error {
+// the writer and restores a steer that this request released, so a not-sent
+// StartTurn leaves the session as it was. A possibly sent message keeps its
+// lease and the release, because a later native result may still reference it;
+// the caller sees delivery_unknown.
+func (s *session) handleTurnDispatchFailure(request provider.StartTurnRequest, turn *activeTurn, reservation turnReservation, sent bool, cause error) error {
 	if !sent {
 		_ = lockscope.WithMutexLock(&s.mu, func() error {
 			if s.turn == turn {
 				s.turn = nil
-				s.assignment = previous
+				s.assignment = reservation.previous
+				if s.steer == nil && reservation.released != nil {
+					s.steer = reservation.released
+					delete(s.released, reservation.released.uuid)
+				}
 			}
 			return nil
 		})
@@ -428,7 +521,9 @@ func (s *session) AnswerQuestion(context.Context, provider.QuestionAnswer) (prov
 }
 
 // InterruptTurn sends a native interrupt. Its control response is only a
-// receipt; the turn ends when a correlated result is observed.
+// receipt; the turn ends when a correlated result is observed. The receipt is
+// observed on the reader in wire order (observeInterruptReceipt), so it can
+// never be published against a later turn.
 func (s *session) InterruptTurn(ctx context.Context, request provider.InterruptRequest) (provider.InterruptResult, error) {
 	if err := ctx.Err(); err != nil {
 		return provider.InterruptResult{}, adaptererror.Delivery(provider.OperationInterruptTurn, request.RequestID, false, err)
@@ -442,9 +537,14 @@ func (s *session) InterruptTurn(ctx context.Context, request provider.InterruptR
 	if err != nil {
 		return provider.InterruptResult{}, err
 	}
-	_, sent, err := s.transport.control(ctx, struct {
+	turn := request.ExpectedActiveTurn
+	_, sent, err := s.transport.controlCommitting(ctx, struct {
 		Subtype string `json:"subtype"`
-	}{Subtype: "interrupt"})
+	}{Subtype: "interrupt"}, func(reply controlReply) {
+		if reply.err == nil {
+			s.observeInterruptReceipt(turn)
+		}
+	})
 	if err != nil {
 		var rejected *nativeControlError
 		if errors.As(err, &rejected) {
@@ -455,11 +555,32 @@ func (s *session) InterruptTurn(ctx context.Context, request provider.InterruptR
 		}
 		return provider.InterruptResult{}, adaptererror.Delivery(provider.OperationInterruptTurn, request.RequestID, sent, err)
 	}
-	s.emit(provider.TurnStateEvent{Previous: provider.TurnActive, Current: provider.TurnInterruptRequested})
 	return provider.InterruptResult{
 		StopOutcome: provider.StopUnknown, ObservedUsability: provider.SessionUsabilityUnknown,
 		Quiescence: provider.QuiescenceUnknown,
 	}, nil
+}
+
+// observeInterruptReceipt runs on the transport reader when the interrupt's
+// control_response arrives, before any later native line. It publishes
+// TurnInterruptRequested only while the requested turn is still the active,
+// unfinished turn of the event binding; a turn that already ended (its
+// terminal result came first on the wire) suppresses the receipt.
+func (s *session) observeInterruptReceipt(turn provider.TurnRef) {
+	ending := true
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		ending = s.turn == nil || s.turn.ref != turn || s.turn.ending
+		return nil
+	})
+	if ending {
+		return
+	}
+	s.emitEvent(func(binding eventBinding) (provider.EventBody, bool) {
+		if !binding.Turn.Present || binding.Turn.Value != turn {
+			return nil, false
+		}
+		return provider.TurnStateEvent{Previous: provider.TurnActive, Current: provider.TurnInterruptRequested}, true
+	})
 }
 
 func (s *session) Close(ctx context.Context, request provider.CloseSessionRequest) (provider.CloseSessionResult, error) {
@@ -581,49 +702,117 @@ func (s *session) waitExit() bool {
 	}
 }
 
+// observeProcessExit reacts to the root's exit as soon as it is reaped, even
+// while a descendant still holds stdout or stderr open (process.Wait would
+// block on those pipes). Group termination and stream finalization are
+// separate: an unexpected exit kills the group at once, which ends the pipes;
+// the loss is published only after the reader routed every line it already
+// received (a final result, usage, a candidate), bounded by StopGrace, so it
+// follows those events. exitDone then closes once Wait returned.
 func (s *session) observeProcessExit() {
-	result := s.process.Wait()
-	s.exitOnce.Do(func() {
-		var previous provider.SessionState
-		lost := false
-		_ = lockscope.WithMutexLock(&s.mu, func() error {
-			if s.closing || s.state == provider.SessionLost {
-				return nil
-			}
-			previous = s.state
-			s.state = provider.SessionLost
-			lost = true
-			return nil
-		})
-		close(s.exitDone)
-		if lost {
-			s.emit(provider.SessionStateEvent{Previous: previous, Current: provider.SessionLost, NativeStatus: "claude_process_exit"})
-			s.broker.Finish(adaptererror.New(provider.OperationReceiveEvent, provider.ErrorSessionLost, provider.RemoteEffectUnknown, result.Err, "claude process exited"))
+	rootExited, rootResult := processruntime.ObserveRootExit(s.process)
+	<-rootExited
+	if closing := s.markRootExited(); !closing {
+		s.lossKillOnce.Do(func() { _ = s.process.KillTree() })
+		timer := time.NewTimer(s.config.StopGrace)
+		select {
+		case <-s.transport.routed:
+		case <-timer.C:
 		}
+		timer.Stop()
+	}
+	s.handleUnexpectedStop(s.markLost(), "claude_process_exit",
+		adaptererror.New(provider.OperationReceiveEvent, provider.ErrorSessionLost, provider.RemoteEffectUnknown, rootResult().Err, "claude process exited"))
+	s.process.Wait()
+	s.exitOnce.Do(func() { close(s.exitDone) })
+}
+
+// markRootExited records that the root exited, so the transport stop that the
+// group kill causes leaves the loss publication to observeProcessExit. It
+// reports whether Close or a failed open owns the shutdown.
+func (s *session) markRootExited() bool {
+	closing := false
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		s.rootExited = true
+		closing = s.closing
+		return nil
 	})
+	return closing
 }
 
 // handleTransportClosed loses the session when stdout ends, a line is malformed
-// or above MaxLineBytes, or a write fails. No native result is invented; the
-// owned process group is killed so it cannot block on a full pipe.
+// or above MaxLineBytes, or a write fails. No native result is invented. After
+// a root exit, observeProcessExit owns the publication, so only the kill
+// obligation remains here.
 func (s *session) handleTransportClosed(cause error) {
-	var previous provider.SessionState
-	lost := false
+	if s.beforeTransportLoss != nil {
+		s.beforeTransportLoss()
+	}
+	// The root-exit check and the loss reservation are one critical section:
+	// once the exit observer has recorded the root exit it owns the
+	// publication, and otherwise this path reserves the loss before the
+	// observer can.
+	rootExited := false
+	var loss sessionLoss
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
-		if s.closing || s.state == provider.SessionLost {
-			return nil
+		rootExited = s.rootExited
+		if !rootExited {
+			loss = s.markLostLocked()
 		}
-		previous = s.state
-		s.state = provider.SessionLost
-		lost = true
 		return nil
 	})
-	if !lost {
+	if rootExited {
 		return
 	}
-	s.emit(provider.SessionStateEvent{Previous: previous, Current: provider.SessionLost, NativeStatus: "claude_transport_closed"})
-	s.broker.Finish(adaptererror.New(provider.OperationReceiveEvent, provider.ErrorSessionLost, provider.RemoteEffectUnknown, cause, "claude stream-json transport closed"))
-	_ = s.process.KillTree()
+	s.handleUnexpectedStop(loss, "claude_transport_closed",
+		adaptererror.New(provider.OperationReceiveEvent, provider.ErrorSessionLost, provider.RemoteEffectUnknown, cause, "claude stream-json transport closed"))
+}
+
+// sessionLoss is the outcome of markLost: whether this caller performed the
+// state transition and whether Close or a failed open already owns cleanup.
+type sessionLoss struct {
+	published bool
+	previous  provider.SessionState
+	closing   bool
+}
+
+// markLost moves an open session to SessionLost once. A closing session is not
+// marked lost: its close or abort procedure owns the outcome.
+func (s *session) markLost() sessionLoss {
+	var loss sessionLoss
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		loss = s.markLostLocked()
+		return nil
+	})
+	return loss
+}
+
+// markLostLocked is markLost for a caller that holds s.mu.
+func (s *session) markLostLocked() sessionLoss {
+	loss := sessionLoss{closing: s.closing}
+	if s.closing || s.state == provider.SessionLost {
+		return loss
+	}
+	loss.previous = s.state
+	s.state = provider.SessionLost
+	loss.published = true
+	return loss
+}
+
+// handleUnexpectedStop is the single cleanup owner for an unexpected root exit
+// and a transport failure, whichever is observed first. State publication is
+// deduplicated by markLost; the obligation to kill the owned process group is
+// separate and runs once, because a root that exited on its own does not prove
+// that its descendants are gone, and a stopped transport leaves the process
+// unobserved. Close and a failed open own their own termination.
+func (s *session) handleUnexpectedStop(loss sessionLoss, nativeStatus string, terminal error) {
+	if loss.published {
+		s.emit(provider.SessionStateEvent{Previous: loss.previous, Current: provider.SessionLost, NativeStatus: nativeStatus})
+		s.broker.Finish(terminal)
+	}
+	if !loss.closing {
+		s.lossKillOnce.Do(func() { _ = s.process.KillTree() })
+	}
 }
 
 // handleControlRequest rejects control requests sent by claude (for example
@@ -652,10 +841,15 @@ func (s *session) snapshotEventBinding() eventBinding {
 	var binding eventBinding
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
 		binding = eventBinding{
-			Turn:     s.activeTurnRef(),
 			Native:   provider.NativeIDs{Session: provider.Some(provider.NativeSessionID(s.nativeSession))},
 			Contract: s.contract,
 		}
+		// Output that may come from a released steer still running in claude
+		// belongs to no turn or revision that Conduit knows.
+		if !s.outputCorrelatedLocked() {
+			return nil
+		}
+		binding.Turn = s.activeTurnRef()
 		// While a correction is unresolved, the revision the agent works on is
 		// unknown, so attribution stays absent (provider contract).
 		if s.steer == nil {

@@ -2,6 +2,7 @@ package provider_test
 
 import (
 	"context"
+	"testing"
 
 	"github.com/MartinAndreev/conduit/internal/sessions/provider"
 )
@@ -82,4 +83,25 @@ func ExampleProvider() {
 	opened, _ := p.OpenSession(context.Background(), provider.OpenSessionRequest{})
 	_ = opened.Session.Ref()
 	// Output:
+}
+
+// A turn request without a release must not be mistaken for a release of an
+// empty MessageID; a present release names exactly one steer message.
+func TestStartTurnRequestReleaseUnresolvedSteerDistinguishesAbsentFromNamed(t *testing.T) {
+	var plain provider.StartTurnRequest
+	if plain.ReleaseUnresolvedSteer.Present {
+		t.Fatal("zero StartTurnRequest carries a steer release")
+	}
+	emptyNamed := provider.StartTurnRequest{ReleaseUnresolvedSteer: provider.Some(provider.MessageID(""))}
+	if !emptyNamed.ReleaseUnresolvedSteer.Present {
+		t.Fatal("a present release of an empty MessageID collapsed into absence")
+	}
+	named := provider.StartTurnRequest{ReleaseUnresolvedSteer: provider.Some(provider.MessageID("steer-1"))}
+	if named.ReleaseUnresolvedSteer.Value != "steer-1" {
+		t.Fatalf("release names %q", named.ReleaseUnresolvedSteer.Value)
+	}
+	session := &fakeSession{}
+	if _, err := session.StartTurn(context.Background(), named); err != nil {
+		t.Fatalf("external adapter could not accept a release request: %v", err)
+	}
 }

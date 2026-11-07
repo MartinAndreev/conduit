@@ -77,6 +77,12 @@ func TestDecideStartTurnPrecedence(t *testing.T) {
 		{"assignment differs", StartTurnFacts{SessionMatches: true, ResultContractMatches: true}, StartTurnBindingDiffers},
 		{"contract differs", StartTurnFacts{SessionMatches: true, AssignmentIdentityMatches: true}, StartTurnContractChanged},
 		{"allowed", ok, StartTurnAllowed},
+		{"closing precedes release", StartTurnFacts{Closing: true, ReleaseRequested: true}, StartTurnClosing},
+		{"release with nothing unresolved", StartTurnFacts{ReleaseRequested: true, SessionMatches: true, AssignmentIdentityMatches: true, ResultContractMatches: true}, StartTurnReleaseNothingUnresolved},
+		{"release mismatch precedes active turn", StartTurnFacts{ReleaseRequested: true, SteerUnresolved: true, ActiveTurn: true}, StartTurnReleaseMismatch},
+		{"matching release still refused by active turn", StartTurnFacts{ReleaseRequested: true, SteerUnresolved: true, ReleaseMatchesUnresolvedSteer: true, ActiveTurn: true}, StartTurnOccupied},
+		{"matching release still refused by binding", StartTurnFacts{ReleaseRequested: true, SteerUnresolved: true, ReleaseMatchesUnresolvedSteer: true}, StartTurnBindingDiffers},
+		{"matching release allowed", StartTurnFacts{ReleaseRequested: true, SteerUnresolved: true, ReleaseMatchesUnresolvedSteer: true, SessionMatches: true, AssignmentIdentityMatches: true, ResultContractMatches: true}, StartTurnAllowedReleasingSteer},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -206,6 +212,43 @@ func TestDecideToolOutcome(t *testing.T) {
 	} {
 		if d := DecideToolOutcome(tc.facts); d.Kind != tc.want || d.Reason == "" {
 			t.Fatalf("facts %+v decision %+v", tc.facts, d)
+		}
+	}
+}
+
+func TestDecideUnobservedSteer(t *testing.T) {
+	tests := []struct {
+		name  string
+		facts UnobservedSteerFacts
+		want  UnobservedSteerKind
+	}{
+		{"nothing unresolved", UnobservedSteerFacts{QueuedTurnCountKnown: true}, UnobservedSteerNone},
+		{"no lifecycle and zero queued is not observed", UnobservedSteerFacts{SteerUnresolved: true, Dispatch: SteerWritten, QueuedTurnCountKnown: true}, UnobservedSteerNotObserved},
+		{"queued turns keep doubt", UnobservedSteerFacts{SteerUnresolved: true, Dispatch: SteerWritten, QueuedTurnCountKnown: true, QueuedTurnCount: 1}, UnobservedSteerDoubtRemains},
+		{"absent count keeps doubt", UnobservedSteerFacts{SteerUnresolved: true, Dispatch: SteerWritten}, UnobservedSteerDoubtRemains},
+		{"reserved only is withdrawn", UnobservedSteerFacts{SteerUnresolved: true, Dispatch: SteerReserved, QueuedTurnCountKnown: true}, UnobservedSteerWithdrawn},
+		{"write in flight keeps doubt despite zero queued", UnobservedSteerFacts{SteerUnresolved: true, Dispatch: SteerDispatching, QueuedTurnCountKnown: true}, UnobservedSteerDoubtRemains},
+		{"lifecycle keeps doubt despite zero queued", UnobservedSteerFacts{SteerUnresolved: true, Dispatch: SteerWritten, LifecycleObserved: true, QueuedTurnCountKnown: true}, UnobservedSteerDoubtRemains},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := DecideUnobservedSteer(tt.facts); got.Kind != tt.want || got.Reason == "" {
+				t.Fatalf("decision = %+v, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDecideResultFinality(t *testing.T) {
+	for reason, want := range map[string]ResultFinalityKind{
+		TerminalReasonAbortedStreaming: ResultFinalIntermediate,
+		TerminalReasonAbortedTools:     ResultFinalIntermediate,
+		"completed":                    ResultFinal,
+		"api_error":                    ResultFinal,
+		"":                             ResultFinal,
+	} {
+		if got := DecideResultFinality(reason); got.Kind != want || got.Reason == "" {
+			t.Fatalf("reason %q decision %+v, want %s", reason, got, want)
 		}
 	}
 }

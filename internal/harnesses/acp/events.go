@@ -22,7 +22,8 @@ func (s *session) snapshotBinding() eventBinding {
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
 		binding = eventBinding{assignment: s.assignment, native: s.nativeSession}
 		if s.turn != nil {
-			binding.turn = provider.Some(s.turn.ref)
+			binding.turn = provider.Some(s.turn.bound.ref)
+			binding.assignment = s.turn.bound.assignment
 		}
 		return nil
 	})
@@ -31,24 +32,25 @@ func (s *session) snapshotBinding() eventBinding {
 
 // emit publishes an event bound to the current turn, if any.
 func (s *session) emit(body provider.EventBody) {
-	s.publish(body, provider.None[provider.TurnRef]())
+	s.publish(body, provider.None[boundTurn]())
 }
 
-// emitTurn publishes an event bound to turn even after it stopped being the
-// active turn (its terminal and usage observations).
-func (s *session) emitTurn(turn provider.TurnRef, body provider.EventBody) {
+// emitTurn publishes an event bound to turn and its frozen assignment, even
+// after it stopped being the active turn.
+func (s *session) emitTurn(turn boundTurn, body provider.EventBody) {
 	s.publish(body, provider.Some(turn))
 }
 
 // publish serializes event construction and publication. It is never called
 // with the session mutex held. ACP has no steering, so assignment attribution
 // is always the reconciled binding.
-func (s *session) publish(body provider.EventBody, turn provider.Optional[provider.TurnRef]) {
+func (s *session) publish(body provider.EventBody, turn provider.Optional[boundTurn]) {
 	var idErr, publishErr error
 	_ = lockscope.WithMutexLock(&s.eventMu, func() error {
 		binding := s.snapshotBinding()
 		if turn.Present {
-			binding.turn = turn
+			binding.turn = provider.Some(turn.Value.ref)
+			binding.assignment = turn.Value.assignment
 		}
 		eventID, err := s.config.NewID(s.descriptor.ProviderName + "-event")
 		if err != nil {

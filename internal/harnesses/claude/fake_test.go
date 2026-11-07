@@ -31,6 +31,12 @@ type fakeClaude struct {
 	onUser func(f *fakeClaude, message map[string]any)
 	// exitOnStdinClose makes the fake exit when the adapter closes stdin.
 	exitOnStdinClose bool
+	// silentInitialize leaves the initialize control request unanswered.
+	silentInitialize bool
+	// ignoreKill makes KillTree record the call without ending the process.
+	ignoreKill bool
+	// onInterrupt, when set, replaces the default interrupt control_response.
+	onInterrupt func(f *fakeClaude, requestID string)
 
 	mu       sync.Mutex
 	spec     processruntime.Spec
@@ -60,7 +66,7 @@ func (f *fakeClaude) Start(spec processruntime.Spec) (processruntime.Process, er
 	proc := &fakeProcess{
 		stdin: clientInput, stdout: clientOutput, stderr: stderrReader,
 		serverInput: serverInput, serverOutput: serverOutput, stderrWriter: stderrWriter,
-		done: make(chan struct{}),
+		done: make(chan struct{}), rootDone: make(chan struct{}), ignoreKill: f.ignoreKill,
 	}
 	_ = lockscope.WithMutexLock(&f.mu, func() error {
 		f.spec = spec
@@ -94,8 +100,15 @@ func (f *fakeClaude) serve(proc *fakeProcess) {
 			requestID, _ := message["request_id"].(string)
 			switch request["subtype"] {
 			case "initialize":
+				if f.silentInitialize {
+					continue
+				}
 				f.write(fmt.Sprintf(`{"type":"control_response","response":{"subtype":"success","request_id":%q,"response":%s}}`, requestID, f.initialize))
 			case "interrupt":
+				if f.onInterrupt != nil {
+					f.onInterrupt(f, requestID)
+					continue
+				}
 				f.write(fmt.Sprintf(`{"type":"control_response","response":{"subtype":"success","request_id":%q,"response":{"still_queued":[]}}}`, requestID))
 			}
 		case "user":
@@ -185,11 +198,18 @@ type fakeProcess struct {
 	serverInput  *io.PipeReader
 	serverOutput *io.PipeWriter
 	stderrWriter *io.PipeWriter
-	done         chan struct{}
-	exitOnce     sync.Once
-	killed       atomic.Bool
-	waited       atomic.Bool
-	interrupts   atomic.Int32
+	// done closes when the root was reaped and the pipes closed, which is
+	// when production process.Wait returns; rootDone closes at root exit.
+	done       chan struct{}
+	rootDone   chan struct{}
+	exitOnce   sync.Once
+	rootOnce   sync.Once
+	doneOnce   sync.Once
+	ignoreKill bool
+	killCalls  atomic.Int32
+	killed     atomic.Bool
+	waited     atomic.Bool
+	interrupts atomic.Int32
 }
 
 func (*fakeProcess) PID() int                { return 42 }
@@ -205,13 +225,33 @@ func (p *fakeProcess) exit() {
 		_ = p.serverInput.Close()
 		_ = p.serverOutput.Close()
 		_ = p.stderrWriter.Close()
-		close(p.done)
 	})
+	p.exitRootOnly()
+	p.doneOnce.Do(func() { close(p.done) })
+}
+
+// exitRootOnly reaps the root while a descendant still holds the pipes open:
+// RootExited fires, but stdout stays open and Wait keeps blocking until the
+// group is killed, as with production process.Wait.
+func (p *fakeProcess) exitRootOnly() {
+	p.rootOnce.Do(func() { close(p.rootDone) })
+}
+
+func (p *fakeProcess) RootExited() <-chan struct{} { return p.rootDone }
+func (p *fakeProcess) RootResult() processruntime.Result {
+	<-p.rootDone
+	return processruntime.Result{}
 }
 
 func (p *fakeProcess) KillTree() error {
+	p.killCalls.Add(1)
+	if p.ignoreKill {
+		return nil
+	}
 	select {
-	case <-p.done:
+	case <-p.rootDone:
+		// The root is gone; killing the group still ends its descendants.
+		p.exit()
 		return os.ErrProcessDone
 	default:
 	}

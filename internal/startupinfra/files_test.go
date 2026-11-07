@@ -14,7 +14,11 @@ import (
 )
 
 func initialConfig() configuration.Config {
-	return configuration.Initial(map[configuration.HarnessID]configuration.Observation{configuration.Codex: {Kind: configuration.Missing}, configuration.OpenCode: {Kind: configuration.Missing}})
+	observations := map[configuration.HarnessID]configuration.Observation{}
+	for _, id := range configuration.Supported() {
+		observations[id] = configuration.Observation{Kind: configuration.Missing}
+	}
+	return configuration.Initial(observations)
 }
 func TestHomeResolutionNoFallback(t *testing.T) {
 	home := t.TempDir()
@@ -35,6 +39,28 @@ func TestHomeResolutionNoFallback(t *testing.T) {
 	_, err = (Files{Home: func() (string, error) { return "", errors.New("home failed") }}).Resolve(context.Background())
 	if err == nil {
 		t.Fatal("missing error")
+	}
+}
+
+// Schema v1 remains readable as a migration source and v2 may omit harnesses.
+func TestReadV1AndPartialV2(t *testing.T) {
+	for name, tc := range map[string]struct {
+		data    string
+		version int
+	}{
+		"v1":         {"schema_version: 1\nharnesses: {codex: {}, opencode: {}}\nassignments: {}\n", configuration.SchemaV1},
+		"v2 partial": {"schema_version: 2\nharnesses: {codex: {}}\nassignments: {}\n", configuration.CurrentSchema},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(tc.data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			r := (Files{}).Read(context.Background(), path)
+			if r.Kind != startup.Valid || r.Config.SchemaVersion != tc.version {
+				t.Fatal(r)
+			}
+		})
 	}
 }
 func TestPublishReadAndPreserveBytes(t *testing.T) {
@@ -116,7 +142,8 @@ func TestInvalidUnreadableAndSymlinkPreserved(t *testing.T) {
 		kind  startup.ReadKind
 		cause error
 	}{
-		{"schema_version: 2\nharnesses: {codex: {}, opencode: {}}\nassignments: {}\n", startup.FutureSchema, configuration.ErrFutureSchema},
+		{"schema_version: 3\nharnesses: {codex: {}, opencode: {}}\nassignments: {}\n", startup.FutureSchema, configuration.ErrFutureSchema},
+		{"schema_version: 2\nharnesses: {grok: {}}\nassignments: {}\n", startup.Invalid, configuration.ErrInvalid},
 		{"schema_version: broken\n", startup.Invalid, configuration.ErrInvalid},
 		{"schema_version: 1\nschema_version: 1\n", startup.Invalid, configuration.ErrInvalid},
 	} {

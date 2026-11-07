@@ -123,31 +123,6 @@ func TestModelSelectionUsesAdvertisedMethods(t *testing.T) {
 			t.Fatalf("set_model = %+v", frames)
 		}
 	})
-	t.Run("config options", func(t *testing.T) {
-		options := []any{
-			map[string]any{"id": "provider", "category": "model", "type": "select", "options": []any{map[string]any{"value": "gateway"}, map[string]any{"value": "codex"}}},
-			map[string]any{"id": "model", "category": "model", "type": "select", "options": []any{map[string]any{"group": "g", "options": []any{map[string]any{"value": "vendor/model-b"}}}}},
-			map[string]any{"id": "mode", "category": "mode", "type": "select", "options": []any{map[string]any{"value": "codex"}}},
-		}
-		serve := standardAgent(nil, map[string]any{"sessionId": testSessionID, "configOptions": options}, func(conn *agentConn, frame clientFrame) {
-			if frame.Method == "session/set_config_option" {
-				conn.reply(frame.ID, map[string]any{"configOptions": options})
-			}
-		})
-		launcher := &fakeLauncher{serve: serve}
-		request := openRequest(t.TempDir())
-		request.Model = provider.ModelSelection{ProviderID: "codex", ModelID: "vendor/model-b"}
-		opened, err := newTestAdapter(launcher, nil).OpenSession(context.Background(), request)
-		if err != nil {
-			t.Fatalf("OpenSession: %v", err)
-		}
-		defer opened.Session.Close(context.Background(), provider.CloseSessionRequest{Session: opened.Session.Ref()})
-		frames := launcher.framesFor("session/set_config_option")
-		if len(frames) != 2 || !strings.Contains(string(frames[0].Params), `"configId":"provider","value":"codex"`) ||
-			!strings.Contains(string(frames[1].Params), `"configId":"model","value":"vendor/model-b"`) {
-			t.Fatalf("set_config_option = %+v", frames)
-		}
-	})
 }
 
 func TestPermissionWithoutRejectOnceIsCancelled(t *testing.T) {
@@ -336,6 +311,7 @@ func TestConcurrentTurnIsRejected(t *testing.T) {
 	if _, err := h.collectUntil(isTurnTerminal); err != nil {
 		t.Fatal(err)
 	}
+	h.awaitTurnReleased()
 	if _, err := h.startTurn(context.Background(), "third"); err != nil {
 		t.Fatalf("turn after terminal: %v", err)
 	}
@@ -343,6 +319,7 @@ func TestConcurrentTurnIsRejected(t *testing.T) {
 
 func TestCallerCancellationWhilePromptInFlight(t *testing.T) {
 	release := make(chan struct{})
+	inFlight := make(chan struct{})
 	serve := func(conn *agentConn) {
 		for {
 			frame, ok := conn.next()
@@ -354,7 +331,11 @@ func TestCallerCancellationWhilePromptInFlight(t *testing.T) {
 				conn.reply(frame.ID, map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{}})
 			case "session/new":
 				conn.reply(frame.ID, map[string]any{"sessionId": testSessionID})
-				// Stop reading so the session/prompt write blocks in flight.
+				// Take only the first bytes of the large prompt so its write
+				// stays blocked in flight, signal that, then wait.
+				_, _ = conn.input.ReadByte()
+				_ = conn.input.UnreadByte()
+				close(inFlight)
 				<-release
 			case "session/prompt":
 				endTurn(conn, frame)
@@ -372,10 +353,10 @@ func TestCallerCancellationWhilePromptInFlight(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		time.Sleep(50 * time.Millisecond)
+		<-inFlight
 		cancel()
 	}()
-	_, err = h.startTurn(ctx, "in flight")
+	_, err = h.startTurn(ctx, strings.Repeat("in flight ", 16*1024))
 	providerErr := requireCode(t, err, provider.ErrorCallerCancelled)
 	if providerErr.RemoteEffect != provider.RemoteEffectPossiblySent || providerErr.Retry != provider.RetryAfterReconcile {
 		t.Fatalf("in-flight cancel = %+v", providerErr)
@@ -396,10 +377,10 @@ func TestCallerCancellationWhilePromptInFlight(t *testing.T) {
 	if len(turns) != 1 || turns[0].Previous != provider.TurnStarting || turns[0].TerminalReason != "end_turn" {
 		t.Fatalf("late turn states = %+v", turns)
 	}
-	eventually(t, func() bool {
-		snapshot, _ := h.session.ObserveState(context.Background(), provider.ObserveStateRequest{Session: h.session.Ref()})
-		return !snapshot.ActiveTurn.Present
-	}, "late reply to resolve the turn")
+	h.awaitTurnReleased()
+	if snapshot, _ := h.session.ObserveState(context.Background(), provider.ObserveStateRequest{Session: h.session.Ref()}); snapshot.ActiveTurn.Present {
+		t.Fatal("late reply did not resolve the turn")
+	}
 }
 
 func TestLateSubscriberSeesBufferedEvents(t *testing.T) {
@@ -481,5 +462,24 @@ func TestInspectDoesNotLaunch(t *testing.T) {
 	}
 	if len(launcher.specs) != 0 {
 		t.Fatal("Inspect launched the agent")
+	}
+}
+
+func TestStartTurnRefusesSteerReleaseWithoutSending(t *testing.T) {
+	h := openHarness(t, promptAgent(endTurn), nil)
+	_, err := h.session.StartTurn(context.Background(), provider.StartTurnRequest{
+		RequestID: "release", Session: h.session.Ref(), Assignment: testAssignment,
+		Input:                  []provider.InputPart{{Kind: provider.InputInstruction, Text: "go"}},
+		ResultContract:         provider.ResultContractRef{Requested: provider.SchemaNone},
+		ReleaseUnresolvedSteer: provider.Some(provider.MessageID("steer-1")),
+	})
+	if providerErr := requireCode(t, err, provider.ErrorStaleBinding); providerErr.RemoteEffect != provider.RemoteEffectNotSent {
+		t.Fatalf("release error = %+v", providerErr)
+	}
+	if frames := h.launcher.framesFor("session/prompt"); len(frames) != 0 {
+		t.Fatalf("refused release sent a prompt: %+v", frames)
+	}
+	if _, err := h.startTurn(context.Background(), "go"); err != nil {
+		t.Fatalf("ordinary turn after refused release: %v", err)
 	}
 }

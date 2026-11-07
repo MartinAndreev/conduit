@@ -22,24 +22,61 @@ import (
 )
 
 type session struct {
-	config          Config
-	ref             provider.SessionRef
-	nativeSession   provider.NativeSessionID
-	model           provider.ModelSelection
-	workspace       string
-	contract        provider.ResultContractNegotiation
-	capabilities    provider.CapabilitySnapshot
-	broker          *eventstream.Broker
-	mu              sync.Mutex
-	emitMu          sync.Mutex
-	assignment      provider.AssignmentRef
-	turn            provider.Optional[provider.TurnRef]
-	process         processruntime.Process
-	state           provider.SessionState
-	closed          bool
-	steerPending    bool
+	config        Config
+	ref           provider.SessionRef
+	nativeSession provider.NativeSessionID
+	model         provider.ModelSelection
+	workspace     string
+	contract      provider.ResultContractNegotiation
+	capabilities  provider.CapabilitySnapshot
+	broker        *eventstream.Broker
+	mu            sync.Mutex
+	emitMu        sync.Mutex
+	assignment    provider.AssignmentRef
+	turn          provider.Optional[provider.TurnRef]
+	process       processruntime.Process
+	state         provider.SessionState
+	closed        bool
+	steerPending  bool
+	// deliveryUnknown is a turn start whose delivery is unknown.
 	deliveryUnknown bool
-	seq             uint64
+	// unresolvedSteer is a possibly admitted steer that native
+	// reconciliation has not decided. It blocks turns and correction until
+	// reconciled or explicitly released by Conduit.
+	unresolvedSteer *unresolvedSteer
+	// released holds every steer Conduit explicitly released, keyed by native
+	// message ID. Each may still be pending in OpenCode and produce output in
+	// a later run; OpenCode's run JSONL links output only to assistant
+	// messages, never to the user message, so no output is attributed while
+	// any of them is unsettled. Each is settled individually by a native query.
+	// Steering stays allowed meanwhile: a correction still advances the
+	// binding on its own receipt, and the guard keeps output unattributed.
+	released map[string]*releasedSteer
+	// steerReconcileApplied is a test seam called after an unresolved-steer
+	// reconciliation was applied; it is nil in production.
+	steerReconcileApplied func(rules.SteerReconcileKind)
+	seq                   uint64
+}
+
+// releasedSteer is the native message of an explicitly released steer.
+type releasedSteer struct {
+	nativeMessageID string
+	// querying is set while a native query for it runs.
+	querying bool
+}
+
+// unresolvedSteer keeps the steer's Conduit message and the native message ID
+// it was admitted under, so delivery can be queried and a release matched.
+type unresolvedSteer struct {
+	request         provider.SteerRequest
+	nativeMessageID string
+	// reconciling is set while the native delivery query runs.
+	reconciling bool
+}
+
+// deliveryUnresolved must be called with s.mu held.
+func (s *session) deliveryUnresolved() bool {
+	return s.deliveryUnknown || s.unresolvedSteer != nil
 }
 
 func (s *session) Ref() provider.SessionRef                  { return s.ref }
@@ -58,7 +95,7 @@ func (s *session) ObserveState(_ context.Context, request provider.ObserveStateR
 			return s.stale(provider.OperationObserveState)
 		}
 		knowledge, state := provider.SnapshotPartial, s.state
-		if s.deliveryUnknown {
+		if s.deliveryUnresolved() {
 			knowledge, state = provider.SnapshotUnknown, provider.SessionStateUnknown
 		}
 		result = provider.SessionSnapshot{Knowledge: knowledge, SessionState: state, ActiveTurn: s.turn, Native: provider.NativeIDs{Session: provider.Some(s.nativeSession)}, ObservedAt: s.config.Now()}
@@ -74,18 +111,23 @@ func (s *session) StartTurn(ctx context.Context, request provider.StartTurnReque
 	var turn provider.TurnRef
 	var proc processruntime.Process
 	err := lockscope.WithMutexLock(&s.mu, func() error {
+		release := request.ReleaseUnresolvedSteer
 		decision := rules.DecideStartTurn(rules.StartTurnFacts{
 			SessionMatches:            request.Session == s.ref,
 			AssignmentIdentityMatches: request.Assignment.SameIdentity(s.assignment),
 			AssignmentRevisionMatches: request.Assignment.Revision == s.assignment.Revision,
 			Closed:                    s.closed, ActiveTurn: s.turn.Present, SteerPending: s.steerPending,
-			DeliveryUnknown: s.deliveryUnknown, SessionLost: s.state == provider.SessionLost,
-			ResultContractMatches: reflect.DeepEqual(request.ResultContract, s.contract.Contract),
+			DeliveryUnknown:               s.deliveryUnknown,
+			SteerUnresolved:               s.unresolvedSteer != nil,
+			ReleaseRequested:              release.Present,
+			ReleaseMatchesUnresolvedSteer: release.Present && s.unresolvedSteer != nil && s.unresolvedSteer.request.MessageID == release.Value,
+			SessionLost:                   s.state == provider.SessionLost,
+			ResultContractMatches:         reflect.DeepEqual(request.ResultContract, s.contract.Contract),
 		})
 		switch decision.Kind {
 		case rules.StartTurnBindingDiffers:
 			return s.stale(provider.OperationStartTurn)
-		case rules.StartTurnUnavailable:
+		case rules.StartTurnUnavailable, rules.StartTurnReleaseNothingUnresolved, rules.StartTurnReleaseMismatch:
 			return adaptererror.NewWithDetail(provider.OperationStartTurn, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, decision.Reason, nil)
 		case rules.StartTurnContractChanged:
 			return adaptererror.NewWithDetail(provider.OperationStartTurn, provider.ErrorProtocolViolation, provider.RemoteEffectNotSent, decision.Reason, nil)
@@ -101,6 +143,18 @@ func (s *session) StartTurn(ctx context.Context, request provider.StartTurnReque
 		proc, err = s.config.Launcher.Start(processruntime.Spec{Path: s.config.ExecutablePath, Args: args, Dir: s.workspace})
 		if err != nil {
 			return adaptererror.NewWithDetail(provider.OperationStartTurn, provider.ErrorExecutableMissing, provider.RemoteEffectNotSent, "could not start OpenCode", err)
+		}
+		if decision.Kind == rules.StartTurnAllowedReleasingSteer {
+			// Released only once the turn is launched, so a refused start
+			// leaves the steer unresolved. Its delivery stays unknown, the
+			// revision it proposed is never adopted, and output observed while
+			// it was unresolved stays unattributed.
+			id := s.unresolvedSteer.nativeMessageID
+			if s.released == nil {
+				s.released = make(map[string]*releasedSteer)
+			}
+			s.released[id] = &releasedSteer{nativeMessageID: id}
+			s.unresolvedSteer = nil
 		}
 		s.turn, s.process, s.state = provider.Some(turn), proc, provider.SessionOpen
 		return nil
@@ -228,6 +282,15 @@ func (s *session) stopOwnedClient(ctx context.Context, proc processruntime.Proce
 }
 
 func (s *session) readRun(proc processruntime.Process, turn provider.TurnRef) {
+	// killRun terminates this run client's own process group at most once
+	// after its observation failed: a descendant may hold stdout open, and a
+	// root that exited on its own does not prove its descendants are gone.
+	killRun := sync.OnceFunc(func() { _ = proc.KillTree() })
+	watchDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		s.watchRunRootExit(proc, killRun)
+	}()
 	go io.Copy(io.Discard, proc.Stderr())
 	scanner := bufio.NewScanner(proc.Stdout())
 	scanner.Buffer(make([]byte, min(4096, s.config.MaxEventLineBytes)), s.config.MaxEventLineBytes)
@@ -236,10 +299,17 @@ func (s *session) readRun(proc processruntime.Process, turn provider.TurnRef) {
 	}
 	scanErr := scanner.Err()
 	if scanErr != nil {
+		killRun()
 		_, _ = io.Copy(io.Discard, proc.Stdout())
 	}
 	result := proc.Wait()
+	// Wait returned, so the root has exited and the watch has decided; join
+	// it so its kill decision precedes the turn's final events.
+	<-watchDone
 	failed := scanErr != nil || result.Err != nil || result.ExitCode != 0
+	if failed {
+		killRun()
+	}
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
 		if s.process == proc && !s.closed && !failed {
 			s.process = nil
@@ -259,6 +329,25 @@ func (s *session) readRun(proc processruntime.Process, turn provider.TurnRef) {
 		s.emit(provider.SessionStateEvent{Previous: provider.SessionOpen, Current: provider.SessionLost, NativeStatus: "CLI observation failed; native execution state is unknown"})
 	} else {
 		s.emit(provider.SessionStateEvent{Previous: provider.SessionOpen, Current: provider.SessionIdleObserved, NativeStatus: "CLI client completed; native server quiescence is not proven"})
+	}
+	// The observed turn has ended: a steer whose delivery is unknown can now
+	// be reconciled against the native session.
+	s.reconcileUnresolvedSteer()
+	s.settleReleasedSteers()
+}
+
+// watchRunRootExit waits for the run client's root to exit, independently of
+// stdout and stderr: a descendant may hold either pipe, keeping the read or
+// process.Wait blocked. It ends only at root exit (Wait cannot return before
+// it). A failed root exit ends the observation, so the group is always killed.
+// A clean root exit kills nothing: the group could contain a process that
+// OpenCode intends to outlive the client (such as a shared service), so the
+// observation keeps waiting for the pipes to end.
+func (s *session) watchRunRootExit(proc processruntime.Process, killRun func()) {
+	rootExited, rootResult := processruntime.ObserveRootExit(proc)
+	<-rootExited
+	if result := rootResult(); result.Err != nil || result.ExitCode != 0 {
+		killRun()
 	}
 }
 
@@ -282,9 +371,14 @@ func (s *session) emit(body provider.EventBody) {
 			s.seq++
 			seq = s.seq
 			turn = s.turn
+			// Output while a released steer may still run cannot be told apart
+			// from the turn's own output, so it belongs to no turn or revision.
+			if len(s.released) > 0 {
+				turn = provider.None[provider.TurnRef]()
+			}
 			// While a correction is in flight or its delivery is unknown, which
 			// revision the agent is working on is unresolved (provider contract).
-			if s.steerPending || s.deliveryUnknown {
+			if s.steerPending || s.deliveryUnresolved() || len(s.released) > 0 {
 				assignment = provider.None[provider.AssignmentRef]()
 			} else {
 				assignment = provider.Some(s.assignment)

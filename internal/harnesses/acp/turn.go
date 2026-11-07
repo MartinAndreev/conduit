@@ -58,7 +58,7 @@ func (s *session) StartTurn(ctx context.Context, request provider.StartTurnReque
 	if err != nil {
 		return provider.StartTurnResult{}, adaptererror.New(provider.OperationStartTurn, provider.ErrorProtocolViolation, provider.RemoteEffectNotSent, err, "could not allocate adapter turn ID")
 	}
-	turn := provider.TurnRef{AdapterTurnID: provider.AdapterTurnID(turnID)}
+	turn := boundTurn{ref: provider.TurnRef{AdapterTurnID: provider.AdapterTurnID(turnID)}, assignment: request.Assignment}
 	native, err := s.reserveTurn(request, turn, actual)
 	if err != nil {
 		return provider.StartTurnResult{}, err
@@ -72,7 +72,7 @@ func (s *session) StartTurn(ctx context.Context, request provider.StartTurnReque
 		return provider.StartTurnResult{}, err
 	}
 	return provider.StartTurnResult{
-		Turn: turn, Assignment: request.Assignment, TargetingStrength: provider.TargetSessionLease,
+		Turn: turn.ref, Assignment: request.Assignment, TargetingStrength: provider.TargetSessionLease,
 		ResultEnforcement: actual,
 		Native:            provider.NativeIDs{Session: optionalNativeSession(native)},
 	}, nil
@@ -80,7 +80,7 @@ func (s *session) StartTurn(ctx context.Context, request provider.StartTurnReque
 
 // reserveTurn evaluates eligibility and reserves the turn in one critical
 // section, so concurrent starts cannot both send session/prompt.
-func (s *session) reserveTurn(request provider.StartTurnRequest, turn provider.TurnRef, actual provider.SchemaEnforcement) (string, error) {
+func (s *session) reserveTurn(request provider.StartTurnRequest, turn boundTurn, actual provider.SchemaEnforcement) (string, error) {
 	var native string
 	err := lockscope.WithMutexLock(&s.mu, func() error {
 		decision := rules.DecideStartTurn(rules.StartTurnFacts{
@@ -88,15 +88,16 @@ func (s *session) reserveTurn(request provider.StartTurnRequest, turn provider.T
 			AssignmentIdentityMatches: request.Assignment.SameIdentity(s.assignment),
 			Closing:                   s.closing,
 			SessionLost:               s.state == provider.SessionLost,
+			SteerReleaseRequested:     request.ReleaseUnresolvedSteer.Present,
 			TurnUnresolved:            s.turn != nil,
 		})
 		switch decision.Kind {
-		case rules.StartTurnBindingDiffers, rules.StartTurnOccupied:
+		case rules.StartTurnBindingDiffers, rules.StartTurnOccupied, rules.StartTurnStaleRelease:
 			return adaptererror.New(provider.OperationStartTurn, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, nil, decision.Reason)
 		case rules.StartTurnUnavailable:
 			return adaptererror.New(provider.OperationStartTurn, provider.ErrorSessionLost, provider.RemoteEffectNotSent, nil, decision.Reason)
 		}
-		s.turn = &turnState{ref: turn, phase: provider.TurnStarting}
+		s.turn = &turnState{bound: turn, phase: provider.TurnStarting, settled: make(chan struct{})}
 		s.assignment = request.Assignment
 		s.contract = provider.ResultContractNegotiation{Contract: request.ResultContract, Actual: actual}
 		native = s.nativeSession
@@ -107,39 +108,38 @@ func (s *session) reserveTurn(request provider.StartTurnRequest, turn provider.T
 
 // settleTurnDispatch records the dispatch outcome. A proven unsent prompt
 // releases the reservation. A written prompt becomes active. A possibly sent
-// prompt stays unresolved until its reply or transport loss. A reply that
-// arrived before settlement is processed now, after the activation event.
-func (s *session) settleTurnDispatch(request provider.StartTurnRequest, turn provider.TurnRef, sent bool, sendErr error) error {
-	var deferred *rpcResponse
-	var previous provider.TurnState
-	activated := false
-	_ = lockscope.WithMutexLock(&s.mu, func() error {
-		current := s.turn
-		if current == nil || current.ref != turn {
+// prompt stays unresolved until its reply or transport loss. The activation
+// is published under turnMu before settled closes, so a reply that already
+// arrived publishes its terminal only afterwards.
+func (s *session) settleTurnDispatch(request provider.StartTurnRequest, turn boundTurn, sent bool, sendErr error) error {
+	var settled chan struct{}
+	_ = lockscope.WithMutexLock(&s.turnMu, func() error {
+		activated := false
+		_ = lockscope.WithMutexLock(&s.mu, func() error {
+			current := s.turn
+			if current == nil || current.bound.ref != turn.ref {
+				return nil
+			}
+			current.dispatchSettled = true
+			settled = current.settled
+			if !sent {
+				s.turn = nil
+				return nil
+			}
+			if sendErr == nil && current.phase == provider.TurnStarting {
+				current.phase = provider.TurnActive
+				activated = true
+			}
 			return nil
-		}
-		current.dispatchSettled = true
-		if !sent {
-			s.turn = nil
-			return nil
-		}
-		if sendErr == nil && current.phase == provider.TurnStarting {
-			current.phase = provider.TurnActive
-			activated = true
-		}
-		deferred = current.deferred
-		current.deferred = nil
-		if deferred != nil {
-			previous = current.phase
-			s.turn = nil
+		})
+		s.at(hookBeforeActivation)
+		if activated {
+			s.emitTurn(turn, provider.TurnStateEvent{Previous: provider.TurnStarting, Current: provider.TurnActive})
 		}
 		return nil
 	})
-	if activated {
-		s.emitTurn(turn, provider.TurnStateEvent{Previous: provider.TurnStarting, Current: provider.TurnActive})
-	}
-	if deferred != nil {
-		s.finishTurn(turn, previous, *deferred)
+	if settled != nil {
+		close(settled)
 	}
 	if sendErr != nil {
 		return adaptererror.Delivery(provider.OperationStartTurn, request.RequestID, sent, sendErr)
@@ -147,33 +147,51 @@ func (s *session) settleTurnDispatch(request provider.StartTurnRequest, turn pro
 	return nil
 }
 
-// handlePromptReply runs on the reader goroutine (or on transport stop). It
-// ends the turn it belongs to; a reply for another turn is ignored. A native
-// reply racing StartTurn is deferred until the activation is published; a
-// transport failure is published at once, before the stream ends with
-// session_lost.
-func (s *session) handlePromptReply(turn provider.TurnRef, reply rpcResponse) {
-	var transportErr *transportError
-	transportStopped := errors.As(reply.err, &transportErr)
-	var previous provider.TurnState
-	finish := false
+// handlePromptReply runs on the reader goroutine (or once on transport stop)
+// and ends the turn the reply belongs to; a reply for another turn is
+// ignored. It first waits until StartTurn settled the dispatch (StartTurn
+// never waits on the reader, so this cannot deadlock), then takes the ending
+// lease and publishes the terminal under turnMu. The turn keeps occupying the
+// session until its terminal events are published.
+func (s *session) handlePromptReply(turn boundTurn, reply rpcResponse) {
+	s.at(hookPromptReplyReceived)
+	var settled chan struct{}
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
-		current := s.turn
-		if current == nil || current.ref != turn {
-			return nil
+		if s.turn != nil && s.turn.bound.ref == turn.ref {
+			settled = s.turn.settled
 		}
-		if !current.dispatchSettled && !transportStopped {
-			current.deferred = &reply
-			return nil
-		}
-		previous = current.phase
-		s.turn = nil
-		finish = true
 		return nil
 	})
-	if finish {
-		s.finishTurn(turn, previous, reply)
+	if settled == nil {
+		return
 	}
+	<-settled
+	_ = lockscope.WithMutexLock(&s.turnMu, func() error {
+		var current *turnState
+		var previous provider.TurnState
+		_ = lockscope.WithMutexLock(&s.mu, func() error {
+			if s.turn == nil || s.turn.bound.ref != turn.ref || s.turn.ending {
+				return nil
+			}
+			current = s.turn
+			current.ending = true
+			previous = current.phase
+			return nil
+		})
+		if current == nil {
+			return nil
+		}
+		s.at(hookBeforeTerminal)
+		s.finishTurn(turn, previous, reply)
+		_ = lockscope.WithMutexLock(&s.mu, func() error {
+			if s.turn == current {
+				s.turn = nil
+			}
+			return nil
+		})
+		s.at(hookTurnReleased)
+		return nil
+	})
 }
 
 type promptResult struct {
@@ -193,7 +211,7 @@ type promptUsage struct {
 
 // finishTurn publishes the native terminal of one turn: usage and warnings
 // first, then the turn state. Transport loss reports a lost turn instead.
-func (s *session) finishTurn(turn provider.TurnRef, previous provider.TurnState, reply rpcResponse) {
+func (s *session) finishTurn(turn boundTurn, previous provider.TurnState, reply rpcResponse) {
 	var transportErr *transportError
 	var nativeErr *rpcError
 	var result promptResult
@@ -242,7 +260,7 @@ func nativeErrorDetail(nativeErr *rpcError) provider.BoundedText {
 	return boundedtext.String(text, maxNativeErrorBytes)
 }
 
-func (s *session) turnUsage(turn provider.TurnRef, usage *promptUsage) (provider.UsageEvent, bool) {
+func (s *session) turnUsage(turn boundTurn, usage *promptUsage) (provider.UsageEvent, bool) {
 	if usage == nil {
 		return provider.UsageEvent{}, false
 	}
@@ -265,7 +283,7 @@ func (s *session) turnUsage(turn provider.TurnRef, usage *promptUsage) (provider
 		return nil
 	})
 	return provider.UsageEvent{
-		Scope: provider.UsagePrimaryTurn, ScopeID: string(turn.AdapterTurnID),
+		Scope: provider.UsagePrimaryTurn, ScopeID: string(turn.ref.AdapterTurnID),
 		Measurement: provider.UsageCumulativeSnapshot, Model: model, Counters: counters,
 	}, true
 }
@@ -288,8 +306,8 @@ func (s *session) InterruptTurn(ctx context.Context, request provider.InterruptR
 		decision := rules.DecideInterrupt(rules.InterruptFacts{
 			SessionMatches:    request.Session == s.ref,
 			AssignmentMatches: request.Assignment == s.assignment,
-			ActiveTurn:        s.turn != nil,
-			ActiveTurnMatches: s.turn != nil && s.turn.ref == request.ExpectedActiveTurn,
+			ActiveTurn:        s.turn != nil && !s.turn.ending,
+			ActiveTurnMatches: s.turn != nil && s.turn.bound.ref == request.ExpectedActiveTurn,
 		})
 		if decision.Kind != rules.InterruptAllowed {
 			return adaptererror.New(provider.OperationInterruptTurn, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, nil, decision.Reason)
@@ -318,20 +336,27 @@ func (s *session) sendCancel(ctx context.Context, native string) (bool, error) {
 }
 
 // markInterruptRequested records the cancel for a turn that is still
-// unresolved; a turn already ended by its reply is left alone.
+// unresolved; a turn already ending is left alone. turnMu keeps the mark and
+// its event ordered against activation and terminal publication.
 func (s *session) markInterruptRequested(turn provider.TurnRef) {
-	var previous provider.TurnState
-	marked := false
-	_ = lockscope.WithMutexLock(&s.mu, func() error {
-		if s.turn == nil || s.turn.ref != turn || s.turn.phase == provider.TurnInterruptRequested {
+	_ = lockscope.WithMutexLock(&s.turnMu, func() error {
+		var bound boundTurn
+		var previous provider.TurnState
+		marked := false
+		_ = lockscope.WithMutexLock(&s.mu, func() error {
+			current := s.turn
+			if current == nil || current.bound.ref != turn || current.ending || current.phase == provider.TurnInterruptRequested {
+				return nil
+			}
+			previous = current.phase
+			current.phase = provider.TurnInterruptRequested
+			bound = current.bound
+			marked = true
 			return nil
+		})
+		if marked {
+			s.emitTurn(bound, provider.TurnStateEvent{Previous: previous, Current: provider.TurnInterruptRequested})
 		}
-		previous = s.turn.phase
-		s.turn.phase = provider.TurnInterruptRequested
-		marked = true
 		return nil
 	})
-	if marked {
-		s.emitTurn(turn, provider.TurnStateEvent{Previous: previous, Current: provider.TurnInterruptRequested})
-	}
 }

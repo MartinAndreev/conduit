@@ -34,7 +34,7 @@ func main() {
 	fixture := flag.String("fixture", "", "synthetic startup for visual verification (ready, warnings, blocked, slow)")
 	language := flag.String("lang", "en", "presentation language: en or bg")
 	flag.Parse()
-	var initializer bridge.Initializer = startup.Service{Repository: startupinfra.Files{}, Detector: startupinfra.Detector{}}
+	var initializer bridge.Initializer = startup.Service{Repository: startupinfra.Files{}, Detector: startupinfra.Detector{}, Migrator: startupinfra.Files{}}
 	if *fixture != "" {
 		var err error
 		initializer, err = bridge.Fixture(*fixture)

@@ -34,6 +34,12 @@ type Descriptor struct {
 	// harness owner classified as administrative. They are ignored silently;
 	// any other unknown notification is warned once per method.
 	RecognizedNotifications []string
+	// ProviderConfigID names the session config option that carries a
+	// non-empty ModelSelection.ProviderID; empty means the harness cannot
+	// select a provider. VariantConfigID does the same for
+	// ModelSelection.Variant, which means reasoning effort for every harness.
+	ProviderConfigID string
+	VariantConfigID  string
 	// SessionSettings are session config values the harness requires. They
 	// are applied after session/new and model selection; a setting the agent
 	// cannot honour fails OpenSession.

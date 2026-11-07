@@ -93,12 +93,24 @@ func TestStartupDiagnosticCoverage(t *testing.T) {
 		"harness_missing", "harness_override_missing", "harness_probe_failed", "harness_probe_timeout", "harness_version_unknown", "harness_probe_cleanup_unconfirmed",
 		"final_configuration_invalid", "final_configuration_unreadable", "final_configuration_future_schema", "final_configuration_absent",
 		"operation_id_failed", "startup_dependencies_missing", "configuration_publish_invalid_result", "configuration_creation_rejected",
+		"configuration_migration_failed", "configuration_migration_unavailable", "configuration_migration_backup_conflict", "configuration_migration_conflict",
+		"configuration_migration_deferred", "configuration_migration_unconfirmed",
 	} {
 		for _, locale := range []Locale{English, Bulgarian} {
 			key := "diagnostic." + code
 			if T(locale, key) == key {
 				t.Errorf("missing diagnostic %s/%s", locale, code)
 			}
+		}
+	}
+}
+
+// A durability failure after replacement must not claim the original is unchanged.
+func TestMigrationUnconfirmedSaysReplaced(t *testing.T) {
+	for locale, words := range map[Locale][2]string{English: {"replaced", "unchanged"}, Bulgarian: {"заменена", "непроменен"}} {
+		text := T(locale, "diagnostic.configuration_migration_unconfirmed")
+		if !strings.Contains(text, words[0]) || strings.Contains(text, words[1]) {
+			t.Errorf("%s: %q", locale, text)
 		}
 	}
 }

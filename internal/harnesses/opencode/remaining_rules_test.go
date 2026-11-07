@@ -135,7 +135,7 @@ func TestAcceptSteerClearsPendingBeforeStaleReceiptRefusal(t *testing.T) {
 			if !errors.As(err, &e) || e.Code != provider.ErrorDeliveryUnknown || e.Operation != provider.OperationSteer || e.RemoteEffect != provider.RemoteEffectAccepted || e.Retry != provider.RetryNever || e.Cause != nil {
 				t.Fatalf("receipt error=%#v", e)
 			}
-			if s.steerPending || s.assignment != before || s.deliveryUnknown {
+			if s.steerPending || s.assignment != before || s.deliveryUnresolved() {
 				t.Fatal("stale receipt changed assignment, uncertainty or pending release")
 			}
 		})

@@ -49,7 +49,7 @@ func (s *session) beginClose(request provider.CloseSessionRequest) (rules.CloseD
 		decision = rules.DecideClose(rules.CloseFacts{
 			SessionMatches:     request.Session == s.ref,
 			Closing:            s.closing,
-			ActiveWork:         s.turn != nil,
+			ActiveWork:         s.turn != nil && !s.turn.ending,
 			RequireQuiescent:   request.Policy == provider.CloseRequireQuiescent,
 			ExplicitDetach:     request.Policy == provider.CloseExplicitDetach,
 			InterruptThenClose: request.Policy == provider.CloseInterruptThenClose,

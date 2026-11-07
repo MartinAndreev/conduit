@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"slices"
 	"strings"
 )
@@ -55,7 +56,13 @@ var (
 	strippedEnvironmentPrefixes = []string{"CLAUDE_CODE_"}
 )
 
-func strippedEnvironmentName(name string) bool {
+// strippedEnvironmentName reports whether name is removed. Windows treats
+// environment names case-insensitively, so foldCase compares without case
+// there; elsewhere names are case-sensitive and compared exactly.
+func strippedEnvironmentName(name string, foldCase bool) bool {
+	if foldCase {
+		name = strings.ToUpper(name)
+	}
 	if slices.Contains(strippedEnvironmentNames, name) {
 		return true
 	}
@@ -71,10 +78,16 @@ func strippedEnvironmentName(name string) bool {
 // without the stripped variables. It is launched with Spec.ReplaceEnv, so a
 // stripped variable is absent in the child rather than set to an empty value.
 func launchEnvironment(parent []string) []string {
+	return filterEnvironment(parent, runtime.GOOS == "windows")
+}
+
+// filterEnvironment removes stripped names and keeps every retained entry
+// unchanged and in order. foldCase selects case-insensitive name matching.
+func filterEnvironment(parent []string, foldCase bool) []string {
 	result := make([]string, 0, len(parent))
 	for _, entry := range parent {
 		name, _, _ := strings.Cut(entry, "=")
-		if !strippedEnvironmentName(name) {
+		if !strippedEnvironmentName(name, foldCase) {
 			result = append(result, entry)
 		}
 	}

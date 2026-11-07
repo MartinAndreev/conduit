@@ -5,11 +5,13 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/MartinAndreev/conduit/internal/harnesses/internal/eventstream"
+	"github.com/MartinAndreev/conduit/internal/lockscope"
 	processruntime "github.com/MartinAndreev/conduit/internal/process"
 	"github.com/MartinAndreev/conduit/internal/sessions/provider"
 )
@@ -20,6 +22,29 @@ type fakeControl struct {
 	promptSent  bool
 	promptErr   error
 	promptCalls int
+
+	queryMu          sync.Mutex
+	query            SteerDeliveryQuery
+	queryObservation SteerDeliveryObservation
+	queryErr         error
+	queryCalls       int
+	// queryQueue answers queries in order before falling back to
+	// queryObservation/queryErr.
+	queryQueue []queryOutcome
+	// released answers QueryReleasedSteer per native message ID; a message
+	// without an answer gets a query error.
+	released      map[string]releasedOutcome
+	releasedCalls []string
+}
+
+type releasedOutcome struct {
+	observation ReleasedSteerObservation
+	err         error
+}
+
+type queryOutcome struct {
+	observation SteerDeliveryObservation
+	err         error
 }
 
 func (f *fakeControl) CreateSession(_ context.Context, request CreateSessionRequest) (CreateSessionResult, bool, error) {
@@ -34,6 +59,56 @@ func (f *fakeControl) Prompt(_ context.Context, request PromptRequest) (PromptRe
 	}
 	return PromptResult{Accepted: true, ReceiptID: "message-1"}, true, nil
 }
+func (f *fakeControl) QuerySteerDelivery(_ context.Context, query SteerDeliveryQuery) (SteerDeliveryObservation, error) {
+	var observation SteerDeliveryObservation
+	err := lockscope.WithMutexLock(&f.queryMu, func() error {
+		f.queryCalls++
+		f.query = query
+		if len(f.queryQueue) > 0 {
+			next := f.queryQueue[0]
+			f.queryQueue = f.queryQueue[1:]
+			observation = next.observation
+			return next.err
+		}
+		observation = f.queryObservation
+		return f.queryErr
+	})
+	return observation, err
+}
+func (f *fakeControl) QueryReleasedSteer(_ context.Context, query SteerDeliveryQuery) (ReleasedSteerObservation, error) {
+	var outcome releasedOutcome
+	_ = lockscope.WithMutexLock(&f.queryMu, func() error {
+		f.releasedCalls = append(f.releasedCalls, query.MessageID)
+		answer, ok := f.released[query.MessageID]
+		if !ok {
+			answer = releasedOutcome{err: errors.New("no released answer")}
+		}
+		outcome = answer
+		return nil
+	})
+	return outcome.observation, outcome.err
+}
+
+// setReleased sets the answer for one released message.
+func (f *fakeControl) setReleased(messageID string, outcome releasedOutcome) {
+	_ = lockscope.WithMutexLock(&f.queryMu, func() error {
+		if f.released == nil {
+			f.released = make(map[string]releasedOutcome)
+		}
+		f.released[messageID] = outcome
+		return nil
+	})
+}
+
+func (f *fakeControl) queried() (SteerDeliveryQuery, int) {
+	var query SteerDeliveryQuery
+	var calls int
+	_ = lockscope.WithMutexLock(&f.queryMu, func() error {
+		query, calls = f.query, f.queryCalls
+		return nil
+	})
+	return query, calls
+}
 
 type fakeLauncher struct {
 	spec   processruntime.Spec
@@ -41,6 +116,7 @@ type fakeLauncher struct {
 	starts int
 	result processruntime.Result
 	delay  time.Duration
+	last   *fakeProcess
 }
 
 func (f *fakeLauncher) Start(spec processruntime.Spec) (processruntime.Process, error) {
@@ -50,13 +126,15 @@ func (f *fakeLauncher) Start(spec processruntime.Spec) (processruntime.Process, 
 	if delay == 0 {
 		delay = 50 * time.Millisecond
 	}
-	return &fakeProcess{stdout: io.NopCloser(strings.NewReader(f.output)), stderr: io.NopCloser(strings.NewReader("")), result: f.result, delay: delay}, nil
+	f.last = &fakeProcess{stdout: io.NopCloser(strings.NewReader(f.output)), stderr: io.NopCloser(strings.NewReader("")), result: f.result, delay: delay}
+	return f.last, nil
 }
 
 type fakeProcess struct {
 	stdout, stderr io.ReadCloser
 	result         processruntime.Result
 	delay          time.Duration
+	kills          atomic.Int32
 }
 
 func (*fakeProcess) PID() int                { return 1 }
@@ -68,7 +146,7 @@ func (p *fakeProcess) Wait() processruntime.Result {
 	return p.result
 }
 func (*fakeProcess) Interrupt() error        { return nil }
-func (*fakeProcess) KillTree() error         { return nil }
+func (p *fakeProcess) KillTree() error       { p.kills.Add(1); return nil }
 func (*fakeProcess) TreeKillSupported() bool { return true }
 
 type nopWriteCloser struct{ io.Writer }
@@ -89,6 +167,12 @@ func (b *blockingControl) Prompt(context.Context, PromptRequest) (PromptResult, 
 	close(b.entered)
 	<-b.release
 	return PromptResult{Accepted: true, ReceiptID: "receipt"}, true, nil
+}
+func (b *blockingControl) QuerySteerDelivery(context.Context, SteerDeliveryQuery) (SteerDeliveryObservation, error) {
+	return SteerDeliveryObservation{}, errors.New("not queried in this test")
+}
+func (b *blockingControl) QueryReleasedSteer(context.Context, SteerDeliveryQuery) (ReleasedSteerObservation, error) {
+	return ReleasedSteerObservation{}, errors.New("not queried in this test")
 }
 
 func TestOpenStartAndSteerPreserveBindings(t *testing.T) {
@@ -198,10 +282,16 @@ func TestNonzeroExitKeepsSessionLostAndBlocksNewTurn(t *testing.T) {
 	c := provider.ResultContractRef{Requested: provider.SchemaNone}
 	opened, _ := adapter.OpenSession(context.Background(), provider.OpenSessionRequest{Assignment: a, Workspace: provider.WorkspaceBinding{Path: "/work", Writable: true}, Model: m, ResultContract: c, PermissionMode: provider.PermissionDeny})
 	_, _ = opened.Session.StartTurn(context.Background(), provider.StartTurnRequest{Session: opened.Session.Ref(), Assignment: a, ResultContract: c})
-	time.Sleep(100 * time.Millisecond)
-	snapshot, _ := opened.Session.ObserveState(context.Background(), provider.ObserveStateRequest{Session: opened.Session.Ref()})
-	if snapshot.SessionState != provider.SessionLost {
-		t.Fatalf("expected lost state, got %s", snapshot.SessionState)
+	// The run client's failed exit is observed asynchronously; poll with a
+	// deadline instead of assuming a fixed delay.
+	for deadline := time.Now().Add(3 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		snapshot, _ := opened.Session.ObserveState(context.Background(), provider.ObserveStateRequest{Session: opened.Session.Ref()})
+		if snapshot.SessionState == provider.SessionLost {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected lost state, got %s", snapshot.SessionState)
+		}
 	}
 	_, err := opened.Session.StartTurn(context.Background(), provider.StartTurnRequest{Session: opened.Session.Ref(), Assignment: a, ResultContract: c})
 	if err == nil || launcher.starts != 1 {

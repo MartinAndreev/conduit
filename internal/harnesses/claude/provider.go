@@ -92,7 +92,7 @@ func (a *Adapter) OpenSession(ctx context.Context, request provider.OpenSessionR
 	s.start()
 
 	if err := s.initialize(ctx, request); err != nil {
-		return provider.OpenSessionResult{}, s.abortOpen(err)
+		return provider.OpenSessionResult{}, s.abortOpen(ctx, err)
 	}
 	return provider.OpenSessionResult{Session: s, Contract: s.contract}, nil
 }

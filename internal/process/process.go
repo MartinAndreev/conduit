@@ -49,3 +49,34 @@ type Process interface {
 
 // ExecLauncher starts OS processes using the standard library.
 type ExecLauncher struct{}
+
+// RootExitObserver is implemented by a Process that reports root exit
+// independently of its output pipes. ExecLauncher processes implement it.
+type RootExitObserver interface {
+	// RootExited closes once the root process exited and was reaped, even
+	// while descendants keep stdout or stderr open (Wait still blocks then).
+	RootExited() <-chan struct{}
+	// RootResult reports the root's exit status; it blocks until RootExited
+	// closed. Owned-resource release is reported only by Wait.
+	RootResult() Result
+}
+
+// ObserveRootExit returns a channel that closes when the root of p exited and
+// a function returning its result once it did. When p does not implement
+// RootExitObserver it falls back to Wait, which can report the exit only after
+// both output pipes ended.
+func ObserveRootExit(p Process) (<-chan struct{}, func() Result) {
+	if observer, ok := p.(RootExitObserver); ok {
+		return observer.RootExited(), observer.RootResult
+	}
+	exited := make(chan struct{})
+	var result Result
+	go func() {
+		result = p.Wait()
+		close(exited)
+	}()
+	return exited, func() Result {
+		<-exited
+		return result
+	}
+}

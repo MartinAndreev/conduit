@@ -11,13 +11,17 @@ import (
 )
 
 func (s *session) Steer(ctx context.Context, request provider.SteerRequest) (provider.DeliveryReceipt, error) {
+	messageID, err := s.newNativeMessageID()
+	if err != nil {
+		return provider.DeliveryReceipt{}, adaptererror.NewWithDetail(provider.OperationSteer, provider.ErrorProtocolViolation, provider.RemoteEffectNotSent, "could not allocate native message ID", err)
+	}
 	native, err := s.reserveSteer(request)
 	if err != nil {
 		return provider.DeliveryReceipt{}, err
 	}
-	result, sent, err := s.deliverSteer(ctx, native, request.Parts)
+	result, sent, err := s.deliverSteer(ctx, native, messageID, request.Parts)
 	if err != nil {
-		return provider.DeliveryReceipt{}, s.handleSteerDeliveryFailure(request, sent, err)
+		return provider.DeliveryReceipt{}, s.handleSteerDeliveryFailure(request, messageID, sent, err)
 	}
 	if !result.Accepted {
 		return provider.DeliveryReceipt{}, s.handleSteerRejection()
@@ -39,7 +43,7 @@ func (s *session) reserveSteer(request provider.SteerRequest) (provider.NativeSe
 			ActiveTurn:      s.turn.Present,
 			TurnMatches:     request.ExpectedActiveTurn == s.turn.Value,
 			SteerPending:    s.steerPending,
-			DeliveryUnknown: s.deliveryUnknown,
+			DeliveryUnknown: s.deliveryUnresolved(),
 		})
 		if eligibility.Kind == rules.SteerBindingStale {
 			return adaptererror.NewWithDetail(provider.OperationSteer, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, eligibility.Reason, nil)
@@ -59,9 +63,10 @@ func (s *session) reserveSteer(request provider.SteerRequest) (provider.NativeSe
 	return native, err
 }
 
-// deliverSteer performs only the native session prompt effect.
-func (s *session) deliverSteer(ctx context.Context, native provider.NativeSessionID, parts []provider.InputPart) (PromptResult, bool, error) {
-	return s.config.Control.Prompt(ctx, PromptRequest{SessionID: native, Directory: s.workspace, Text: joinParts(parts), Delivery: "steer"})
+// deliverSteer performs only the native session prompt effect, admitted under
+// the adapter-chosen native message ID.
+func (s *session) deliverSteer(ctx context.Context, native provider.NativeSessionID, messageID string, parts []provider.InputPart) (PromptResult, bool, error) {
+	return s.config.Control.Prompt(ctx, PromptRequest{SessionID: native, Directory: s.workspace, MessageID: messageID, Text: joinParts(parts), Delivery: "steer"})
 }
 
 // acceptSteer advances only a still-matching lease after transport acceptance.
@@ -86,16 +91,23 @@ func (s *session) acceptSteer(request provider.SteerRequest, result PromptResult
 	return receipt, nil
 }
 
-// handleSteerDeliveryFailure ends the local reservation and records uncertainty
-// when the native prompt may have been sent. It never advances the assignment.
-func (s *session) handleSteerDeliveryFailure(request provider.SteerRequest, sent bool, cause error) error {
+// handleSteerDeliveryFailure ends the local reservation and records the steer
+// as unresolved when the native prompt may have been sent. It never advances
+// the assignment. If the turn already ended, native reconciliation starts in
+// the background, because the turn-end trigger has already passed.
+func (s *session) handleSteerDeliveryFailure(request provider.SteerRequest, messageID string, sent bool, cause error) error {
+	turnEnded := false
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
 		s.steerPending = false
 		if sent {
-			s.deliveryUnknown = true
+			s.unresolvedSteer = &unresolvedSteer{request: request, nativeMessageID: messageID}
+			turnEnded = !s.turn.Present
 		}
 		return nil
 	})
+	if turnEnded {
+		go s.reconcileUnresolvedSteer()
+	}
 	return adaptererror.Delivery(provider.OperationSteer, request.RequestID, sent, cause)
 }
 

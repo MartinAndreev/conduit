@@ -25,6 +25,9 @@ func TestDescriptorLaunchesFxACP(t *testing.T) {
 	if len(descriptor.Env) != 0 {
 		t.Fatalf("fx must inherit its environment unchanged: %v", descriptor.Env)
 	}
+	if descriptor.ProviderConfigID != "provider" || descriptor.VariantConfigID != "effort" {
+		t.Fatalf("fx selection mapping = %q/%q", descriptor.ProviderConfigID, descriptor.VariantConfigID)
+	}
 	if len(descriptor.SessionSettings) != 1 || descriptor.SessionSettings[0] != (acp.ConfigSetting{ConfigID: "mode", Value: "auto"}) {
 		t.Fatalf("fx must require mode=auto: %+v", descriptor.SessionSettings)
 	}
@@ -78,7 +81,7 @@ func TestOpenSessionAndTurnAgainstFxFixture(t *testing.T) {
 	opened, err := adapter.OpenSession(context.Background(), provider.OpenSessionRequest{
 		RequestID: "open", Assignment: provider.AssignmentRef{AssignmentID: "a-1", Revision: 1},
 		Workspace:      provider.WorkspaceBinding{Path: workspace, Writable: true},
-		Model:          provider.ModelSelection{ModelID: "vendor/model-a"},
+		Model:          provider.ModelSelection{ProviderID: "codex", ModelID: "vendor/model-a", Variant: "medium"},
 		ResultContract: provider.ResultContractRef{Requested: provider.SchemaNone},
 		PermissionMode: provider.PermissionDeny,
 	})
@@ -99,8 +102,10 @@ func TestOpenSessionAndTurnAgainstFxFixture(t *testing.T) {
 		t.Fatalf("steer = %+v", steer)
 	}
 	sets := launcher.paramsFor("session/set_config_option")
-	if len(sets) != 2 || !strings.Contains(sets[0], `"configId":"model","value":"vendor/model-a"`) ||
-		!strings.Contains(sets[1], `"configId":"mode","value":"auto"`) {
+	if len(sets) != 4 || !strings.Contains(sets[0], `"configId":"provider","value":"codex"`) ||
+		!strings.Contains(sets[1], `"configId":"model","value":"vendor/model-a"`) ||
+		!strings.Contains(sets[2], `"configId":"effort","value":"medium"`) ||
+		!strings.Contains(sets[3], `"configId":"mode","value":"auto"`) {
 		t.Fatalf("set_config_option = %v", sets)
 	}
 
