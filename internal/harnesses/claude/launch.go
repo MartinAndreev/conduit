@@ -2,6 +2,7 @@ package claude
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -15,33 +16,71 @@ import (
 // Bash, no web tools); its equivalence to Codex workspace-write/never is not
 // yet verified live, so capabilities report permission behaviour as unknown.
 // Without --permission-prompt-tool, `claude -p` denies every other request.
+//
+// The settings add the isolation recorded as configuration I in
+// specs/012-project-memory/evidence.md. The deny rules are not redundant: with
+// the sandbox alone the agent can still read ~/.conduit. The value is a literal
+// so its key order, and therefore the launch hash, is deterministic.
 const (
 	permissionModeArgument  = "acceptEdits"
 	disallowedToolsArgument = "WebFetch,WebSearch"
-	sandboxSettingsArgument = `{"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true}}`
+	settingSourcesArgument  = "project,local"
+	launchSettingsArgument  = `{"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true,"filesystem":{"denyRead":["~/.conduit"]}},"permissions":{"deny":["Read(~/.conduit/**)"]},"autoMemoryEnabled":false}`
 )
 
-// launchArguments returns the argument vector after the executable. schema is
-// passed only when native result enforcement was negotiated.
-func launchArguments(nativeSessionID, model string, schema json.RawMessage) []string {
-	args := []string{
+// launchProtocolArguments are the fixed arguments selecting the stream protocol.
+func launchProtocolArguments() []string {
+	return []string{
 		"-p",
 		"--input-format", "stream-json",
 		"--output-format", "stream-json",
 		"--verbose",
 		"--include-partial-messages",
 		"--replay-user-messages",
-		"--session-id", nativeSessionID,
-		"--model", model,
-		"--permission-mode", permissionModeArgument,
 	}
+}
+
+// launchPolicyArguments are the fixed arguments that decide what claude may
+// load and reach. --mcp-config is deliberately absent because Conduit passes no
+// MCP servers, and --bare is never used because it breaks subscription login.
+func launchPolicyArguments() []string {
+	return []string{
+		"--setting-sources", settingSourcesArgument,
+		"--strict-mcp-config",
+		"--permission-mode", permissionModeArgument,
+		"--settings", launchSettingsArgument,
+		"--disallowedTools", disallowedToolsArgument,
+	}
+}
+
+// launchArguments returns the argument vector after the executable. schema is
+// passed only when native result enforcement was negotiated.
+func launchArguments(nativeSessionID, model string, schema json.RawMessage) []string {
+	args := launchProtocolArguments()
+	args = append(args, "--session-id", nativeSessionID, "--model", model)
 	if len(schema) != 0 {
 		args = append(args, "--json-schema", string(schema))
 	}
-	return append(args,
-		"--settings", sandboxSettingsArgument,
-		"--disallowedTools", disallowedToolsArgument,
-	)
+	return append(args, launchPolicyArguments()...)
+}
+
+// launchConfigHash identifies the launch configuration evidence is bound to.
+// It covers every fixed argument: the protocol flags, setting sources, strict
+// MCP mode, permission mode, settings JSON and disallowed tools. It excludes
+// per-session values (session id, model, JSON schema, workspace directory) and
+// the child environment, whose sanitisation is separate from this policy.
+func launchConfigHash() string {
+	return hashLaunchArguments(append(launchProtocolArguments(), launchPolicyArguments()...))
+}
+
+// hashLaunchArguments length-prefixes each argument, so moving text between
+// adjacent arguments changes the hash.
+func hashLaunchArguments(args []string) string {
+	digest := sha256.New()
+	for _, arg := range args {
+		fmt.Fprintf(digest, "%d:%s", len(arg), arg)
+	}
+	return hex.EncodeToString(digest.Sum(nil))
 }
 
 // strippedEnvironmentNames are removed from the child environment exactly;

@@ -141,7 +141,26 @@ func claudeCapabilities(model provider.ModelSelection, harnessVersion string, ob
 	return provider.CapabilitySnapshot{
 		ProviderName: providerName, AdapterVersion: adapterVersion, HarnessVersion: harnessVersion,
 		ProtocolVersion: protocolVersion, Model: model, ObservedAt: observedAt, Items: items,
+		NativeContext: nativeContextReport(harnessVersion),
 	}
+}
+
+// nativeContextReport derives the snapshot's native context state from the
+// adapter's evidence for the real harness version and launch configuration. An
+// empty version, as in Inspect or before initialize, matches no evidence.
+func nativeContextReport(harnessVersion string) provider.NativeContextReport {
+	configHash := launchConfigHash()
+	evidence := rules.NativeContextEvidence()
+	return provider.NewNativeContextReport(
+		func(source provider.NativeContextSource) provider.NativeContextDecision {
+			return rules.DecideNativeContextPolicy(provider.NativeContextFacts{
+				Source: source, HarnessVersion: harnessVersion, LaunchConfigHash: configHash, Evidence: evidence.Sources,
+			})
+		},
+		rules.DecideProtectedPathsPolicy(provider.ProtectedPathsFacts{
+			HarnessVersion: harnessVersion, LaunchConfigHash: configHash, Evidence: evidence.ProtectedPaths,
+		}),
+	)
 }
 
 var _ provider.Provider = (*Adapter)(nil)

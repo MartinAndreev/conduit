@@ -321,3 +321,20 @@ func (p *fakeProcess) Wait() processruntime.Result {
 	<-p.done
 	return processruntime.Result{ExitedAt: time.Now()}
 }
+
+func TestSnapshotReportsNativeContextDefaults(t *testing.T) {
+	launcher := &fakeLauncher{t: t}
+	descriptor, err := New(acp.Config{Launcher: launcher}).Inspect(context.Background(), provider.InspectRequest{})
+	if err != nil {
+		t.Fatalf("Inspect = %v", err)
+	}
+	report := descriptor.Capabilities.NativeContext
+	for _, source := range provider.NativeContextSources() {
+		if got := report.SourceState(source); got != provider.NativeContextPossible {
+			t.Fatalf("%s = %s, want possible", source, got)
+		}
+	}
+	if report.ProtectedPaths != provider.ProtectedPathsUnknown {
+		t.Fatalf("protected paths = %s, want unknown", report.ProtectedPaths)
+	}
+}

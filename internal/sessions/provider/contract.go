@@ -292,6 +292,9 @@ type CapabilitySnapshot struct {
 	Model           ModelSelection
 	ObservedAt      time.Time
 	Items           []CapabilityObservation
+	// NativeContext reports what the harness may load on its own. It is separate
+	// from Items because its states describe proof about one launch, not support.
+	NativeContext NativeContextReport
 }
 
 type CapabilityObservation struct {

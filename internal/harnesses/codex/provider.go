@@ -148,7 +148,26 @@ func codexCapabilities(model provider.ModelSelection, observedAt time.Time) prov
 		ProviderName: "codex", AdapterVersion: adapterVersion,
 		ProtocolVersion: "app-server-jsonrpc-v2", Model: model,
 		ObservedAt: observedAt, Items: items,
+		NativeContext: nativeContextReport(""),
 	}
+}
+
+// nativeContextReport derives the snapshot's native context state from the
+// adapter's evidence. Launch flags are not hashed before tasks 1.3/1.4 define
+// them, and an empty hash matches no evidence, so isolation stays unclaimed.
+func nativeContextReport(harnessVersion string) provider.NativeContextReport {
+	const launchConfigHash = ""
+	evidence := rules.NativeContextEvidence()
+	return provider.NewNativeContextReport(
+		func(source provider.NativeContextSource) provider.NativeContextDecision {
+			return rules.DecideNativeContextPolicy(provider.NativeContextFacts{
+				Source: source, HarnessVersion: harnessVersion, LaunchConfigHash: launchConfigHash, Evidence: evidence.Sources,
+			})
+		},
+		rules.DecideProtectedPathsPolicy(provider.ProtectedPathsFacts{
+			HarnessVersion: harnessVersion, LaunchConfigHash: launchConfigHash, Evidence: evidence.ProtectedPaths,
+		}),
+	)
 }
 
 var _ provider.Provider = (*Adapter)(nil)

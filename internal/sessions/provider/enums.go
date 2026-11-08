@@ -74,6 +74,46 @@ const (
 	CapabilityEventsNativeReplay  Capability = "events.native_replay"
 )
 
+// NativeContextSource names a kind of context a harness can load by itself.
+type NativeContextSource string
+
+const (
+	NativeContextMemory       NativeContextSource = "memory"
+	NativeContextInstructions NativeContextSource = "instructions"
+	NativeContextMCP          NativeContextSource = "mcp"
+	NativeContextHooks        NativeContextSource = "hooks"
+)
+
+// NativeContextState says what is proven about one source for one launch.
+type NativeContextState string
+
+const (
+	NativeContextBlockedVerified NativeContextState = "blocked_verified"
+	NativeContextObserved        NativeContextState = "observed"
+	NativeContextPossible        NativeContextState = "possible"
+)
+
+// NativeContextProof names how evidence was obtained. A behavioral marker is
+// recorded so it can be refused: it is a useful signal, never proof.
+type NativeContextProof string
+
+const (
+	NativeContextProofSideEffect           NativeContextProof = "side_effect"
+	NativeContextProofReadAbsence          NativeContextProof = "read_absence"
+	NativeContextProofDocumentedMechanism  NativeContextProof = "documented_tested_mechanism"
+	NativeContextProofHarnessReportedBytes NativeContextProof = "harness_reported_bytes"
+	NativeContextProofBehavioralMarker     NativeContextProof = "behavioral_marker"
+)
+
+// ProtectedPathsState says whether the harness is proven unable to reach
+// Conduit's protected directories.
+type ProtectedPathsState string
+
+const (
+	ProtectedPathsEnforced ProtectedPathsState = "enforced"
+	ProtectedPathsUnknown  ProtectedPathsState = "unknown"
+)
+
 type SchemaEnforcement string
 
 const (

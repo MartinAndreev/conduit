@@ -31,14 +31,21 @@ func TestLaunchEnvironmentStripsCredentialsAndSessionVariables(t *testing.T) {
 }
 
 func TestLaunchArguments(t *testing.T) {
+	const settings = `{"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true,"filesystem":{"denyRead":["~/.conduit"]}},"permissions":{"deny":["Read(~/.conduit/**)"]},"autoMemoryEnabled":false}`
 	base := []string{
 		"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
 		"--include-partial-messages", "--replay-user-messages", "--session-id", "sid", "--model", "m",
-		"--permission-mode", "acceptEdits",
 	}
-	tail := []string{"--settings", `{"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true}}`, "--disallowedTools", "WebFetch,WebSearch"}
-	if got := launchArguments("sid", "m", nil); !slices.Equal(got, append(slices.Clone(base), tail...)) {
+	tail := []string{
+		"--setting-sources", "project,local", "--strict-mcp-config", "--permission-mode", "acceptEdits",
+		"--settings", settings, "--disallowedTools", "WebFetch,WebSearch",
+	}
+	got := launchArguments("sid", "m", nil)
+	if !slices.Equal(got, append(slices.Clone(base), tail...)) {
 		t.Fatalf("arguments = %q", got)
+	}
+	if slices.Contains(got, "--bare") || slices.Contains(got, "--mcp-config") {
+		t.Fatalf("forbidden flag in %q", got)
 	}
 	withSchema := append(append(slices.Clone(base), "--json-schema", `{"type":"object"}`), tail...)
 	if got := launchArguments("sid", "m", json.RawMessage(`{"type":"object"}`)); !slices.Equal(got, withSchema) {

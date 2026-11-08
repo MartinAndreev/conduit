@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/MartinAndreev/conduit/internal/harnesses/acp/rules"
 	internalid "github.com/MartinAndreev/conduit/internal/id"
 	processruntime "github.com/MartinAndreev/conduit/internal/process"
 	"github.com/MartinAndreev/conduit/internal/sessions/provider"
@@ -47,6 +48,10 @@ type Descriptor struct {
 	// CapabilityOverrides replaces baseline observations by capability. It
 	// receives the agent's initialize facts, or zero facts during Inspect.
 	CapabilityOverrides func(AgentFacts) []provider.CapabilityObservation
+	// NativeContextEvidence holds this agent's recorded native context proof.
+	// It lives on the descriptor because ACP agents share a client but not their
+	// behaviour: one agent's recording says nothing about another at any version.
+	NativeContextEvidence provider.NativeContextEvidenceSet
 }
 
 // ConfigSetting is one required ACP session config option value.
@@ -162,12 +167,35 @@ func (a *Adapter) capabilities(model provider.ModelSelection, facts AgentFacts, 
 	if facts.Observed && a.descriptor.ParseVersion != nil {
 		harnessVersion = a.descriptor.ParseVersion(facts.AgentVersion)
 	}
+	// Evidence is matched before the display fallback below, so the literal
+	// "unknown" can never be treated as a version that was recorded.
+	nativeContext := a.nativeContextReport(harnessVersion)
 	if harnessVersion == "" {
 		harnessVersion = "unknown"
 	}
 	return provider.CapabilitySnapshot{
 		ProviderName: a.descriptor.ProviderName, AdapterVersion: a.descriptor.AdapterVersion,
 		HarnessVersion: harnessVersion, ProtocolVersion: protocolName,
-		Model: model, ObservedAt: observedAt, Items: items,
+		Model: model, ObservedAt: observedAt, Items: items, NativeContext: nativeContext,
 	}
+}
+
+// nativeContextReport derives the snapshot's native context state from the
+// descriptor's evidence. session/new sends mcpServers:[], which only declares
+// that Conduit adds none; the agent may still load its own, so it proves nothing.
+// Launch flags are not hashed before tasks 1.3/1.4 define them, and an empty
+// hash matches no evidence, so isolation stays unclaimed.
+func (a *Adapter) nativeContextReport(harnessVersion string) provider.NativeContextReport {
+	const launchConfigHash = ""
+	evidence := a.descriptor.NativeContextEvidence
+	return provider.NewNativeContextReport(
+		func(source provider.NativeContextSource) provider.NativeContextDecision {
+			return rules.DecideNativeContextPolicy(provider.NativeContextFacts{
+				Source: source, HarnessVersion: harnessVersion, LaunchConfigHash: launchConfigHash, Evidence: evidence.Sources,
+			})
+		},
+		rules.DecideProtectedPathsPolicy(provider.ProtectedPathsFacts{
+			HarnessVersion: harnessVersion, LaunchConfigHash: launchConfigHash, Evidence: evidence.ProtectedPaths,
+		}),
+	)
 }
