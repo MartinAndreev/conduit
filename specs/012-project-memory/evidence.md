@@ -62,18 +62,45 @@ launch на адаптера.
 | Конфигурация | Bash четене на `~/.conduit` | Bash запис |
 | --- | --- | --- |
 | `-s workspace-write` | разрешено | `Operation not permitted` |
-| profile с `"~/.conduit"="none"` | неустановено | неустановено |
+| profile с `"~/.conduit"="none"`, през `codex sandbox` без модел | `Operation not permitted` | `Operation not permitted` |
 
-При втория ред моделът отказа да изпълни командата заради видимата политика, така
-че отказ от sandbox-а не е наблюдаван. Потребителската конфигурация на Codex се
+Profile-ът е `default_permissions="conduit"` и
+`permissions.conduit.filesystem={":root"="read",":project_roots"={"."="write"},"~/.conduit"="none"}`.
+В него запис в текущата директория и четене извън `~/.conduit` работят. Отказът е
+на ниво OS sandbox и не зависи от модела. Потребителската конфигурация на Codex се
 зарежда (видим опит за връзка с потребителски MCP сървър).
 
-Извод: `protected_paths` остава `unknown`, а агент с Codex **може да чете
-`~/.conduit`** в режима на адаптера, докато не се докаже механизъм. Всички native
-източници остават `possible`.
+Проба през `app-server` със същия profile (`-c`), 2026-11-09:
 
-## OpenCode 2.0.22 и ACP
+| `thread/start` | Четене | Запис |
+| --- | --- | --- |
+| `sandbox: "workspace-write"` (сегашният адаптер) | **успешно** | `Operation not permitted` |
+| без `sandbox` | не е опитано | не е опитано |
 
-Не са записани. Проба за OpenCode не е изпълнена. Правилото `external_directory`
-е по path и няма наблюдавано OS-ниво ограничение; това е непроверено. fx, Grok,
-Cursor и Antigravity не са инсталирани.
+Подаденият `sandbox` отменя profile-а. Без него политиката стига до сесията:
+моделът пропусна двете операции, защото пътят е забранен, а записът в workspace
+работи. OS отказ през `app-server` не е наблюдаван. Отговорът и в двата случая
+показва `workspaceWrite`, а без параметъра `/tmp` излиза извън записваемите пътища.
+
+Извод: `protected_paths` остава `unknown`. Адаптерът трябва да спре да подава
+`sandbox` и да стартира с profile-а. Всички native източници остават `possible`.
+
+## OpenCode 2.0.22 — 2026-11-08
+
+`opencode run --standalone` с правилата на адаптера, подадени през
+`OPENCODE_CONFIG_CONTENT` (`*` allow, `external_directory` deny и др.). Адаптерът
+ги подава при `session.create`, така че не е неговият точен launch.
+
+| Опит през shell tool | Резултат |
+| --- | --- |
+| Четене с `~/.conduit/...` | успешно |
+| Четене с път, сглобен от променливи | успешно |
+| Запис в `~/.conduit` | успешно; пробният файл е създаден и изтрит |
+
+Извод: при тази конфигурация `external_directory` не ограничава shell tool-а и няма
+OS sandbox. `protected_paths` остава `unknown`, а shell-ът на агента има пълен
+достъп до home на потребителя.
+
+## ACP
+
+Не е записано. fx, Grok, Cursor и Antigravity не са инсталирани.
