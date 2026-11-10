@@ -11,6 +11,15 @@ package table
 // this method only once at the beginning of the program.
 func UseSchema(schema string) {
 	ConduitMetadata = ConduitMetadata.FromSchema(schema)
+	ContextDeletionReceipts = ContextDeletionReceipts.FromSchema(schema)
+	ContextManifestItems = ContextManifestItems.FromSchema(schema)
+	ContextManifestPayloads = ContextManifestPayloads.FromSchema(schema)
+	ContextManifests = ContextManifests.FromSchema(schema)
 	EventJournal = EventJournal.FromSchema(schema)
+	MemoryRecordVersions = MemoryRecordVersions.FromSchema(schema)
+	MemoryRecords = MemoryRecords.FromSchema(schema)
+	MemoryRelations = MemoryRelations.FromSchema(schema)
+	MemoryReviews = MemoryReviews.FromSchema(schema)
+	MemorySources = MemorySources.FromSchema(schema)
 	Sessions = Sessions.FromSchema(schema)
 }

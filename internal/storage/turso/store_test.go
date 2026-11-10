@@ -13,6 +13,8 @@ import (
 
 	"github.com/MartinAndreev/conduit/internal/events"
 	"github.com/MartinAndreev/conduit/internal/sessions"
+	"github.com/MartinAndreev/conduit/internal/storage/turso/internal/engine"
+	tursogo "turso.tech/database/tursogo"
 )
 
 func TestStorePersistenceAndUnitOfWork(t *testing.T) {
@@ -247,5 +249,33 @@ func TestRejectsPartialConduitSchemaWithoutMutation(t *testing.T) {
 	}
 	if string(after) != string(before) {
 		t.Fatal("validation mutated partial database")
+	}
+}
+
+func TestOpenFailureClassification(t *testing.T) {
+	race := fmt.Errorf("%w: shared WAL coordination map magic mismatch", tursogo.ErrTursoCorrupt)
+	unsettled := fmt.Errorf("%w: 5 attempts made: %w", engine.ErrSharedMemoryInit, race)
+	locked := fmt.Errorf("%w: File is locked by another process", tursogo.ErrTursoGeneric)
+	corrupt := fmt.Errorf("%w: malformed database schema", tursogo.ErrTursoCorrupt)
+	for _, tc := range []struct {
+		name     string
+		err      error
+		existing bool
+		want     error
+		not      error
+	}{
+		{"unsettled coordination file", unsettled, true, ErrSharedMemoryInit, ErrIncompatibleDatabase},
+		{"locked", locked, true, ErrDatabaseLocked, ErrIncompatibleDatabase},
+		{"corrupt existing", corrupt, true, ErrIncompatibleDatabase, ErrSharedMemoryInit},
+		{"race without retry", race, true, ErrIncompatibleDatabase, ErrSharedMemoryInit},
+		{"new file", corrupt, false, tursogo.ErrTursoCorrupt, ErrIncompatibleDatabase},
+	} {
+		got := openFailure(tc.err, tc.existing)
+		if !errors.Is(got, tc.want) || errors.Is(got, tc.not) {
+			t.Fatalf("%s: %v", tc.name, got)
+		}
+	}
+	if got := openFailure(unsettled, true); !errors.Is(got, tursogo.ErrTursoCorrupt) {
+		t.Fatalf("cause lost: %v", got)
 	}
 }

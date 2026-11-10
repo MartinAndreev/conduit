@@ -3,8 +3,8 @@ package rules
 
 import (
 	"strconv"
-	"strings"
-	"unicode"
+
+	enginerules "github.com/MartinAndreev/conduit/internal/storage/turso/internal/engine/rules"
 )
 
 type SchemaKind string
@@ -37,41 +37,8 @@ func DecideMarker(key, actual, expected string) SchemaDecision {
 // Exact owned DDL preserves constraints, not just column names. A differently
 // shaped format requires a future version; this adapter never repairs it.
 func DecideTable(actual, expected string) SchemaDecision {
-	if normalizedDDL(actual) == normalizedDDL(expected) {
+	if enginerules.EquivalentDDL(actual, expected) {
 		return SchemaDecision{SchemaCompatible, "Catalog table and constraints match."}
 	}
 	return SchemaDecision{SchemaCorrupt, "Catalog table or constraints are incompatible."}
-}
-
-// Turso rewrites whitespace around punctuation. Token separators remain
-// significant: TEXT PRIMARY KEY must never become the custom type TEXTPRIMARYKEY.
-// Quoted identifiers and string literals are retained byte for byte.
-func normalizedDDL(statement string) string {
-	var result strings.Builder
-	var quote rune
-	previousWord, whitespace := false, false
-	for _, character := range statement {
-		if quote != 0 {
-			result.WriteRune(character)
-			if character == quote {
-				quote = 0
-			}
-			continue
-		}
-		if unicode.IsSpace(character) {
-			whitespace = true
-			continue
-		}
-		word := unicode.IsLetter(character) || unicode.IsDigit(character) || character == '_' || character == '$'
-		if whitespace && previousWord && word {
-			result.WriteByte(' ')
-		}
-		if character == '\'' || character == '"' || character == '`' {
-			quote = character
-		}
-		result.WriteRune(character)
-		whitespace = false
-		previousWord = word
-	}
-	return result.String()
 }

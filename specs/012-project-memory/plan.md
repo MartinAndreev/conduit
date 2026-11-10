@@ -13,14 +13,15 @@
 
 ## Блокери
 
-1. **Turso пакетите не се линкват на тази машина.** На 2026-11-08
-   `go test ./internal/storage/turso/` завършва с `tapi error: malformed file`
-   срещу CommandLineTools SDK-а (MacOSX27.0). Опит с `CC`/`SDKROOT` от `xcrun`
-   не помогна. Без поправка задачи 0.2 и 3 нататък не могат да се тестват локално.
+1. **Turso пакетите не се линкват на тази машина.** Причина (2026-11-10):
+   `xcode-select` сочи Xcode 26.6, чийто linker не чете MacOSX 27.0 SDK-а от
+   Command Line Tools. Заобикаляне: `DEVELOPER_DIR=/Library/Developer/CommandLineTools`
+   пред Go командите; с него целият `go test ./...` минава. Постоянна поправка:
+   Xcode 27 (Martin).
 2. **Схемата няма миграции.** `Store.Open` приема само `schema_version = 1`.
 3. **Няма dispatch процедура и intent запис.** В production код `StartTurn` е
    само в договора и адаптерите. Без тях етап 1 завършва като библиотечна основа.
-4. **FTS в `tursogo v0.7.2` е непроверен** заради блокер 1.
+4. ~~FTS в `tursogo v0.7.2`~~: проверено на 2026-11-10, няма FTS; виж „Търсене“ в спека.
 
 ## Задачи
 

@@ -232,7 +232,7 @@ func TestDanglingPreferenceRetainsCompleteCatalog(t *testing.T) {
 	if err != nil || len(snapshot.Projects) != 1 || len(snapshot.LastOpened) != 2 || snapshot.LastOpened[domain.TUI] != "deleted" {
 		t.Fatalf("snapshot = %#v %v", snapshot, err)
 	}
-	db, conn, err := connectCatalog(context.Background(), path)
+	db, conn, err := connectCatalog(context.Background(), path, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

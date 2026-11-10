@@ -58,7 +58,8 @@ func (s Store) publishFirstRegistration(ctx context.Context, project domain.Proj
 }
 
 func prepareFirstDatabase(ctx context.Context, path string, project domain.Project) (err error) {
-	db, conn, err := connectCatalog(ctx, path)
+	// The private database is never shared, so it uses single-process options.
+	db, conn, err := connectCatalog(ctx, path, Options{})
 	if err != nil {
 		return err
 	}

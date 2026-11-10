@@ -63,7 +63,25 @@ type Config struct {
 	SchemaVersion int                   `yaml:"schema_version"`
 	Harnesses     map[HarnessID]Harness `yaml:"harnesses"`
 	Assignments   map[string]string     `yaml:"assignments"`
+	// Storage is optional and additive to schema v2; a v1 file has none.
+	Storage *Storage `yaml:"storage,omitempty"`
 }
+
+// Storage holds settings shared by every Conduit process using the local
+// databases, so they live in the global configuration, not the environment.
+type Storage struct {
+	// ExperimentalMultiprocessWAL lets several processes open one database
+	// through Turso's experimental multi-process WAL. Absent means false.
+	ExperimentalMultiprocessWAL bool `yaml:"experimental_multiprocess_wal,omitempty"`
+}
+
+// MultiprocessWAL reports the storage setting; an absent storage block is off.
+func (c Config) MultiprocessWAL() bool {
+	return c.Storage != nil && c.Storage.ExperimentalMultiprocessWAL
+}
+
+// booleanKeys are the only v2 keys whose scalar value is a YAML boolean.
+var booleanKeys = []string{"experimental_multiprocess_wal"}
 
 var ErrFutureSchema = errors.New("configuration schema is newer than supported")
 var ErrInvalid = errors.New("invalid configuration")
@@ -137,13 +155,19 @@ func strictNode(n *yaml.Node) error {
 }
 
 // v1 and v2 reject scalar coercion only after structural validation and version
-// recognition. Future schemas may define boolean, integer, or null fields.
+// recognition. Future schemas may define boolean, integer, or null fields; v2
+// defines only the booleanKeys. A v1 file cannot contain them: KnownFields
+// limits them to storage, which Validate refuses for v1.
 func strictScalarTypes(n *yaml.Node) error {
 	for i, child := range n.Content {
 		if n.Kind == yaml.MappingNode && i%2 == 1 && child.Kind == yaml.ScalarNode {
 			key := n.Content[i-1].Value
 			if key == "schema_version" {
 				if child.Tag != "!!int" {
+					return ErrInvalid
+				}
+			} else if slices.Contains(booleanKeys, key) {
+				if child.Tag != "!!bool" {
 					return ErrInvalid
 				}
 			} else if child.Tag != "!!str" {
@@ -167,6 +191,9 @@ func Validate(c Config) error {
 	}
 	switch c.SchemaVersion {
 	case SchemaV1:
+		if c.Storage != nil {
+			return ErrInvalid
+		}
 		if len(c.Harnesses) != len(schemaV1Harnesses()) {
 			return ErrInvalid
 		}

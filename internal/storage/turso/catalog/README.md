@@ -9,7 +9,8 @@ This database has its own application marker and schema v1. Session storage,
 its schema v1, and its generator are separate. Existing empty, corrupt, foreign,
 partial, or future catalogs are refused without repair or migration. Database
 symlinks are refused. Supported DDL is compared after normalizing whitespace
-around punctuation while retaining word boundaries and quoted values; primary
+around punctuation and unquoting double-quoted plain identifiers, as Turso
+stores them, while retaining word boundaries and string literals; primary
 keys, uniqueness, CHECK membership, and foreign keys must still match. Reads
 retain dangling preference IDs for application-level diagnostics.
 
@@ -36,6 +37,18 @@ error. Commit failure does not claim completion; callers retry through a read.
 On Unix the published directory is synced. Windows has no portable directory
 sync through `os.File`; main-file sync is performed, but directory durability
 through power loss is not promised. Native Windows runtime is unverified.
+
+`Store.Options` selects engine settings for the published catalog. The default
+is single-process: while another process has the file open, an operation fails
+with `catalog.ErrDatabaseLocked` instead of `ErrCorruptCatalog`.
+`Options.MultiprocessWAL` enables Turso's experimental multi-process WAL; the
+private first-registration database always uses the default. Paths containing
+`?` are refused because tursogo would parse the rest as DSN parameters.
+With the option on, processes opening together before `catalog.db-tshm` exists
+race on creating it; the loser's open fails with an engine corruption error
+about the coordination file. Only that failure, and only with the option on,
+is retried (at most 5 attempts, 10-40ms waits). If it persists, the operation
+returns `catalog.ErrSharedMemoryInit`, not `ErrCorruptCatalog`.
 
 The focused tests use temporary directories and independent connectors. They
 cover concurrent first publication and subsequent writes, stable duplicates,

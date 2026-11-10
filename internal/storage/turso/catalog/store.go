@@ -12,18 +12,48 @@ import (
 
 	app "github.com/MartinAndreev/conduit/internal/app/projects"
 	domain "github.com/MartinAndreev/conduit/internal/projects"
-	tursogo "turso.tech/database/tursogo"
+	"github.com/MartinAndreev/conduit/internal/storage/turso/internal/engine"
 )
 
 // Store is a lazy repository: construction and missing reads have no effects.
-// A separate Store may safely address the same catalog from another process.
+// Each operation opens and closes the file. With default options a concurrent
+// operation from another process is refused with ErrDatabaseLocked, never
+// treated as corruption.
 type Store struct {
-	Path        string
+	Path string
+	// Options are the engine settings for the published catalog; the zero
+	// value is single-process.
+	Options     Options
 	publication *publicationFiles
 	commit      func(context.Context, *sql.Conn) error
 }
 
 var _ app.Repository = Store{}
+
+// Options are the engine settings a catalog is opened with.
+type Options = engine.Options
+
+// ErrDatabaseLocked reports that another process holds the catalog file and the
+// engine refused shared access. It is not catalog corruption.
+var ErrDatabaseLocked = errors.New("project catalog is locked by another process")
+
+// ErrSharedMemoryInit reports that, with multi-process WAL enabled, another
+// process was still creating the engine's <catalog>-tshm coordination file
+// after the bounded retry. It is not catalog corruption.
+var ErrSharedMemoryInit = errors.New("project catalog multi-process coordination file is not initialized")
+
+// connectionFailure keeps a lock refusal and an unsettled coordination file
+// distinct from an unreadable catalog.
+func connectionFailure(err error) error {
+	switch {
+	case engine.IsLockedByAnotherProcess(err):
+		return fmt.Errorf("%w: %w", ErrDatabaseLocked, err)
+	case errors.Is(err, engine.ErrSharedMemoryInit):
+		return fmt.Errorf("%w: %w", ErrSharedMemoryInit, err)
+	default:
+		return errors.Join(app.ErrCorruptCatalog, err)
+	}
+}
 
 func (s Store) Read(ctx context.Context) (snapshot app.Snapshot, err error) {
 	snapshot = emptySnapshot()
@@ -31,9 +61,9 @@ func (s Store) Read(ctx context.Context) (snapshot app.Snapshot, err error) {
 	if err != nil || missing {
 		return snapshot, err
 	}
-	db, conn, err := connectCatalog(ctx, s.Path)
+	db, conn, err := connectCatalog(ctx, s.Path, s.Options)
 	if err != nil {
-		return snapshot, errors.Join(app.ErrCorruptCatalog, err)
+		return snapshot, connectionFailure(err)
 	}
 	defer func() { err = errors.Join(err, conn.Close(), db.Close()) }()
 	if _, err = conn.ExecContext(ctx, "BEGIN"); err != nil {
@@ -64,9 +94,9 @@ func (s Store) Insert(ctx context.Context, candidate domain.Project) (result app
 }
 
 func (s Store) insertExisting(ctx context.Context, candidate domain.Project) (result app.InsertResult, err error) {
-	db, conn, err := connectCatalog(ctx, s.Path)
+	db, conn, err := connectCatalog(ctx, s.Path, s.Options)
 	if err != nil {
-		return result, errors.Join(app.ErrCorruptCatalog, err)
+		return result, connectionFailure(err)
 	}
 	defer func() { err = errors.Join(err, conn.Close(), db.Close()) }()
 	if err = beginWrite(ctx, conn); err != nil {
@@ -110,9 +140,9 @@ func (s Store) SetLastOpened(ctx context.Context, application domain.Application
 	if missing {
 		return result, app.ErrUnknownProject
 	}
-	db, conn, err := connectCatalog(ctx, s.Path)
+	db, conn, err := connectCatalog(ctx, s.Path, s.Options)
 	if err != nil {
-		return result, errors.Join(app.ErrCorruptCatalog, err)
+		return result, connectionFailure(err)
 	}
 	defer func() { err = errors.Join(err, conn.Close(), db.Close()) }()
 	if err = beginWrite(ctx, conn); err != nil {
@@ -145,8 +175,19 @@ func emptySnapshot() app.Snapshot {
 	return app.Snapshot{Projects: []domain.Project{}, LastOpened: map[domain.ApplicationID]domain.ID{}}
 }
 
-func connectCatalog(ctx context.Context, path string) (*sql.DB, *sql.Conn, error) {
-	connector, err := tursogo.NewConnector(path, tursogo.WithBusyTimeout(5000))
+// connectCatalog retries a connection only for the multi-process coordination
+// file creation race; a failed attempt has already closed what it opened.
+func connectCatalog(ctx context.Context, path string, options Options) (db *sql.DB, conn *sql.Conn, err error) {
+	err = engine.RetrySharedMemoryInit(ctx, options, func() error {
+		var attemptErr error
+		db, conn, attemptErr = connectCatalogOnce(ctx, path, options)
+		return attemptErr
+	})
+	return db, conn, err
+}
+
+func connectCatalogOnce(ctx context.Context, path string, options Options) (*sql.DB, *sql.Conn, error) {
+	connector, err := engine.NewConnector(path, options, 5000)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create catalog connector: %w", err)
 	}
@@ -189,6 +230,9 @@ func inspectCatalogFile(ctx context.Context, path string) (bool, error) {
 	}
 	if path == "" || !filepath.IsAbs(path) {
 		return false, errors.New("catalog path must be absolute")
+	}
+	if _, err := engine.DSN(path, Options{}); err != nil {
+		return false, err
 	}
 	info, err := os.Lstat(path)
 	if err != nil {

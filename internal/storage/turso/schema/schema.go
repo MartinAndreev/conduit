@@ -1,11 +1,17 @@
 //go:generate sh -c "cd ../internal/generate && go run . -output ../generated"
 
+// Package schema owns the session database format. Version1Statements are the
+// frozen v1 format; Version2Statements are the additive 1 -> 2 migration.
 package schema
 
-const Version = "1"
+import "slices"
+
+const Version = "2"
 const ApplicationID = "github.com/MartinAndreev/conduit"
 
-var Statements = []string{
+// Version1Statements created schema v1. They must never change: the 1 -> 2
+// migration and running v1 processes depend on them.
+var Version1Statements = []string{
 	`CREATE TABLE conduit_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
 	`CREATE TABLE sessions (
 		id TEXT PRIMARY KEY, project_id TEXT NOT NULL, run_id TEXT NOT NULL,
@@ -21,3 +27,134 @@ var Statements = []string{
 	)`,
 	`CREATE INDEX event_journal_replay ON event_journal(run_id, sequence)`,
 }
+
+// Version2Statements add project memory tables only; they do not alter any v1
+// table, so an already running v1 process keeps working on sessions and events.
+//
+// Enumerated CHECK lists mirror internal/memory and spec 012; a test keeps them
+// in step with the domain owner. Absent optional values are NULL, never ”.
+// The memory_records -> current version reference is deferred so a record and
+// its first version can be inserted in one transaction.
+var Version2Statements = []string{
+	`CREATE TABLE memory_records (
+		id TEXT NOT NULL PRIMARY KEY CHECK (length(id) > 0),
+		project_id TEXT NOT NULL CHECK (length(project_id) > 0),
+		category TEXT NOT NULL CHECK (length(category) > 0),
+		status TEXT NOT NULL CHECK (status IN ('proposed', 'active', 'needs_verification', 'rejected', 'superseded', 'archived')),
+		current_version_id TEXT NOT NULL,
+		version INTEGER NOT NULL CHECK (version >= 1),
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		UNIQUE (id, project_id),
+		FOREIGN KEY (id, current_version_id) REFERENCES memory_record_versions (record_id, id) DEFERRABLE INITIALLY DEFERRED
+	)`,
+	`CREATE INDEX memory_records_project_status ON memory_records (project_id, status)`,
+	`CREATE TABLE memory_record_versions (
+		id TEXT NOT NULL PRIMARY KEY CHECK (length(id) > 0),
+		record_id TEXT NOT NULL,
+		project_id TEXT NOT NULL,
+		content TEXT,
+		content_hash TEXT NOT NULL CHECK (length(content_hash) > 0),
+		search_text TEXT,
+		search_normalization_version INTEGER NOT NULL CHECK (search_normalization_version >= 1),
+		content_deleted_at TEXT,
+		author TEXT NOT NULL CHECK (length(author) > 0),
+		trust TEXT NOT NULL CHECK (trust IN ('human_approved', 'conduit_observed', 'code_derived', 'agent_claim', 'external_import')),
+		redaction_policy_version TEXT NOT NULL CHECK (length(redaction_policy_version) > 0),
+		visibility TEXT NOT NULL CHECK (visibility IN ('attempt', 'project')),
+		origin TEXT NOT NULL CHECK (origin IN ('attempt', 'human')),
+		run_id TEXT CHECK (length(run_id) > 0),
+		attempt_id TEXT CHECK (length(attempt_id) > 0),
+		base_commit TEXT CHECK (length(base_commit) > 0),
+		accepted_result_ref TEXT CHECK (length(accepted_result_ref) > 0),
+		created_at TEXT NOT NULL,
+		UNIQUE (record_id, id),
+		UNIQUE (id, content_hash),
+		FOREIGN KEY (record_id, project_id) REFERENCES memory_records (id, project_id),
+		CHECK ((content_deleted_at IS NULL AND content IS NOT NULL AND search_text IS NOT NULL)
+			OR (content_deleted_at IS NOT NULL AND content IS NULL AND search_text IS NULL)),
+		CHECK ((origin = 'human' AND run_id IS NULL AND attempt_id IS NULL)
+			OR (origin = 'attempt' AND run_id IS NOT NULL AND attempt_id IS NOT NULL AND base_commit IS NOT NULL)),
+		CHECK (origin <> 'attempt' OR visibility <> 'project' OR accepted_result_ref IS NOT NULL)
+	)`,
+	`CREATE INDEX memory_record_versions_project_scan ON memory_record_versions (project_id, visibility)`,
+	`CREATE TABLE memory_sources (
+		id TEXT NOT NULL PRIMARY KEY CHECK (length(id) > 0),
+		version_id TEXT NOT NULL REFERENCES memory_record_versions (id),
+		kind TEXT NOT NULL CHECK (kind IN ('spec', 'file', 'event', 'assignment')),
+		ref TEXT CHECK (length(ref) > 0),
+		path TEXT CHECK (length(path) > 0),
+		blob_hash TEXT CHECK (length(blob_hash) > 0),
+		UNIQUE (version_id, path),
+		CHECK ((kind = 'file' AND path IS NOT NULL AND blob_hash IS NOT NULL)
+			OR (kind <> 'file' AND path IS NULL AND blob_hash IS NULL AND ref IS NOT NULL))
+	)`,
+	`CREATE TABLE memory_reviews (
+		id TEXT NOT NULL PRIMARY KEY CHECK (length(id) > 0),
+		version_id TEXT NOT NULL,
+		content_hash TEXT NOT NULL,
+		decision TEXT NOT NULL CHECK (length(decision) > 0),
+		reviewer TEXT NOT NULL CHECK (length(reviewer) > 0),
+		reason TEXT CHECK (length(reason) > 0),
+		reviewed_at TEXT NOT NULL,
+		FOREIGN KEY (version_id, content_hash) REFERENCES memory_record_versions (id, content_hash)
+	)`,
+	`CREATE INDEX memory_reviews_version ON memory_reviews (version_id)`,
+	`CREATE TABLE memory_relations (
+		project_id TEXT NOT NULL,
+		from_record_id TEXT NOT NULL,
+		to_record_id TEXT NOT NULL,
+		kind TEXT NOT NULL CHECK (kind IN ('supersedes', 'contradicts')),
+		created_at TEXT NOT NULL,
+		PRIMARY KEY (from_record_id, to_record_id, kind),
+		CHECK (from_record_id <> to_record_id),
+		FOREIGN KEY (from_record_id, project_id) REFERENCES memory_records (id, project_id),
+		FOREIGN KEY (to_record_id, project_id) REFERENCES memory_records (id, project_id)
+	)`,
+	`CREATE INDEX memory_relations_target ON memory_relations (to_record_id, kind)`,
+	`CREATE TABLE context_manifests (
+		id TEXT NOT NULL PRIMARY KEY CHECK (length(id) > 0),
+		project_id TEXT NOT NULL CHECK (length(project_id) > 0),
+		run_id TEXT NOT NULL CHECK (length(run_id) > 0),
+		attempt_id TEXT NOT NULL CHECK (length(attempt_id) > 0),
+		assignment_id TEXT NOT NULL CHECK (length(assignment_id) > 0),
+		revision INTEGER NOT NULL,
+		intent_id TEXT NOT NULL CHECK (length(intent_id) > 0),
+		payload_hash TEXT NOT NULL CHECK (length(payload_hash) > 0),
+		redaction_policy_version TEXT NOT NULL CHECK (length(redaction_policy_version) > 0),
+		search_status TEXT NOT NULL CHECK (search_status IN ('ok', 'degraded', 'disabled')),
+		created_at TEXT NOT NULL,
+		UNIQUE (project_id, run_id, attempt_id, assignment_id, revision, intent_id)
+	)`,
+	`CREATE TABLE context_manifest_items (
+		manifest_id TEXT NOT NULL REFERENCES context_manifests (id),
+		ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+		source_identity TEXT NOT NULL CHECK (length(source_identity) > 0),
+		source_version TEXT NOT NULL CHECK (length(source_version) > 0),
+		mode TEXT NOT NULL CHECK (mode IN ('included_text', 'referenced')),
+		reason TEXT NOT NULL CHECK (length(reason) > 0),
+		trust TEXT CHECK (trust IN ('human_approved', 'conduit_observed', 'code_derived', 'agent_claim', 'external_import')),
+		PRIMARY KEY (manifest_id, ordinal)
+	)`,
+	`CREATE TABLE context_manifest_payloads (
+		manifest_id TEXT NOT NULL PRIMARY KEY REFERENCES context_manifests (id),
+		content TEXT,
+		status TEXT NOT NULL CHECK (status IN ('present', 'removed_before_dispatch', 'removed_delivery_unknown', 'removed_after_delivery')),
+		removed_at TEXT,
+		CHECK ((status = 'present' AND content IS NOT NULL AND removed_at IS NULL)
+			OR (status <> 'present' AND content IS NULL AND removed_at IS NOT NULL))
+	)`,
+	`CREATE TABLE context_deletion_receipts (
+		id TEXT NOT NULL PRIMARY KEY CHECK (length(id) > 0),
+		project_id TEXT NOT NULL CHECK (length(project_id) > 0),
+		subject_kind TEXT NOT NULL CHECK (length(subject_kind) > 0),
+		subject_id TEXT NOT NULL CHECK (length(subject_id) > 0),
+		content_hash TEXT NOT NULL CHECK (length(content_hash) > 0),
+		deleted_at TEXT NOT NULL
+	)`,
+	`CREATE INDEX context_deletion_receipts_project ON context_deletion_receipts (project_id, deleted_at)`,
+}
+
+// Statements is the complete current schema, used for fresh databases and code
+// generation. A migrated v1 database executes the same Version2Statements.
+var Statements = slices.Concat(Version1Statements, Version2Statements)

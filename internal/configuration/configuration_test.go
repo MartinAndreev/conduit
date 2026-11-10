@@ -190,3 +190,70 @@ func TestMigrateV1UsesDiscoveryOnlyForMissingHarnesses(t *testing.T) {
 		t.Fatal("migrated a v2 file", err)
 	}
 }
+
+func TestStorageMultiprocessWALIsOptionalUnderV2(t *testing.T) {
+	for name, tc := range map[string]struct {
+		input string
+		want  bool
+	}{
+		"absent":         {fixtureV2(), false},
+		"empty block":    {fixtureV2() + "storage: {}\n", false},
+		"explicit false": {fixtureV2() + "storage:\n  experimental_multiprocess_wal: false\n", false},
+		"enabled":        {fixtureV2() + "storage:\n  experimental_multiprocess_wal: true\n", true},
+		"enabled flow":   {fixtureV2() + "storage: {experimental_multiprocess_wal: true}\n", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			config, err := Decode([]byte(tc.input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if config.SchemaVersion != CurrentSchema || config.MultiprocessWAL() != tc.want {
+				t.Fatalf("config = %#v", config)
+			}
+		})
+	}
+}
+
+func TestStorageRejectsInvalidValuesAndV1(t *testing.T) {
+	for name, input := range map[string]string{
+		"string value":    fixtureV2() + "storage: {experimental_multiprocess_wal: 'true'}\n",
+		"integer value":   fixtureV2() + "storage: {experimental_multiprocess_wal: 1}\n",
+		"null value":      fixtureV2() + "storage: {experimental_multiprocess_wal: null}\n",
+		"null block":      fixtureV2() + "storage: null\n",
+		"unknown key":     fixtureV2() + "storage: {cloud_sync: true}\n",
+		"bool elsewhere":  strings.Replace(fixtureV2(), "codex: {}", "codex: {experimental_multiprocess_wal: true}", 1),
+		"v1 with storage": fixture() + "storage: {experimental_multiprocess_wal: true}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Decode([]byte(input)); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("decode error = %v", err)
+			}
+		})
+	}
+}
+
+func TestStorageRoundTripsAndIsAbsentAfterV1Migration(t *testing.T) {
+	config, err := Decode([]byte(fixtureV2() + "storage: {experimental_multiprocess_wal: true}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := Encode(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := Decode(data)
+	if err != nil || !again.MultiprocessWAL() {
+		t.Fatalf("round trip = %#v, %v\n%s", again, err, data)
+	}
+	v1, err := Decode([]byte(fixture()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := MigrateV1(v1, map[HarnessID]Observation{Claude: {Kind: Missing}, FX: {Kind: Missing}})
+	if err != nil || migrated.Storage != nil || migrated.MultiprocessWAL() {
+		t.Fatalf("migrated = %#v, %v", migrated, err)
+	}
+	if data, err := Encode(migrated); err != nil || strings.Contains(string(data), "storage") {
+		t.Fatalf("migrated encoding = %q, %v", data, err)
+	}
+}

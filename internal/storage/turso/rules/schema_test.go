@@ -21,19 +21,28 @@ func TestSchemaMarkerDecision(t *testing.T) {
 	}
 }
 
-func TestSchemaColumnsDecisionPreservesRequiredOrder(t *testing.T) {
-	required := []string{"id", "revision", "version"}
-	found := map[string]bool{"id": true, "extra": true}
-	got := DecideSchemaColumns("sessions", required, found)
-	if got.Kind != SchemaColumnMissing || got.Reason != "missing sessions.revision" {
-		t.Fatalf("decision = %#v", got)
+func TestSchemaObjectsDecision(t *testing.T) {
+	expected := []string{
+		"CREATE TABLE event_journal (\n\t\trun_id TEXT NOT NULL, sequence INTEGER NOT NULL,\n\t\tUNIQUE(run_id, sequence)\n\t)",
+		`CREATE INDEX event_journal_replay ON event_journal(run_id, sequence)`,
 	}
-	if len(found) != 2 || len(required) != 3 {
-		t.Fatal("rule mutated facts")
-	}
-	found["revision"], found["version"] = true, true
-	got = DecideSchemaColumns("sessions", required, found)
-	if got.Kind != SchemaCompatible || got.Reason == "" {
-		t.Fatalf("decision = %#v", got)
+	table := `CREATE TABLE event_journal (run_id TEXT NOT NULL, sequence INTEGER NOT NULL, UNIQUE (run_id, sequence))`
+	index := `CREATE INDEX event_journal_replay ON event_journal (run_id, sequence)`
+	for _, test := range []struct {
+		name   string
+		stored []string
+		kind   SchemaCompatibilityKind
+		reason string
+	}{
+		{"stored forms", []string{index, `CREATE TABLE extra (x TEXT)`, table}, SchemaCompatible, "schema objects match their definitions"},
+		{"dropped unique", []string{`CREATE TABLE event_journal (run_id TEXT NOT NULL, sequence INTEGER NOT NULL)`, index}, SchemaObjectMismatch, "table event_journal is missing or differs from the expected definition"},
+		{"missing index", []string{table}, SchemaObjectMismatch, "index event_journal_replay is missing or differs from the expected definition"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := DecideSchemaObjects(expected, test.stored)
+			if got.Kind != test.kind || got.Reason != test.reason {
+				t.Fatalf("decision = %#v", got)
+			}
+		})
 	}
 }
