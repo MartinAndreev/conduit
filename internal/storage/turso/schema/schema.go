@@ -7,6 +7,19 @@ package schema
 import "slices"
 
 const Version = "2"
+
+// Byte bounds of the memory tables' free-text columns, as their CHECKs state.
+const (
+	MaxIdentityBytes  = 256
+	MaxTimestampBytes = 64
+	MaxTextFieldBytes = 4096
+	// MaxStoredContentBytes bounds a version's content and its search text
+	// each: 4 × memory.MaxMaterialBytes. It is a storage cap, not the
+	// admission limit: a version above memory.MaxMaterialBytes may be stored
+	// but is never admitted. The write path rejects content whose normalized
+	// search text would exceed it rather than truncating.
+	MaxStoredContentBytes = 128 * 1024
+)
 const ApplicationID = "github.com/MartinAndreev/conduit"
 
 // Version1Statements created schema v1. They must never change: the 1 -> 2
@@ -34,40 +47,51 @@ var Version1Statements = []string{
 // Enumerated CHECK lists mirror internal/memory and spec 012; a test keeps them
 // in step with the domain owner. Absent optional values are NULL, never ”.
 // The memory_records -> current version reference is deferred so a record and
-// its first version can be inserted in one transaction.
+// its first version can be inserted in one transaction. A memory_reviews row
+// names who recorded it (actor) and the person or agent (reviewer); only a
+// human approves or rejects, system and agent reviews are opinions.
+//
+// Every free-text memory column has a UTF-8 byte bound, so no read loads an
+// unbounded value: identities, hashes and other metadata MaxIdentityBytes,
+// timestamps MaxTimestampBytes, source refs and paths and review reasons
+// MaxTextFieldBytes, content and search text MaxStoredContentBytes each.
+// Columns bound by a foreign key to such a column need no bound of their own.
+//
+// v2 is unreleased: databases created by an earlier v2 draft fail validation
+// as incompatible and are not migrated.
 var Version2Statements = []string{
 	`CREATE TABLE memory_records (
-		id TEXT NOT NULL PRIMARY KEY CHECK (length(id) > 0),
-		project_id TEXT NOT NULL CHECK (length(project_id) > 0),
-		category TEXT NOT NULL CHECK (length(category) > 0),
+		id TEXT NOT NULL PRIMARY KEY CHECK (length(CAST(id AS BLOB)) BETWEEN 1 AND 256),
+		project_id TEXT NOT NULL CHECK (length(CAST(project_id AS BLOB)) BETWEEN 1 AND 256),
+		category TEXT NOT NULL CHECK (length(CAST(category AS BLOB)) BETWEEN 1 AND 256),
 		status TEXT NOT NULL CHECK (status IN ('proposed', 'active', 'needs_verification', 'rejected', 'superseded', 'archived')),
 		current_version_id TEXT NOT NULL,
 		version INTEGER NOT NULL CHECK (version >= 1),
-		created_at TEXT NOT NULL,
-		updated_at TEXT NOT NULL,
+		created_at TEXT NOT NULL CHECK (length(CAST(created_at AS BLOB)) BETWEEN 1 AND 64),
+		updated_at TEXT NOT NULL CHECK (length(CAST(updated_at AS BLOB)) BETWEEN 1 AND 64),
 		UNIQUE (id, project_id),
 		FOREIGN KEY (id, current_version_id) REFERENCES memory_record_versions (record_id, id) DEFERRABLE INITIALLY DEFERRED
 	)`,
 	`CREATE INDEX memory_records_project_status ON memory_records (project_id, status)`,
 	`CREATE TABLE memory_record_versions (
-		id TEXT NOT NULL PRIMARY KEY CHECK (length(id) > 0),
+		id TEXT NOT NULL PRIMARY KEY CHECK (length(CAST(id AS BLOB)) BETWEEN 1 AND 256),
 		record_id TEXT NOT NULL,
 		project_id TEXT NOT NULL,
-		content TEXT,
-		content_hash TEXT NOT NULL CHECK (length(content_hash) > 0),
-		search_text TEXT,
+		content TEXT CHECK (length(CAST(content AS BLOB)) <= 131072),
+		content_hash TEXT NOT NULL CHECK (length(CAST(content_hash AS BLOB)) BETWEEN 1 AND 256),
+		search_text TEXT CHECK (length(CAST(search_text AS BLOB)) <= 131072),
 		search_normalization_version INTEGER NOT NULL CHECK (search_normalization_version >= 1),
-		content_deleted_at TEXT,
-		author TEXT NOT NULL CHECK (length(author) > 0),
+		content_deleted_at TEXT CHECK (length(CAST(content_deleted_at AS BLOB)) BETWEEN 1 AND 64),
+		author TEXT NOT NULL CHECK (length(CAST(author AS BLOB)) BETWEEN 1 AND 256),
 		trust TEXT NOT NULL CHECK (trust IN ('human_approved', 'conduit_observed', 'code_derived', 'agent_claim', 'external_import')),
-		redaction_policy_version TEXT NOT NULL CHECK (length(redaction_policy_version) > 0),
+		redaction_policy_version TEXT NOT NULL CHECK (length(CAST(redaction_policy_version AS BLOB)) BETWEEN 1 AND 256),
 		visibility TEXT NOT NULL CHECK (visibility IN ('attempt', 'project')),
 		origin TEXT NOT NULL CHECK (origin IN ('attempt', 'human')),
-		run_id TEXT CHECK (length(run_id) > 0),
-		attempt_id TEXT CHECK (length(attempt_id) > 0),
-		base_commit TEXT CHECK (length(base_commit) > 0),
-		accepted_result_ref TEXT CHECK (length(accepted_result_ref) > 0),
-		created_at TEXT NOT NULL,
+		run_id TEXT CHECK (length(CAST(run_id AS BLOB)) BETWEEN 1 AND 256),
+		attempt_id TEXT CHECK (length(CAST(attempt_id AS BLOB)) BETWEEN 1 AND 256),
+		base_commit TEXT CHECK (length(CAST(base_commit AS BLOB)) BETWEEN 1 AND 256),
+		accepted_result_ref TEXT CHECK (length(CAST(accepted_result_ref AS BLOB)) BETWEEN 1 AND 256),
+		created_at TEXT NOT NULL CHECK (length(CAST(created_at AS BLOB)) BETWEEN 1 AND 64),
 		UNIQUE (record_id, id),
 		UNIQUE (id, content_hash),
 		FOREIGN KEY (record_id, project_id) REFERENCES memory_records (id, project_id),
@@ -79,25 +103,27 @@ var Version2Statements = []string{
 	)`,
 	`CREATE INDEX memory_record_versions_project_scan ON memory_record_versions (project_id, visibility)`,
 	`CREATE TABLE memory_sources (
-		id TEXT NOT NULL PRIMARY KEY CHECK (length(id) > 0),
+		id TEXT NOT NULL PRIMARY KEY CHECK (length(CAST(id AS BLOB)) BETWEEN 1 AND 256),
 		version_id TEXT NOT NULL REFERENCES memory_record_versions (id),
 		kind TEXT NOT NULL CHECK (kind IN ('spec', 'file', 'event', 'assignment')),
-		ref TEXT CHECK (length(ref) > 0),
-		path TEXT CHECK (length(path) > 0),
-		blob_hash TEXT CHECK (length(blob_hash) > 0),
+		ref TEXT CHECK (length(CAST(ref AS BLOB)) BETWEEN 1 AND 4096),
+		path TEXT CHECK (length(CAST(path AS BLOB)) BETWEEN 1 AND 4096),
+		blob_hash TEXT CHECK (length(CAST(blob_hash AS BLOB)) BETWEEN 1 AND 256),
 		UNIQUE (version_id, path),
 		CHECK ((kind = 'file' AND path IS NOT NULL AND blob_hash IS NOT NULL)
 			OR (kind <> 'file' AND path IS NULL AND blob_hash IS NULL AND ref IS NOT NULL))
 	)`,
 	`CREATE TABLE memory_reviews (
-		id TEXT NOT NULL PRIMARY KEY CHECK (length(id) > 0),
+		id TEXT NOT NULL PRIMARY KEY CHECK (length(CAST(id AS BLOB)) BETWEEN 1 AND 256),
 		version_id TEXT NOT NULL,
 		content_hash TEXT NOT NULL,
-		decision TEXT NOT NULL CHECK (length(decision) > 0),
-		reviewer TEXT NOT NULL CHECK (length(reviewer) > 0),
-		reason TEXT CHECK (length(reason) > 0),
-		reviewed_at TEXT NOT NULL,
-		FOREIGN KEY (version_id, content_hash) REFERENCES memory_record_versions (id, content_hash)
+		decision TEXT NOT NULL CHECK (decision IN ('approve', 'reject', 'opinion')),
+		actor TEXT NOT NULL CHECK (actor IN ('human', 'system', 'agent')),
+		reviewer TEXT NOT NULL CHECK (length(CAST(reviewer AS BLOB)) BETWEEN 1 AND 256),
+		reason TEXT CHECK (length(CAST(reason AS BLOB)) BETWEEN 1 AND 4096),
+		reviewed_at TEXT NOT NULL CHECK (length(CAST(reviewed_at AS BLOB)) BETWEEN 1 AND 64),
+		FOREIGN KEY (version_id, content_hash) REFERENCES memory_record_versions (id, content_hash),
+		CHECK (actor = 'human' OR decision = 'opinion')
 	)`,
 	`CREATE INDEX memory_reviews_version ON memory_reviews (version_id)`,
 	`CREATE TABLE memory_relations (
@@ -105,7 +131,7 @@ var Version2Statements = []string{
 		from_record_id TEXT NOT NULL,
 		to_record_id TEXT NOT NULL,
 		kind TEXT NOT NULL CHECK (kind IN ('supersedes', 'contradicts')),
-		created_at TEXT NOT NULL,
+		created_at TEXT NOT NULL CHECK (length(CAST(created_at AS BLOB)) BETWEEN 1 AND 64),
 		PRIMARY KEY (from_record_id, to_record_id, kind),
 		CHECK (from_record_id <> to_record_id),
 		FOREIGN KEY (from_record_id, project_id) REFERENCES memory_records (id, project_id),

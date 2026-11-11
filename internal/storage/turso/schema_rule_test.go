@@ -103,6 +103,7 @@ func TestRejectsSchemaWithDroppedConstraintWithoutMutation(t *testing.T) {
 		{"v2 with v1 table missing unique sequence", "2", slices.Concat(replaced(t, v1, ",\n\t\tUNIQUE(run_id, sequence)", ""), v2)},
 		{"v2 without source foreign key", "2", slices.Concat(v1, replaced(t, v2, " REFERENCES memory_record_versions (id)", ""))},
 		{"v2 without accepted result check", "2", slices.Concat(v1, replaced(t, v2, ",\n\t\tCHECK (origin <> 'attempt' OR visibility <> 'project' OR accepted_result_ref IS NOT NULL)", ""))},
+		{"v2 draft review without actor", "2", slices.Concat(v1, replaced(t, replaced(t, v2, "\n\t\tactor TEXT NOT NULL CHECK (actor IN ('human', 'system', 'agent')),", ""), ",\n\t\tCHECK (actor = 'human' OR decision = 'opinion')", ""))},
 		{"v2 without review index", "2", slices.Concat(v1, replaced(t, v2, "CREATE INDEX memory_reviews_version ON memory_reviews (version_id)", ""))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

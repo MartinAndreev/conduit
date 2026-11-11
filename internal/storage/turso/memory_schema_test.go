@@ -4,13 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/MartinAndreev/conduit/internal/memory"
 	"github.com/MartinAndreev/conduit/internal/storage/turso/internal/generated/model"
 	"github.com/MartinAndreev/conduit/internal/storage/turso/internal/generated/table"
+	"github.com/MartinAndreev/conduit/internal/storage/turso/schema"
 	jet "github.com/go-jet/jet/v2/sqlite"
 )
 
@@ -282,21 +285,55 @@ func TestFileSourcePathIsUniquePerVersion(t *testing.T) {
 	}
 }
 
+func insertReview(ctx context.Context, db database, review model.MemoryReviews) error {
+	query, args := table.MemoryReviews.INSERT(table.MemoryReviews.AllColumns).MODEL(review).Sql()
+	_, err := db.ExecContext(ctx, query, args...)
+	return err
+}
+
+func newReview(id string, version model.MemoryRecordVersions, actor memory.Actor, decision memory.ReviewDecision) model.MemoryReviews {
+	return model.MemoryReviews{ID: id, VersionID: version.ID, ContentHash: version.ContentHash, Decision: string(decision), Actor: string(actor), Reviewer: "reviewer-" + string(actor), ReviewedAt: memoryTime}
+}
+
 func TestReviewNamesExactVersionAndHash(t *testing.T) {
 	ctx := context.Background()
 	store := openMemoryStore(t)
 	fixture := newMemoryFixture("reviewed", "project")
 	mustInsertMemory(t, store.db, fixture)
-	review := func(id, hash string) error {
-		query, args := table.MemoryReviews.INSERT(table.MemoryReviews.AllColumns).MODEL(model.MemoryReviews{ID: id, VersionID: fixture.version.ID, ContentHash: hash, Decision: "approve", Reviewer: "martin", ReviewedAt: memoryTime}).Sql()
-		_, err := store.db.ExecContext(ctx, query, args...)
-		return err
-	}
-	if err := review("matching", fixture.version.ContentHash); err != nil {
+	if err := insertReview(ctx, store.db, newReview("matching", fixture.version, memory.ActorHuman, memory.ReviewApprove)); err != nil {
 		t.Fatal(err)
 	}
-	if review("stale", "sha256:other") == nil {
+	stale := newReview("stale", fixture.version, memory.ActorHuman, memory.ReviewApprove)
+	stale.ContentHash = "sha256:other"
+	if insertReview(ctx, store.db, stale) == nil {
 		t.Fatal("review accepted a content hash that is not the version's")
+	}
+}
+
+// The review CHECK lists are literal DDL; this keeps them equal to the domain
+// owner's actors and decisions, and only a human may approve or reject.
+func TestReviewActorsAndDecisionsMatchDomain(t *testing.T) {
+	ctx := context.Background()
+	store := openMemoryStore(t)
+	fixture := newMemoryFixture("reviewed", "project")
+	mustInsertMemory(t, store.db, fixture)
+	for _, actor := range memory.Actors() {
+		for _, decision := range memory.ReviewDecisions() {
+			err := insertReview(ctx, store.db, newReview(string(actor)+"-"+string(decision), fixture.version, actor, decision))
+			allowed := actor == memory.ActorHuman || decision == memory.ReviewOpinion
+			if allowed != (err == nil) {
+				t.Fatalf("%s %s: allowed=%v, err=%v", actor, decision, allowed, err)
+			}
+		}
+	}
+	for name, review := range map[string]model.MemoryReviews{
+		"unknown actor":    newReview("x1", fixture.version, "reviewer_bot", memory.ReviewOpinion),
+		"empty actor":      newReview("x2", fixture.version, "", memory.ReviewOpinion),
+		"unknown decision": newReview("x3", fixture.version, memory.ActorHuman, "approved"),
+	} {
+		if insertReview(ctx, store.db, review) == nil {
+			t.Fatalf("%s accepted", name)
+		}
 	}
 }
 
@@ -429,4 +466,166 @@ func TestFailedDeferredCommitThroughSQLTxLeavesTransactionOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustInsertMemory(t, store.db, newMemoryFixture("after-rollback", "project"))
+}
+
+// fill is a value of exactly size UTF-8 bytes starting with prefix, mostly
+// two-byte Cyrillic, so a byte bound is not mistaken for a character bound.
+func fill(prefix string, size int) string {
+	rest := size - len(prefix)
+	return prefix + strings.Repeat("я", rest/2) + strings.Repeat("a", rest%2)
+}
+
+// Every free-text memory column accepts a value at its byte bound and refuses
+// one byte more.
+func TestMemoryColumnsHaveByteBounds(t *testing.T) {
+	ctx := context.Background()
+	store := openMemoryStore(t)
+	type bound struct {
+		name string
+		max  int
+		set  func(*memoryFixture, string)
+	}
+	attempt := func(f *memoryFixture) {
+		f.version.Origin, f.version.Visibility = string(memory.OriginAttempt), string(memory.VisibilityAttempt)
+		f.version.RunID, f.version.AttemptID, f.version.BaseCommit = optional("run"), optional("attempt"), optional("abc")
+	}
+	records := []bound{
+		{"record id", schema.MaxIdentityBytes, func(f *memoryFixture, v string) { f.record.ID, f.version.RecordID = v, v }},
+		{"project id", schema.MaxIdentityBytes, func(f *memoryFixture, v string) { f.record.ProjectID, f.version.ProjectID = v, v }},
+		{"category", schema.MaxIdentityBytes, func(f *memoryFixture, v string) { f.record.Category = v }},
+		{"record created_at", schema.MaxTimestampBytes, func(f *memoryFixture, v string) { f.record.CreatedAt = v }},
+		{"record updated_at", schema.MaxTimestampBytes, func(f *memoryFixture, v string) { f.record.UpdatedAt = v }},
+		{"version id", schema.MaxIdentityBytes, func(f *memoryFixture, v string) { f.version.ID, f.record.CurrentVersionID = v, v }},
+		{"content hash", schema.MaxIdentityBytes, func(f *memoryFixture, v string) { f.version.ContentHash = v }},
+		{"content deleted at", schema.MaxTimestampBytes, func(f *memoryFixture, v string) {
+			f.version.Content, f.version.SearchText, f.version.ContentDeletedAt = nil, nil, &v
+		}},
+		{"author", schema.MaxIdentityBytes, func(f *memoryFixture, v string) { f.version.Author = v }},
+		{"redaction policy version", schema.MaxIdentityBytes, func(f *memoryFixture, v string) { f.version.RedactionPolicyVersion = v }},
+		{"run id", schema.MaxIdentityBytes, func(f *memoryFixture, v string) { attempt(f); f.version.RunID = &v }},
+		{"attempt id", schema.MaxIdentityBytes, func(f *memoryFixture, v string) { attempt(f); f.version.AttemptID = &v }},
+		{"base commit", schema.MaxIdentityBytes, func(f *memoryFixture, v string) { attempt(f); f.version.BaseCommit = &v }},
+		{"accepted result ref", schema.MaxIdentityBytes, func(f *memoryFixture, v string) { attempt(f); f.version.AcceptedResultRef = &v }},
+		{"version created_at", schema.MaxTimestampBytes, func(f *memoryFixture, v string) { f.version.CreatedAt = v }},
+	}
+	for index, b := range records {
+		for _, size := range []int{b.max, b.max + 1} {
+			fixture := newMemoryFixture(fmt.Sprintf("bound-%02d-%d", index, size), "project")
+			b.set(&fixture, fill(fmt.Sprintf("b%02d", index), size))
+			if err := insertMemory(ctx, store.db, fixture); (err == nil) != (size == b.max) {
+				t.Fatalf("%s with %d bytes: %v", b.name, size, err)
+			}
+		}
+	}
+	base := newMemoryFixture("bound-base", "project")
+	mustInsertMemory(t, store.db, base)
+	mustInsertMemory(t, store.db, newMemoryFixture("bound-other", "project"))
+	others := []struct {
+		name   string
+		max    int
+		insert func(id, v string) error
+	}{
+		{"source id", schema.MaxIdentityBytes, func(_, v string) error {
+			return insertSource(ctx, store.db, model.MemorySources{ID: v, VersionID: base.version.ID, Kind: "spec", Ref: optional("spec")})
+		}},
+		{"source ref", schema.MaxTextFieldBytes, func(id, v string) error {
+			return insertSource(ctx, store.db, model.MemorySources{ID: id, VersionID: base.version.ID, Kind: "spec", Ref: &v})
+		}},
+		{"source path", schema.MaxTextFieldBytes, func(id, v string) error {
+			return insertSource(ctx, store.db, model.MemorySources{ID: id, VersionID: base.version.ID, Kind: "file", Path: &v, BlobHash: optional("blob")})
+		}},
+		{"source blob hash", schema.MaxIdentityBytes, func(id, v string) error {
+			return insertSource(ctx, store.db, model.MemorySources{ID: id, VersionID: base.version.ID, Kind: "file", Path: optional(id), BlobHash: &v})
+		}},
+		{"review id", schema.MaxIdentityBytes, func(_, v string) error {
+			return insertReview(ctx, store.db, newReview(v, base.version, memory.ActorHuman, memory.ReviewApprove))
+		}},
+		{"reviewer", schema.MaxIdentityBytes, func(id, v string) error {
+			review := newReview(id, base.version, memory.ActorHuman, memory.ReviewApprove)
+			review.Reviewer = v
+			return insertReview(ctx, store.db, review)
+		}},
+		{"review reason", schema.MaxTextFieldBytes, func(id, v string) error {
+			review := newReview(id, base.version, memory.ActorHuman, memory.ReviewReject)
+			review.Reason = &v
+			return insertReview(ctx, store.db, review)
+		}},
+		{"reviewed at", schema.MaxTimestampBytes, func(id, v string) error {
+			review := newReview(id, base.version, memory.ActorAgent, memory.ReviewOpinion)
+			review.ReviewedAt = v
+			return insertReview(ctx, store.db, review)
+		}},
+		{"relation created_at", schema.MaxTimestampBytes, func(id, v string) error {
+			kind := map[bool]string{true: "supersedes", false: "contradicts"}[strings.HasSuffix(id, "a")]
+			_, err := store.db.ExecContext(ctx, "INSERT INTO memory_relations (project_id, from_record_id, to_record_id, kind, created_at) VALUES ('project', 'bound-base', 'bound-other', ?, ?)", kind, v)
+			return err
+		}},
+	}
+	for index, b := range others {
+		for attempt, size := range []int{b.max, b.max + 1} {
+			id := fmt.Sprintf("other-%02d-%c", index, 'a'+attempt)
+			if err := b.insert(id, fill(fmt.Sprintf("o%02d%c", index, 'a'+attempt), size)); (err == nil) != (size == b.max) {
+				t.Fatalf("%s with %d bytes: %v", b.name, size, err)
+			}
+		}
+	}
+}
+
+// Content and search text each accept exactly MaxStoredContentBytes and refuse
+// one byte more, independently of each other.
+func TestStoredContentAndSearchTextAreBounded(t *testing.T) {
+	ctx := context.Background()
+	store := openMemoryStore(t)
+	if schema.MaxStoredContentBytes != 4*memory.MaxMaterialBytes {
+		t.Fatalf("stored content cap = %d", schema.MaxStoredContentBytes)
+	}
+	atCap := fill("c", schema.MaxStoredContentBytes)
+	overCap := fill("c", schema.MaxStoredContentBytes+1)
+	for _, tc := range []struct {
+		name            string
+		content, search string
+		accepted        bool
+	}{
+		{"both at the cap", atCap, atCap, true},
+		{"content one byte over", overCap, "c", false},
+		{"search text one byte over", atCap, overCap, false},
+		{"small content, oversized search text", "кратко", overCap, false},
+	} {
+		fixture := newMemoryFixture("stored-"+strings.ReplaceAll(tc.name, " ", "-"), "project")
+		fixture.version.Content, fixture.version.SearchText = &tc.content, &tc.search
+		if err := insertMemory(ctx, store.db, fixture); (err == nil) != tc.accepted {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+	}
+}
+
+// A migrated v1 database takes the bounded memory columns and reopens at the
+// current schema.
+func TestMigratedDatabaseReopensWithBoundedMemoryColumns(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "v1.db")
+	if err := createV1Database(t, path).Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := newMemoryFixture("migrated", "project")
+	content := fill("m", schema.MaxStoredContentBytes)
+	fixture.version.Content, fixture.version.SearchText = &content, &content
+	mustInsertMemory(t, store.db, fixture)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(ctx, path)
+	if err != nil {
+		t.Fatalf("reopen migrated database: %v", err)
+	}
+	defer store.Close()
+	assertCurrentSchema(t, store.db)
+	got, err := store.MemoryReader().ReadLinkedRecords(ctx, "project", []string{"migrated"})
+	if err != nil || len(got) != 1 || got[0].ContentBytes != schema.MaxStoredContentBytes || got[0].Version.Content != "" {
+		t.Fatalf("migrated record: %d candidates, %v", len(got), err)
+	}
 }

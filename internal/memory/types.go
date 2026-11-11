@@ -41,6 +41,27 @@ const (
 	ActorAgent Actor = "agent"
 )
 
+// Actors lists every actor.
+func Actors() []Actor {
+	return []Actor{ActorHuman, ActorSystem, ActorAgent}
+}
+
+// ReviewDecision is what a memory_reviews row records about one exact version
+// and content hash. Only a human approves or rejects; system and agent reviews
+// are opinions, which never change trust or lifecycle.
+type ReviewDecision string
+
+const (
+	ReviewApprove ReviewDecision = "approve"
+	ReviewReject  ReviewDecision = "reject"
+	ReviewOpinion ReviewDecision = "opinion"
+)
+
+// ReviewDecisions lists every review decision.
+func ReviewDecisions() []ReviewDecision {
+	return []ReviewDecision{ReviewApprove, ReviewReject, ReviewOpinion}
+}
+
 // Visibility is who may see a version.
 type Visibility string
 

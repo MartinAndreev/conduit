@@ -489,3 +489,26 @@ type hashRewriter struct{}
 func (hashRewriter) Redact(text string) redaction.Result {
 	return redaction.Result{Text: strings.Replace(text, "sha256:", "masked:", 1), PolicyVersion: "test-1"}
 }
+
+func TestSafeIdentity(t *testing.T) {
+	tests := []struct {
+		id   string
+		want bool
+	}{
+		{"rec-1", true},
+		{"rec_1-v2", true},
+		{"", false},
+		{"rec 1", false},
+		{"docs/rec.md", false},
+		{"rec-SECRET", false},
+		{"ghp_" + strings.Repeat("A", 36), true}, // fake redactor knows only SECRET
+	}
+	for _, tt := range tests {
+		if got := SafeIdentity(tt.id, newRedactor()); got != tt.want {
+			t.Errorf("SafeIdentity(%q) = %v, want %v", tt.id, got, tt.want)
+		}
+	}
+	if SafeIdentity("ghp_"+strings.Repeat("A", 36), redaction.Policy{}) {
+		t.Error("a vendor token shape passed the real policy")
+	}
+}

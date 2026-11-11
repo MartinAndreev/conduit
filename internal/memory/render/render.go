@@ -337,12 +337,25 @@ func secretInIdentity(items []Item, redactor redaction.Redactor) string {
 			{"version id", item.VersionID},
 			{"content hash", item.ContentHash},
 		} {
-			if result := redactor.Redact(field.value); len(result.Findings) > 0 || result.Text != field.value {
+			if !unchangedByRedaction(field.value, redactor) {
 				return fmt.Sprintf("item %d: %s contains a detected secret", i+1, field.name)
 			}
 		}
 	}
 	return ""
+}
+
+// SafeIdentity reports whether id is a record or version ID that Render
+// would accept: it matches the ID grammar and passes the redactor unchanged
+// and without a finding. Callers use it to decide whether an ID may be shown
+// outside a rendered part, for example in an exclusion.
+func SafeIdentity(id string, redactor redaction.Redactor) bool {
+	return identityPattern.MatchString(id) && unchangedByRedaction(id, redactor)
+}
+
+func unchangedByRedaction(value string, redactor redaction.Redactor) bool {
+	result := redactor.Redact(value)
+	return len(result.Findings) == 0 && result.Text == value
 }
 
 // invalidItem checks the rendering format; trust, labels and sources are

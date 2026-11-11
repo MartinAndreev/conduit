@@ -12,6 +12,7 @@ type MemoryReviews struct {
 	VersionID   string
 	ContentHash string
 	Decision    string
+	Actor       string
 	Reviewer    string
 	Reason      *string
 	ReviewedAt  string

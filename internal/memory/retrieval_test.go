@@ -171,3 +171,54 @@ func TestDecideRetrievalEligibility(t *testing.T) {
 		})
 	}
 }
+
+// human_approved trust needs an approval of the exact version for every
+// origin and visibility. A review that is only an opinion is reported as
+// ExactVersionApproved false, like no review at all.
+func TestHumanApprovedTrustNeedsExactApproval(t *testing.T) {
+	scopes := []struct {
+		name  string
+		scope Scope
+		// unapproved is the kind without exact approval.
+		unapproved RetrievalKind
+	}{
+		{"attempt origin, project with accepted result", Scope{
+			ProjectID: "p1", Visibility: VisibilityProject, Origin: OriginAttempt, RunID: "run", AttemptID: "a0", BaseCommit: "commit", AcceptedResultRef: "result",
+		}, RetrievalTrustNotApproved},
+		{"attempt origin, own attempt", Scope{
+			ProjectID: "p1", Visibility: VisibilityAttempt, Origin: OriginAttempt, RunID: "run", AttemptID: "a1", BaseCommit: "commit",
+		}, RetrievalTrustNotApproved},
+		// Visibility already requires the approval for a human origin.
+		{"human origin, project", Scope{ProjectID: "p1", Visibility: VisibilityProject, Origin: OriginHuman}, RetrievalNotVisible},
+	}
+	approvals := []struct {
+		name     string
+		approved bool
+	}{{"no review", false}, {"opinion only", false}, {"exact approval", true}}
+	for _, s := range scopes {
+		for _, a := range approvals {
+			for _, applicability := range []ApplicabilityKind{ApplicabilityApplicable, ApplicabilityUnknown} {
+				t.Run(s.name+"/"+a.name+"/"+string(applicability), func(t *testing.T) {
+					got := DecideRetrievalEligibility(retrievalFacts(func(f *RetrievalFacts) {
+						f.Version.Trust, f.Version.Scope = TrustHumanApproved, s.scope
+						f.ExactVersionApproved, f.Applicability = a.approved, applicability
+					}))
+					want := s.unapproved
+					if a.approved {
+						want = RetrievalEligible
+					}
+					if got.Kind != want || got.Reason == "" {
+						t.Fatalf("decision = %+v, want %s", got, want)
+					}
+				})
+			}
+		}
+	}
+	// Lifecycle precedes trust.
+	got := DecideRetrievalEligibility(retrievalFacts(func(f *RetrievalFacts) {
+		f.Version.Trust, f.ExactVersionApproved, f.Record.Status = TrustHumanApproved, false, StatusArchived
+	}))
+	if got.Kind != RetrievalLifecycleExcluded {
+		t.Fatalf("decision = %+v, want lifecycle_excluded", got)
+	}
+}

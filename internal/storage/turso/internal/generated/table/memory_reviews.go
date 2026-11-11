@@ -21,6 +21,7 @@ type memoryReviewsTable struct {
 	VersionID   sqlite.ColumnString
 	ContentHash sqlite.ColumnString
 	Decision    sqlite.ColumnString
+	Actor       sqlite.ColumnString
 	Reviewer    sqlite.ColumnString
 	Reason      sqlite.ColumnString
 	ReviewedAt  sqlite.ColumnString
@@ -69,11 +70,12 @@ func newMemoryReviewsTableImpl(schemaName, tableName, alias string) memoryReview
 		VersionIDColumn   = sqlite.StringColumn("version_id")
 		ContentHashColumn = sqlite.StringColumn("content_hash")
 		DecisionColumn    = sqlite.StringColumn("decision")
+		ActorColumn       = sqlite.StringColumn("actor")
 		ReviewerColumn    = sqlite.StringColumn("reviewer")
 		ReasonColumn      = sqlite.StringColumn("reason")
 		ReviewedAtColumn  = sqlite.StringColumn("reviewed_at")
-		allColumns        = sqlite.ColumnList{IDColumn, VersionIDColumn, ContentHashColumn, DecisionColumn, ReviewerColumn, ReasonColumn, ReviewedAtColumn}
-		mutableColumns    = sqlite.ColumnList{VersionIDColumn, ContentHashColumn, DecisionColumn, ReviewerColumn, ReasonColumn, ReviewedAtColumn}
+		allColumns        = sqlite.ColumnList{IDColumn, VersionIDColumn, ContentHashColumn, DecisionColumn, ActorColumn, ReviewerColumn, ReasonColumn, ReviewedAtColumn}
+		mutableColumns    = sqlite.ColumnList{VersionIDColumn, ContentHashColumn, DecisionColumn, ActorColumn, ReviewerColumn, ReasonColumn, ReviewedAtColumn}
 		defaultColumns    = sqlite.ColumnList{}
 	)
 
@@ -85,6 +87,7 @@ func newMemoryReviewsTableImpl(schemaName, tableName, alias string) memoryReview
 		VersionID:   VersionIDColumn,
 		ContentHash: ContentHashColumn,
 		Decision:    DecisionColumn,
+		Actor:       ActorColumn,
 		Reviewer:    ReviewerColumn,
 		Reason:      ReasonColumn,
 		ReviewedAt:  ReviewedAtColumn,

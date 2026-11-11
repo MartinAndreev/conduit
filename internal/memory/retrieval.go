@@ -29,7 +29,11 @@ const (
 	RetrievalStaleIndexResult  RetrievalKind = "stale_index_result"
 	RetrievalLifecycleExcluded RetrievalKind = "lifecycle_excluded"
 	RetrievalAgentClaim        RetrievalKind = "agent_claim"
-	RetrievalNotApplicable     RetrievalKind = "not_applicable"
+	// RetrievalTrustNotApproved rejects a version that claims human_approved
+	// trust without a human approval of this exact version, whatever its
+	// origin and visibility: trust is not raised without a review.
+	RetrievalTrustNotApproved RetrievalKind = "trust_not_approved"
+	RetrievalNotApplicable    RetrievalKind = "not_applicable"
 )
 
 // RetrievalLabel is a visible mark an admitted item carries in the manifest.
@@ -56,8 +60,11 @@ type RetrievalDecision struct {
 
 // DecideRetrievalEligibility answers whether a candidate may enter composition.
 // Checks run in the spec's order: project, visibility, current version,
-// lifecycle, applicability. An index result that is not the current version is
-// classified before visibility, so every stale hit is counted.
+// lifecycle, trust (agent claim, then unapproved human_approved trust),
+// applicability. A human origin version without approval is already not
+// visible, so the trust check catches the other origins. An index result that
+// is not the current version is classified before visibility, so every stale
+// hit is counted.
 func DecideRetrievalEligibility(f RetrievalFacts) RetrievalDecision {
 	if !f.RecordFound {
 		if f.FromIndex {
@@ -93,6 +100,9 @@ func DecideRetrievalEligibility(f RetrievalFacts) RetrievalDecision {
 	}
 	if f.Version.Trust == TrustAgentClaim {
 		return RetrievalDecision{Kind: RetrievalAgentClaim, Reason: "agent claims stay out until reviewed"}
+	}
+	if f.Version.Trust == TrustHumanApproved && !f.ExactVersionApproved {
+		return RetrievalDecision{Kind: RetrievalTrustNotApproved, Reason: "human_approved trust needs a human approval of this exact version"}
 	}
 	return decideRetrievalApplicability(f)
 }
