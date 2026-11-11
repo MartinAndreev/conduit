@@ -334,9 +334,13 @@ func TestCrossProcessMultiprocessWALMigratorsRace(t *testing.T) {
 // magic mismatch" or "... smaller than the coordination header"). The bounded
 // retry absorbs it: both processes open, the database ends at v2. The rounds
 // are few because tursogo v0.8.3 rarely aborts a process in this race with a
-// native panic (about 1 in 480 rounds) that no retry can catch.
+// native panic that no retry can catch, so it runs only with
+// CONDUIT_TURSO_RACE=1.
 func TestCrossProcessMultiprocessWALFirstOpenRaceIsRetried(t *testing.T) {
 	requireMultiprocessPlatform(t)
+	if os.Getenv("CONDUIT_TURSO_RACE") != "1" {
+		t.Skip("set CONDUIT_TURSO_RACE=1 to run; tursogo v0.8.3 can abort the test process in this race")
+	}
 	for round := range 4 {
 		t.Run(strconv.Itoa(round), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "v1.db")

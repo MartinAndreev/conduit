@@ -22,12 +22,12 @@ func normalizedDDL(statement string) string {
 	previousWord, whitespace := false, false
 	for index := 0; index < len(characters); index++ {
 		character := characters[index]
-		if unicode.IsSpace(character) {
+		if isSQLWhitespace(character) {
 			whitespace = true
 			continue
 		}
 		token, word, unquoted := string(character), isWordCharacter(character), false
-		if character == '\'' || character == '"' || character == '`' {
+		if character == '\'' || character == '"' || character == '`' || character == '[' {
 			end := quotedEnd(characters, index)
 			token, word = string(characters[index:end]), false
 			if identifier, ok := plainIdentifier(token); ok {
@@ -47,9 +47,18 @@ func normalizedDDL(statement string) string {
 }
 
 // quotedEnd returns the index after the quoted token starting at start. A
-// doubled quote character is an escaped quote inside the token.
+// doubled quote character is an escaped quote inside the token; a bracketed
+// identifier ends at the first ']' and has no escape.
 func quotedEnd(characters []rune, start int) int {
 	quote := characters[start]
+	if quote == '[' {
+		for index := start + 1; index < len(characters); index++ {
+			if characters[index] == ']' {
+				return index + 1
+			}
+		}
+		return len(characters)
+	}
 	for index := start + 1; index < len(characters); index++ {
 		if characters[index] != quote {
 			continue
@@ -79,6 +88,18 @@ func plainIdentifier(token string) (string, bool) {
 	return "", false
 }
 
+// isSQLWhitespace is SQLite's token separator set. Other Unicode spaces, such
+// as U+00A0, belong to the identifier they appear in.
+func isSQLWhitespace(character rune) bool {
+	switch character {
+	case ' ', '\t', '\n', '\f', '\r':
+		return true
+	}
+	return false
+}
+
+// isWordCharacter follows SQLite's identifier characters: every non-ASCII
+// character is part of an identifier.
 func isWordCharacter(character rune) bool {
-	return unicode.IsLetter(character) || unicode.IsDigit(character) || character == '_' || character == '$'
+	return character >= 0x80 || unicode.IsLetter(character) || unicode.IsDigit(character) || character == '_' || character == '$'
 }

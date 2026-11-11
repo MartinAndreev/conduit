@@ -137,12 +137,18 @@ func readerResult(t *testing.T, reader *childprocess.Child) string {
 	return ""
 }
 
-// Two flagged readers of an existing catalog without <catalog>-tshm race on
-// creating it, as the session store does; the bounded retry lets both read.
-// Few rounds: tursogo v0.8.3 rarely aborts a process in this race.
+// Two flagged readers of an existing catalog without <catalog>-tshm start
+// together and may race on creating it, as the session store does; both must
+// read. Each can finish before the other opens, so a round does not prove the
+// race occurred; the retry itself is proven in the engine package.
+// Few rounds, and only with CONDUIT_TURSO_RACE=1: tursogo v0.8.3 rarely
+// aborts a process in this race.
 func TestCatalogMultiprocessWALFirstOpenRaceIsRetried(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Turso ignores multiprocess_wal on Windows")
+	}
+	if os.Getenv("CONDUIT_TURSO_RACE") != "1" {
+		t.Skip("set CONDUIT_TURSO_RACE=1 to run; tursogo v0.8.3 can abort the test process in this race")
 	}
 	for round := range 4 {
 		t.Run(strconv.Itoa(round), func(t *testing.T) {

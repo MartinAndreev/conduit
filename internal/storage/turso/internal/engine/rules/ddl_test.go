@@ -31,6 +31,10 @@ func TestEquivalentDDLKeepsLiteralsAndQuotedNames(t *testing.T) {
 		{`CREATE TABLE t ("1x" TEXT)`, `CREATE TABLE t (1x TEXT)`},
 		{`CREATE TABLE t (x TEXTPRIMARYKEY)`, `CREATE TABLE t (x TEXT PRIMARY KEY)`},
 		{`CREATE TABLE t (x TEXT, "key"TEXT)`, `CREATE TABLE t (x TEXT, keyTEXT)`},
+		{"CREATE TABLE sessions\u00a0(x TEXT)", `CREATE TABLE sessions (x TEXT)`},
+		{"CREATE TABLE t (x\u2003TEXT)", `CREATE TABLE t (x TEXT)`},
+		{`CREATE TABLE [a . b] (x TEXT)`, `CREATE TABLE [a.b] (x TEXT)`},
+		{`CREATE TABLE [a b(x TEXT)`, `CREATE TABLE [ab(x TEXT)`},
 	} {
 		if EquivalentDDL(tc.stored, tc.expected) {
 			t.Fatalf("%q accepted as %q", tc.stored, tc.expected)
