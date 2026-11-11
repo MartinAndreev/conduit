@@ -629,3 +629,140 @@ func TestMigratedDatabaseReopensWithBoundedMemoryColumns(t *testing.T) {
 		t.Fatalf("migrated record: %d candidates, %v", len(got), err)
 	}
 }
+
+// contextRows are valid rows of every context_* table, as column -> value.
+func contextRows() map[string]map[string]any {
+	return map[string]map[string]any{
+		"context_manifests": {
+			"id": "manifest", "project_id": "project", "run_id": "run", "attempt_id": "attempt", "assignment_id": "assignment",
+			"revision": 1, "intent_id": "intent", "payload_hash": "sha256:payload", "redaction_policy_version": "1",
+			"search_status": "ok", "created_at": memoryTime,
+		},
+		"context_manifest_items": {
+			"manifest_id": "manifest", "ordinal": 0, "source_identity": "record", "source_version": "record-v1",
+			"mode": "included_text", "reason": "eligible", "trust": string(memory.TrustHumanApproved),
+		},
+		"context_manifest_payloads": {
+			"manifest_id": "manifest", "content": nil, "status": string(memory.PayloadRemovedAfterDelivery), "removed_at": memoryTime,
+		},
+		"context_deletion_receipts": {
+			"id": "receipt", "project_id": "project", "subject_kind": string(memory.DeletionSubjectMemoryVersion),
+			"subject_id": "record-v1", "content_hash": "sha256:record", "deleted_at": memoryTime,
+		},
+	}
+}
+
+// insertContextRow inserts row into table inside a transaction that is always
+// rolled back, after inserting the manifest the other tables reference.
+func insertContextRow(ctx context.Context, store *Store, name string, row map[string]any) error {
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	insert := func(name string, row map[string]any) error {
+		columns := make([]string, 0, len(row))
+		for column := range row {
+			columns = append(columns, column)
+		}
+		slices.Sort(columns)
+		values := make([]any, len(columns))
+		for index, column := range columns {
+			values[index] = row[column]
+		}
+		placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(columns)), ", ")
+		_, err := tx.ExecContext(ctx, "INSERT INTO "+name+" ("+strings.Join(columns, ", ")+") VALUES ("+placeholders+")", values...)
+		return err
+	}
+	if name != "context_manifests" && name != "context_deletion_receipts" {
+		if err := insert("context_manifests", contextRows()["context_manifests"]); err != nil {
+			return fmt.Errorf("manifest: %w", err)
+		}
+	}
+	return insert(name, row)
+}
+
+// Every free-text context_* column accepts a value at its byte bound and
+// refuses one byte more. The payload's content has no bound yet: composition
+// has no total limit, and task 4.3 sets it with the payload write.
+func TestContextColumnsHaveByteBounds(t *testing.T) {
+	ctx := context.Background()
+	store := openMemoryStore(t)
+	for name, row := range contextRows() {
+		if err := insertContextRow(ctx, store, name, row); err != nil {
+			t.Fatalf("valid %s row: %v", name, err)
+		}
+	}
+	bounds := map[string]map[string]int{
+		"context_manifests": {
+			"id": schema.MaxIdentityBytes, "project_id": schema.MaxIdentityBytes, "run_id": schema.MaxIdentityBytes,
+			"attempt_id": schema.MaxIdentityBytes, "assignment_id": schema.MaxIdentityBytes, "intent_id": schema.MaxIdentityBytes,
+			"payload_hash": schema.MaxIdentityBytes, "redaction_policy_version": schema.MaxIdentityBytes, "created_at": schema.MaxTimestampBytes,
+		},
+		"context_manifest_items": {
+			"source_identity": schema.MaxIdentityBytes, "source_version": schema.MaxIdentityBytes, "reason": schema.MaxTextFieldBytes,
+		},
+		"context_manifest_payloads": {"removed_at": schema.MaxTimestampBytes},
+		"context_deletion_receipts": {
+			"id": schema.MaxIdentityBytes, "project_id": schema.MaxIdentityBytes, "subject_id": schema.MaxIdentityBytes,
+			"content_hash": schema.MaxIdentityBytes, "deleted_at": schema.MaxTimestampBytes,
+		},
+	}
+	for name, columns := range bounds {
+		for column, max := range columns {
+			for _, size := range []int{max, max + 1} {
+				row := contextRows()[name]
+				row[column] = fill("x", size)
+				if err := insertContextRow(ctx, store, name, row); (err == nil) != (size == max) {
+					t.Fatalf("%s.%s with %d bytes: %v", name, column, size, err)
+				}
+			}
+			row := contextRows()[name]
+			row[column] = ""
+			if insertContextRow(ctx, store, name, row) == nil {
+				t.Fatalf("%s.%s accepted an empty value", name, column)
+			}
+		}
+	}
+	payload := contextRows()["context_manifest_payloads"]
+	payload["status"], payload["content"], payload["removed_at"] = string(memory.PayloadPresent), fill("p", schema.MaxStoredContentBytes+1), nil
+	if err := insertContextRow(ctx, store, "context_manifest_payloads", payload); err != nil {
+		t.Fatalf("payload content above the stored content cap: %v", err)
+	}
+}
+
+// The receipt subject kinds and payload statuses are literal DDL; this keeps
+// them equal to the domain owner's lists.
+func TestContextEnumerationsMatchDomain(t *testing.T) {
+	ctx := context.Background()
+	store := openMemoryStore(t)
+	for _, kind := range memory.DeletionSubjectKinds() {
+		row := contextRows()["context_deletion_receipts"]
+		row["subject_kind"] = string(kind)
+		if err := insertContextRow(ctx, store, "context_deletion_receipts", row); err != nil {
+			t.Fatalf("subject kind %s: %v", kind, err)
+		}
+	}
+	for _, kind := range []string{"memory_record", "", "MEMORY_VERSION"} {
+		row := contextRows()["context_deletion_receipts"]
+		row["subject_kind"] = kind
+		if insertContextRow(ctx, store, "context_deletion_receipts", row) == nil {
+			t.Fatalf("subject kind %q accepted", kind)
+		}
+	}
+	for _, status := range memory.PayloadStatuses() {
+		row := contextRows()["context_manifest_payloads"]
+		row["status"] = string(status)
+		if status == memory.PayloadPresent {
+			row["content"], row["removed_at"] = "text", nil
+		}
+		if err := insertContextRow(ctx, store, "context_manifest_payloads", row); err != nil {
+			t.Fatalf("payload status %s: %v", status, err)
+		}
+	}
+	row := contextRows()["context_manifest_payloads"]
+	row["status"] = "removed"
+	if insertContextRow(ctx, store, "context_manifest_payloads", row) == nil {
+		t.Fatal("unknown payload status accepted")
+	}
+}

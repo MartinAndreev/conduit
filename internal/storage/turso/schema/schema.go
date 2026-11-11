@@ -8,7 +8,8 @@ import "slices"
 
 const Version = "2"
 
-// Byte bounds of the memory tables' free-text columns, as their CHECKs state.
+// Byte bounds of the memory_* and context_* tables' free-text columns, as
+// their CHECKs state.
 const (
 	MaxIdentityBytes  = 256
 	MaxTimestampBytes = 64
@@ -51,11 +52,16 @@ var Version1Statements = []string{
 // names who recorded it (actor) and the person or agent (reviewer); only a
 // human approves or rejects, system and agent reviews are opinions.
 //
-// Every free-text memory column has a UTF-8 byte bound, so no read loads an
-// unbounded value: identities, hashes and other metadata MaxIdentityBytes,
-// timestamps MaxTimestampBytes, source refs and paths and review reasons
-// MaxTextFieldBytes, content and search text MaxStoredContentBytes each.
-// Columns bound by a foreign key to such a column need no bound of their own.
+// Every free-text memory_* and context_* column has a UTF-8 byte bound, so no
+// read loads an unbounded value: identities, hashes and other metadata
+// MaxIdentityBytes, timestamps MaxTimestampBytes, source refs and paths,
+// review reasons and manifest item reasons MaxTextFieldBytes, content and
+// search text MaxStoredContentBytes each. Columns bound by a foreign key to
+// such a column need no bound of their own. The one exception is
+// context_manifest_payloads.content, the whole composed context of one
+// dispatch request: composition has no total byte limit yet (linked records
+// are mandatory and not counted), so its bound is set with the payload write
+// in task 4.3. A deletion receipt's subject_kind is memory.DeletionSubjectKinds.
 //
 // v2 is unreleased: databases created by an earlier v2 draft fail validation
 // as incompatible and are not migrated.
@@ -139,26 +145,26 @@ var Version2Statements = []string{
 	)`,
 	`CREATE INDEX memory_relations_target ON memory_relations (to_record_id, kind)`,
 	`CREATE TABLE context_manifests (
-		id TEXT NOT NULL PRIMARY KEY CHECK (length(id) > 0),
-		project_id TEXT NOT NULL CHECK (length(project_id) > 0),
-		run_id TEXT NOT NULL CHECK (length(run_id) > 0),
-		attempt_id TEXT NOT NULL CHECK (length(attempt_id) > 0),
-		assignment_id TEXT NOT NULL CHECK (length(assignment_id) > 0),
+		id TEXT NOT NULL PRIMARY KEY CHECK (length(CAST(id AS BLOB)) BETWEEN 1 AND 256),
+		project_id TEXT NOT NULL CHECK (length(CAST(project_id AS BLOB)) BETWEEN 1 AND 256),
+		run_id TEXT NOT NULL CHECK (length(CAST(run_id AS BLOB)) BETWEEN 1 AND 256),
+		attempt_id TEXT NOT NULL CHECK (length(CAST(attempt_id AS BLOB)) BETWEEN 1 AND 256),
+		assignment_id TEXT NOT NULL CHECK (length(CAST(assignment_id AS BLOB)) BETWEEN 1 AND 256),
 		revision INTEGER NOT NULL,
-		intent_id TEXT NOT NULL CHECK (length(intent_id) > 0),
-		payload_hash TEXT NOT NULL CHECK (length(payload_hash) > 0),
-		redaction_policy_version TEXT NOT NULL CHECK (length(redaction_policy_version) > 0),
+		intent_id TEXT NOT NULL CHECK (length(CAST(intent_id AS BLOB)) BETWEEN 1 AND 256),
+		payload_hash TEXT NOT NULL CHECK (length(CAST(payload_hash AS BLOB)) BETWEEN 1 AND 256),
+		redaction_policy_version TEXT NOT NULL CHECK (length(CAST(redaction_policy_version AS BLOB)) BETWEEN 1 AND 256),
 		search_status TEXT NOT NULL CHECK (search_status IN ('ok', 'degraded', 'disabled')),
-		created_at TEXT NOT NULL,
+		created_at TEXT NOT NULL CHECK (length(CAST(created_at AS BLOB)) BETWEEN 1 AND 64),
 		UNIQUE (project_id, run_id, attempt_id, assignment_id, revision, intent_id)
 	)`,
 	`CREATE TABLE context_manifest_items (
 		manifest_id TEXT NOT NULL REFERENCES context_manifests (id),
 		ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
-		source_identity TEXT NOT NULL CHECK (length(source_identity) > 0),
-		source_version TEXT NOT NULL CHECK (length(source_version) > 0),
+		source_identity TEXT NOT NULL CHECK (length(CAST(source_identity AS BLOB)) BETWEEN 1 AND 256),
+		source_version TEXT NOT NULL CHECK (length(CAST(source_version AS BLOB)) BETWEEN 1 AND 256),
 		mode TEXT NOT NULL CHECK (mode IN ('included_text', 'referenced')),
-		reason TEXT NOT NULL CHECK (length(reason) > 0),
+		reason TEXT NOT NULL CHECK (length(CAST(reason AS BLOB)) BETWEEN 1 AND 4096),
 		trust TEXT CHECK (trust IN ('human_approved', 'conduit_observed', 'code_derived', 'agent_claim', 'external_import')),
 		PRIMARY KEY (manifest_id, ordinal)
 	)`,
@@ -166,17 +172,17 @@ var Version2Statements = []string{
 		manifest_id TEXT NOT NULL PRIMARY KEY REFERENCES context_manifests (id),
 		content TEXT,
 		status TEXT NOT NULL CHECK (status IN ('present', 'removed_before_dispatch', 'removed_delivery_unknown', 'removed_after_delivery')),
-		removed_at TEXT,
+		removed_at TEXT CHECK (length(CAST(removed_at AS BLOB)) BETWEEN 1 AND 64),
 		CHECK ((status = 'present' AND content IS NOT NULL AND removed_at IS NULL)
 			OR (status <> 'present' AND content IS NULL AND removed_at IS NOT NULL))
 	)`,
 	`CREATE TABLE context_deletion_receipts (
-		id TEXT NOT NULL PRIMARY KEY CHECK (length(id) > 0),
-		project_id TEXT NOT NULL CHECK (length(project_id) > 0),
-		subject_kind TEXT NOT NULL CHECK (length(subject_kind) > 0),
-		subject_id TEXT NOT NULL CHECK (length(subject_id) > 0),
-		content_hash TEXT NOT NULL CHECK (length(content_hash) > 0),
-		deleted_at TEXT NOT NULL
+		id TEXT NOT NULL PRIMARY KEY CHECK (length(CAST(id AS BLOB)) BETWEEN 1 AND 256),
+		project_id TEXT NOT NULL CHECK (length(CAST(project_id AS BLOB)) BETWEEN 1 AND 256),
+		subject_kind TEXT NOT NULL CHECK (subject_kind IN ('memory_version', 'manifest_payload')),
+		subject_id TEXT NOT NULL CHECK (length(CAST(subject_id AS BLOB)) BETWEEN 1 AND 256),
+		content_hash TEXT NOT NULL CHECK (length(CAST(content_hash AS BLOB)) BETWEEN 1 AND 256),
+		deleted_at TEXT NOT NULL CHECK (length(CAST(deleted_at AS BLOB)) BETWEEN 1 AND 64)
 	)`,
 	`CREATE INDEX context_deletion_receipts_project ON context_deletion_receipts (project_id, deleted_at)`,
 }

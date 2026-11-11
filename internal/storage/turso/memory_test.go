@@ -21,7 +21,7 @@ var memoryEpoch = time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
 // at is a version time minute minutes after the epoch, with a fixed-width
 // fraction so text order is time order.
 func at(minute int) string {
-	return memoryEpoch.Add(time.Duration(minute) * time.Minute).Format("2006-01-02T15:04:05.000000000Z07:00")
+	return formatStoredTime(memoryEpoch.Add(time.Duration(minute) * time.Minute))
 }
 
 // seedText inserts a current, human-origin record whose only version holds
