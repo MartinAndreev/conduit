@@ -84,6 +84,11 @@ const (
 	SourceAssignment SourceKind = "assignment"
 )
 
+// SourceKinds lists every source kind.
+func SourceKinds() []SourceKind {
+	return []SourceKind{SourceSpec, SourceFile, SourceEvent, SourceAssignment}
+}
+
 // Record is one memory_records row. Version is the optimistic concurrency
 // counter; CurrentVersionID names the current immutable content version.
 type Record struct {
@@ -134,6 +139,10 @@ func validStatus(status RecordStatus) bool {
 
 func validTrust(trust Trust) bool {
 	return slices.Contains(Trusts(), trust)
+}
+
+func validSourceKind(kind SourceKind) bool {
+	return slices.Contains(SourceKinds(), kind)
 }
 
 func validVisibility(visibility Visibility) bool {

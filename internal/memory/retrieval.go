@@ -32,13 +32,21 @@ const (
 	RetrievalNotApplicable     RetrievalKind = "not_applicable"
 )
 
-// RetrievalLabel is a visible mark an eligible candidate carries in the manifest.
+// RetrievalLabel is a visible mark an admitted item carries in the manifest.
+// Retrieval assigns needs_verification and applicability_unknown; composition
+// assigns conflict to contradicting memory.
 type RetrievalLabel string
 
 const (
 	LabelNeedsVerification    RetrievalLabel = "needs_verification"
 	LabelApplicabilityUnknown RetrievalLabel = "applicability_unknown"
+	LabelConflict             RetrievalLabel = "conflict"
 )
+
+// RetrievalLabels lists every label in their canonical display order.
+func RetrievalLabels() []RetrievalLabel {
+	return []RetrievalLabel{LabelNeedsVerification, LabelApplicabilityUnknown, LabelConflict}
+}
 
 type RetrievalDecision struct {
 	Kind   RetrievalKind
