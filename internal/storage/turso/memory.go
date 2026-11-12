@@ -31,9 +31,6 @@ const maxSearchQueryBytes = 4 * 1024
 // parameter limit even when a query binds the list twice.
 const memoryIDChunk = 256
 
-// relationContradicts is the memory_relations kind the reader collects.
-const relationContradicts = "contradicts"
-
 // Reader errors reach composition results and logs, so they never carry a
 // stored ID or value: a stored ID may itself be secret-shaped. They are
 // classified by these sentinels instead.
@@ -439,7 +436,7 @@ func attachFacts(ctx context.Context, tx *sql.Tx, projectID string, candidates [
 }
 
 // readSources returns each version's sources ordered by source id.
-func readSources(ctx context.Context, tx *sql.Tx, versionIDs []string) (map[string][]memory.RecordSource, error) {
+func readSources(ctx context.Context, tx database, versionIDs []string) (map[string][]memory.RecordSource, error) {
 	if len(versionIDs) == 0 {
 		return nil, nil
 	}
@@ -487,7 +484,7 @@ func readContradicts(ctx context.Context, tx *sql.Tx, projectID string, recordID
 			relations.INNER_JOIN(records, records.ID.EQ(other)),
 		).WHERE(
 			relations.ProjectID.EQ(jet.String(projectID)).
-				AND(relations.Kind.EQ(jet.String(relationContradicts))).
+				AND(relations.Kind.EQ(jet.String(string(memory.RelationContradicts)))).
 				AND(subject.IN(stringList(recordIDs)...)),
 		)
 	}

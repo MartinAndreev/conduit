@@ -59,7 +59,7 @@ func seedBenchmarkMemory(b *testing.B, store *Store) []string {
 			project := fmt.Sprintf("project-%d", index%4)
 			text := benchmarkText(random, words)
 			created := at(index)
-			if _, err := tx.ExecContext(ctx, "INSERT INTO memory_records (id, project_id, category, status, current_version_id, version, created_at, updated_at) VALUES (?, ?, 'architecture_decision', 'active', ?, 1, ?, ?)", id, project, id+"-v1", created, created); err != nil {
+			if _, err := tx.ExecContext(ctx, "INSERT INTO memory_records (id, project_id, category, status, current_version_id, version, created_at, updated_at) VALUES (?, ?, 'decision', 'active', ?, 1, ?, ?)", id, project, id+"-v1", created, created); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO memory_record_versions (id, record_id, project_id, content, content_hash, search_text, search_normalization_version, author, trust, redaction_policy_version, visibility, origin, created_at)

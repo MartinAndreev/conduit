@@ -136,7 +136,8 @@ type Exclusion struct {
 // ItemResult is one rendered item's manifest facts. Findings and
 // PolicyVersion come from redacting the material as read with the current
 // policy, not from Render's second pass over already masked text. Tokens is
-// the item's budgeted estimate.
+// the item's budgeted estimate. Trust is memory.EffectiveTrust, the trust
+// admission ranked the item by.
 type ItemResult struct {
 	RecordID           string
 	VersionID          string
@@ -345,7 +346,7 @@ func admit(req Request, entries []*entry, out *Composition) []*entry {
 		facts.Candidates = append(facts.Candidates, memory.MemoryCandidate{
 			ID:        id,
 			Tokens:    e.tokens,
-			Trust:     e.candidate.Version.Trust,
+			Trust:     memory.EffectiveTrust(e.candidate.Version.Trust, e.candidate.ExactVersionApproved),
 			RecencyAt: e.candidate.VersionCreatedAt,
 			Relevance: e.relevance,
 		})

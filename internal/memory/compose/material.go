@@ -103,7 +103,7 @@ func (r *redactionPass) item(e *entry) (render.Item, []redaction.Finding) {
 		RecordID:    candidate.Record.ID,
 		VersionID:   candidate.Version.ID,
 		ContentHash: candidate.Version.ContentHash,
-		Trust:       candidate.Version.Trust,
+		Trust:       memory.EffectiveTrust(candidate.Version.Trust, candidate.ExactVersionApproved),
 		Labels:      e.labels,
 		Mode:        render.ModeIncludedText,
 		Sources:     sources,

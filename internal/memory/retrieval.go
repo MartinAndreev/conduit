@@ -60,9 +60,11 @@ type RetrievalDecision struct {
 
 // DecideRetrievalEligibility answers whether a candidate may enter composition.
 // Checks run in the spec's order: project, visibility, current version,
-// lifecycle, trust (agent claim, then unapproved human_approved trust),
-// applicability. A human origin version without approval is already not
-// visible, so the trust check catches the other origins. An index result that
+// lifecycle, trust (an agent claim no human approved exactly, then stored
+// human_approved trust without that approval), applicability. Trust is
+// EffectiveTrust: an exactly approved version counts as human_approved. A
+// human origin version without approval is already not visible, so the trust
+// check catches the other origins. An index result that
 // is not the current version is classified before visibility, so every stale
 // hit is counted.
 func DecideRetrievalEligibility(f RetrievalFacts) RetrievalDecision {
@@ -98,8 +100,8 @@ func DecideRetrievalEligibility(f RetrievalFacts) RetrievalDecision {
 	if f.Record.Status != StatusActive && f.Record.Status != StatusNeedsVerification {
 		return RetrievalDecision{Kind: RetrievalLifecycleExcluded, Reason: "only active and needs_verification records are retrievable"}
 	}
-	if f.Version.Trust == TrustAgentClaim {
-		return RetrievalDecision{Kind: RetrievalAgentClaim, Reason: "agent claims stay out until reviewed"}
+	if EffectiveTrust(f.Version.Trust, f.ExactVersionApproved) == TrustAgentClaim {
+		return RetrievalDecision{Kind: RetrievalAgentClaim, Reason: "agent claims stay out until a human approves the exact version"}
 	}
 	if f.Version.Trust == TrustHumanApproved && !f.ExactVersionApproved {
 		return RetrievalDecision{Kind: RetrievalTrustNotApproved, Reason: "human_approved trust needs a human approval of this exact version"}
@@ -144,7 +146,7 @@ func decideRetrievalApplicability(f RetrievalFacts) RetrievalDecision {
 	case ApplicabilitySourceUnavailable:
 		return RetrievalDecision{Kind: RetrievalEligible, Reason: "a missing or unreadable source enters labelled needs_verification", Labels: []RetrievalLabel{LabelNeedsVerification}}
 	case ApplicabilityUnknown:
-		if f.Version.Trust == TrustHumanApproved {
+		if EffectiveTrust(f.Version.Trust, f.ExactVersionApproved) == TrustHumanApproved {
 			return RetrievalDecision{Kind: RetrievalEligible, Reason: "human approved record without a file source enters with a label", Labels: append(labels, LabelApplicabilityUnknown)}
 		}
 		return RetrievalDecision{Kind: RetrievalNotApplicable, Reason: "only human approved records enter without a file source"}

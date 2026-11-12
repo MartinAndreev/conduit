@@ -40,7 +40,7 @@ type memoryFixture struct {
 func newMemoryFixture(id, project string) memoryFixture {
 	content := "Решение: ПАМЕТТА се пази в Turso"
 	return memoryFixture{
-		record: model.MemoryRecords{ID: id, ProjectID: project, Category: "architecture_decision", Status: string(memory.StatusActive), CurrentVersionID: id + "-v1", Version: 1, CreatedAt: memoryTime, UpdatedAt: memoryTime},
+		record: model.MemoryRecords{ID: id, ProjectID: project, Category: string(memory.CategoryDecision), Status: string(memory.StatusActive), CurrentVersionID: id + "-v1", Version: 1, CreatedAt: memoryTime, UpdatedAt: memoryTime},
 		version: model.MemoryRecordVersions{
 			ID: id + "-v1", RecordID: id, ProjectID: project, Content: &content, ContentHash: "sha256:" + id,
 			SearchText: optional(normalizeSearchText(content)), SearchNormalizationVersion: searchNormalizationVersion,
@@ -139,6 +139,18 @@ func TestMemoryEnumerationsMatchDomain(t *testing.T) {
 		if err := insertMemory(ctx, store.db, fixture); err != nil {
 			t.Fatalf("trust %s: %v", trust, err)
 		}
+	}
+	for _, category := range memory.Categories() {
+		fixture := newMemoryFixture("category-"+string(category), "project")
+		fixture.record.Category = string(category)
+		if err := insertMemory(ctx, store.db, fixture); err != nil {
+			t.Fatalf("category %s: %v", category, err)
+		}
+	}
+	unknownCategory := newMemoryFixture("category-unknown", "project")
+	unknownCategory.record.Category = "architecture_decision"
+	if insertMemory(ctx, store.db, unknownCategory) == nil {
+		t.Fatal("unknown category accepted")
 	}
 	unknownTrust := newMemoryFixture("trust-unknown", "project")
 	unknownTrust.version.Trust = "backend_score"
@@ -347,8 +359,11 @@ func TestRelationsStayWithinOneProject(t *testing.T) {
 		_, err := store.db.ExecContext(ctx, "INSERT INTO memory_relations (project_id, from_record_id, to_record_id, kind, created_at) VALUES (?, ?, ?, ?, ?)", project, from, to, kind, memoryTime)
 		return err
 	}
-	if err := relate("project", "new", "old", "supersedes"); err != nil {
-		t.Fatal(err)
+	// The kind CHECK mirrors memory.RelationKinds.
+	for _, kind := range memory.RelationKinds() {
+		if err := relate("project", "new", "old", string(kind)); err != nil {
+			t.Fatalf("relation %s: %v", kind, err)
+		}
 	}
 	for name, attempt := range map[string][4]string{
 		"cross project":   {"project", "new", "foreign", "contradicts"},
@@ -492,7 +507,6 @@ func TestMemoryColumnsHaveByteBounds(t *testing.T) {
 	records := []bound{
 		{"record id", schema.MaxIdentityBytes, func(f *memoryFixture, v string) { f.record.ID, f.version.RecordID = v, v }},
 		{"project id", schema.MaxIdentityBytes, func(f *memoryFixture, v string) { f.record.ProjectID, f.version.ProjectID = v, v }},
-		{"category", schema.MaxIdentityBytes, func(f *memoryFixture, v string) { f.record.Category = v }},
 		{"record created_at", schema.MaxTimestampBytes, func(f *memoryFixture, v string) { f.record.CreatedAt = v }},
 		{"record updated_at", schema.MaxTimestampBytes, func(f *memoryFixture, v string) { f.record.UpdatedAt = v }},
 		{"version id", schema.MaxIdentityBytes, func(f *memoryFixture, v string) { f.version.ID, f.record.CurrentVersionID = v, v }},
@@ -576,7 +590,7 @@ func TestMemoryColumnsHaveByteBounds(t *testing.T) {
 func TestStoredContentAndSearchTextAreBounded(t *testing.T) {
 	ctx := context.Background()
 	store := openMemoryStore(t)
-	if schema.MaxStoredContentBytes != 4*memory.MaxMaterialBytes {
+	if schema.MaxStoredContentBytes != memory.MaxStoredContentBytes {
 		t.Fatalf("stored content cap = %d", schema.MaxStoredContentBytes)
 	}
 	atCap := fill("c", schema.MaxStoredContentBytes)

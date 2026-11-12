@@ -1,12 +1,20 @@
 package memory
 
 import (
+	"slices"
 	"strings"
 	"time"
 )
 
 // proposalRetention is how long a proposal may wait for a decision.
 const proposalRetention = 90 * 24 * time.Hour
+
+// ProposalRetentionCutoff is the latest created_at a proposal may have to be
+// archived at now. A sweep may select candidates by it; the transition rule
+// still decides each one.
+func ProposalRetentionCutoff(now time.Time) time.Time {
+	return now.Add(-proposalRetention)
+}
 
 // SourceVerification is one declared file source checked by a human: its path,
 // its current hash, and the hash the human verified.
@@ -19,11 +27,20 @@ type SourceVerification struct {
 // RecordTransitionFacts must be read in the same transaction as the write that
 // follows an allowed decision.
 type RecordTransitionFacts struct {
+	// RequestProjectID is the project the request names.
+	RequestProjectID string
+	// RecordFound is false when no record has the requested ID in any project.
+	RecordFound        bool
 	Record             Record
 	CurrentContentHash string
-	To                 RecordStatus
-	Actor              Actor
-	ExpectedVersion    int64
+	// CurrentContentDeleted is true when the current version's content was
+	// deleted (content_deleted_at is set).
+	CurrentContentDeleted bool
+	To                    RecordStatus
+	// Actor is established by the presentation entry point for a human; a
+	// request field or an agent binding cannot claim it.
+	Actor           Actor
+	ExpectedVersion int64
 
 	// ApprovedVersionID and ApprovedContentHash are what the approval names.
 	ApprovedVersionID   string
@@ -56,11 +73,19 @@ type RecordTransitionFacts struct {
 type RecordTransitionKind string
 
 const (
-	TransitionAllowed             RecordTransitionKind = "allowed"
-	TransitionInvalidFacts        RecordTransitionKind = "invalid_facts"
-	TransitionVersionConflict     RecordTransitionKind = "version_conflict"
-	TransitionNotPermitted        RecordTransitionKind = "not_permitted"
-	TransitionActorNotAllowed     RecordTransitionKind = "actor_not_allowed"
+	TransitionAllowed      RecordTransitionKind = "allowed"
+	TransitionInvalidFacts RecordTransitionKind = "invalid_facts"
+	// TransitionNotFound covers both a missing record and one of another
+	// project, so a request cannot learn about other projects' records.
+	TransitionNotFound        RecordTransitionKind = "not_found"
+	TransitionVersionConflict RecordTransitionKind = "version_conflict"
+	TransitionNotPermitted    RecordTransitionKind = "not_permitted"
+	TransitionActorNotAllowed RecordTransitionKind = "actor_not_allowed"
+	// TransitionContentDeleted refuses a transition that would write onto a
+	// version whose content was deleted: an approval, a reason, or a new
+	// version copied from it. Otherwise deleted text could return through a
+	// review reason or source, and nobody can review text that is gone.
+	TransitionContentDeleted      RecordTransitionKind = "content_deleted"
 	TransitionApprovalMismatch    RecordTransitionKind = "approval_mismatch"
 	TransitionReasonRequired      RecordTransitionKind = "reason_required"
 	TransitionRetentionNotElapsed RecordTransitionKind = "retention_not_elapsed"
@@ -76,44 +101,82 @@ type RecordTransitionDecision struct {
 }
 
 type transitionRule struct {
-	actor        Actor
-	precondition func(RecordTransitionFacts) RecordTransitionDecision
+	actor Actor
+	// writesOnCurrentVersion is true when the transition writes a review onto
+	// the current version or copies it into a new one.
+	writesOnCurrentVersion bool
+	precondition           func(RecordTransitionFacts) RecordTransitionDecision
 }
 
 // transitionTable is the lifecycle table from the spec, keyed by {from, to}.
+// An approval writes an approve review, a rejection a reject review with its
+// reason, a human archive an opinion review with its reason, and a
+// reactivation a new version copied from the current one.
 var transitionTable = map[[2]RecordStatus]transitionRule{
-	{StatusProposed, StatusActive}:              {ActorHuman, approvalNamesCurrentVersion},
-	{StatusProposed, StatusRejected}:            {ActorHuman, reasonGiven},
-	{StatusProposed, StatusArchived}:            {ActorSystem, retentionElapsed},
-	{StatusActive, StatusNeedsVerification}:     {ActorSystem, sourceMismatched},
-	{StatusNeedsVerification, StatusActive}:     {ActorHuman, sourcesVerified},
-	{StatusActive, StatusSuperseded}:            {ActorHuman, replacementActivated},
-	{StatusNeedsVerification, StatusSuperseded}: {ActorHuman, replacementActivated},
-	{StatusActive, StatusArchived}:              {ActorHuman, reasonGiven},
-	{StatusNeedsVerification, StatusArchived}:   {ActorHuman, reasonGiven},
+	{StatusProposed, StatusActive}:              {ActorHuman, true, approvalNamesCurrentVersion},
+	{StatusProposed, StatusRejected}:            {ActorHuman, true, reasonGiven},
+	{StatusProposed, StatusArchived}:            {ActorSystem, false, retentionElapsed},
+	{StatusActive, StatusNeedsVerification}:     {ActorSystem, false, sourceMismatched},
+	{StatusNeedsVerification, StatusActive}:     {ActorHuman, true, sourcesVerified},
+	{StatusActive, StatusSuperseded}:            {ActorHuman, false, replacementActivated},
+	{StatusNeedsVerification, StatusSuperseded}: {ActorHuman, false, replacementActivated},
+	{StatusActive, StatusArchived}:              {ActorHuman, true, reasonGiven},
+	{StatusNeedsVerification, StatusArchived}:   {ActorHuman, true, reasonGiven},
 }
 
 // DecideRecordTransition answers whether a record may move to the requested
-// status. A stale expected version precedes every other refusal, because the
-// remaining facts were read against a record that has since changed.
+// status.
+//
+// Order: invalid request facts; a missing or foreign record; invalid record
+// facts; a stale expected version, which precedes every other refusal because
+// the remaining facts were read against a record that has since changed; a
+// transition the lifecycle does not have; the wrong actor; a write onto
+// deleted content; the transition's precondition.
 func DecideRecordTransition(f RecordTransitionFacts) RecordTransitionDecision {
-	if !validStatus(f.Record.Status) || !validStatus(f.To) || f.Actor == "" || f.Record.Version <= 0 || f.ExpectedVersion <= 0 {
-		return RecordTransitionDecision{Kind: TransitionInvalidFacts, Reason: "status, actor, or record version is missing or unknown"}
+	rule, decision := precheckTransition(f)
+	if decision.Kind != TransitionAllowed {
+		return decision
+	}
+	return rule.precondition(f)
+}
+
+// PrecheckRecordTransition answers every check of DecideRecordTransition that
+// precedes the transition's precondition, in the same order. Allowed means
+// only that the precondition remains to be decided: a procedure whose
+// precondition facts need I/O (a snapshot read) calls this first, gathers
+// those facts only when it allows, and then calls DecideRecordTransition.
+func PrecheckRecordTransition(f RecordTransitionFacts) RecordTransitionDecision {
+	_, decision := precheckTransition(f)
+	return decision
+}
+
+func precheckTransition(f RecordTransitionFacts) (transitionRule, RecordTransitionDecision) {
+	if f.RequestProjectID == "" || !validStatus(f.To) || !slices.Contains(Actors(), f.Actor) || f.ExpectedVersion <= 0 {
+		return transitionRule{}, RecordTransitionDecision{Kind: TransitionInvalidFacts, Reason: "request needs a project, a known target status and actor, and a positive expected version"}
+	}
+	if !f.RecordFound || f.Record.ProjectID != f.RequestProjectID {
+		return transitionRule{}, RecordTransitionDecision{Kind: TransitionNotFound, Reason: "the project has no such record"}
+	}
+	if !validStatus(f.Record.Status) || f.Record.Version <= 0 {
+		return transitionRule{}, RecordTransitionDecision{Kind: TransitionInvalidFacts, Reason: "record status or version is missing or unknown"}
 	}
 	if f.ExpectedVersion != f.Record.Version {
-		return RecordTransitionDecision{Kind: TransitionVersionConflict, Reason: "expected version differs from the record's version"}
+		return transitionRule{}, RecordTransitionDecision{Kind: TransitionVersionConflict, Reason: "expected version differs from the record's version"}
 	}
 	rule, permitted := transitionTable[[2]RecordStatus{f.Record.Status, f.To}]
 	if !permitted {
 		if f.Record.Status.Terminal() {
-			return RecordTransitionDecision{Kind: TransitionNotPermitted, Reason: "terminal record cannot change; restoring means a new record"}
+			return transitionRule{}, RecordTransitionDecision{Kind: TransitionNotPermitted, Reason: "terminal record cannot change; restoring means a new record"}
 		}
-		return RecordTransitionDecision{Kind: TransitionNotPermitted, Reason: "lifecycle has no such transition"}
+		return transitionRule{}, RecordTransitionDecision{Kind: TransitionNotPermitted, Reason: "lifecycle has no such transition"}
 	}
 	if f.Actor != rule.actor {
-		return RecordTransitionDecision{Kind: TransitionActorNotAllowed, Reason: "transition requires actor " + string(rule.actor)}
+		return transitionRule{}, RecordTransitionDecision{Kind: TransitionActorNotAllowed, Reason: "transition requires actor " + string(rule.actor)}
 	}
-	return rule.precondition(f)
+	if rule.writesOnCurrentVersion && f.CurrentContentDeleted {
+		return transitionRule{}, RecordTransitionDecision{Kind: TransitionContentDeleted, Reason: "the current version's content was deleted; nothing is written onto it"}
+	}
+	return rule, RecordTransitionDecision{Kind: TransitionAllowed, Reason: "only the transition's precondition remains"}
 }
 
 func allowedTransition() RecordTransitionDecision {

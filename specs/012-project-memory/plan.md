@@ -59,7 +59,7 @@
 | --- | --- |
 | 3.1 | Адитивна миграция 1 → 2 с `DecideSchemaMigration`; тестове за отворена v1 връзка и двама migrators |
 | 3.2 | Таблиците от спека без outbox; регенериране на `internal/generated` |
-| 3.3 | Repository ports и специализираният атомарен port; session UoW остава непроменен; optimistic concurrency |
+| 3.3 | Repository ports и специализираният атомарен port; session UoW остава непроменен; optimistic concurrency. Първо пътят за запис на записи (създаване, преходи, становища, архивиране) без атомарния port за intent, който чака 2.1 (Martin, 2026-11-12). ✅ Пътят за запис на записи (2026-11-12): `DecideRecordCreation`, `DecideRecordOpinion`, `EffectiveTrust`, `internal/memory/records`, Turso адаптер. Остава атомарният port за manifest, payload и intent |
 
 ### 4. Вертикален flow
 

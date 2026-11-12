@@ -15,10 +15,8 @@ const (
 	MaxTimestampBytes = 64
 	MaxTextFieldBytes = 4096
 	// MaxStoredContentBytes bounds a version's content and its search text
-	// each: 4 × memory.MaxMaterialBytes. It is a storage cap, not the
-	// admission limit: a version above memory.MaxMaterialBytes may be stored
-	// but is never admitted. The write path rejects content whose normalized
-	// search text would exceed it rather than truncating.
+	// each. It equals memory.MaxStoredContentBytes, which the write path's
+	// rule refuses above rather than truncating; a test keeps the two equal.
 	MaxStoredContentBytes = 128 * 1024
 )
 const ApplicationID = "github.com/MartinAndreev/conduit"
@@ -69,7 +67,7 @@ var Version2Statements = []string{
 	`CREATE TABLE memory_records (
 		id TEXT NOT NULL PRIMARY KEY CHECK (length(CAST(id AS BLOB)) BETWEEN 1 AND 256),
 		project_id TEXT NOT NULL CHECK (length(CAST(project_id AS BLOB)) BETWEEN 1 AND 256),
-		category TEXT NOT NULL CHECK (length(CAST(category AS BLOB)) BETWEEN 1 AND 256),
+		category TEXT NOT NULL CHECK (category IN ('decision', 'convention', 'constraint', 'fact', 'gotcha')),
 		status TEXT NOT NULL CHECK (status IN ('proposed', 'active', 'needs_verification', 'rejected', 'superseded', 'archived')),
 		current_version_id TEXT NOT NULL,
 		version INTEGER NOT NULL CHECK (version >= 1),

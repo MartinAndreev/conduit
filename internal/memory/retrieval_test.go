@@ -133,18 +133,34 @@ func TestDecideRetrievalEligibility(t *testing.T) {
 			f.Record.Status = StatusProposed
 		}, RetrievalLifecycleExcluded, nil},
 
-		{"agent claim", func(f *RetrievalFacts) { f.Version.Trust = TrustAgentClaim }, RetrievalAgentClaim, nil},
+		{"agent claim", func(f *RetrievalFacts) { f.Version.Trust, f.ExactVersionApproved = TrustAgentClaim, false }, RetrievalAgentClaim, nil},
 		{"agent claim without file source", func(f *RetrievalFacts) {
-			f.Version.Trust = TrustAgentClaim
+			f.Version.Trust, f.ExactVersionApproved = TrustAgentClaim, false
 			f.Applicability = ApplicabilityUnknown
 		}, RetrievalAgentClaim, nil},
+		{"agent claim precedes applicability", func(f *RetrievalFacts) {
+			f.Version.Trust, f.ExactVersionApproved = TrustAgentClaim, false
+			f.Applicability = ApplicabilityMismatch
+		}, RetrievalAgentClaim, nil},
+		// Effective trust: a human approval of the exact version makes an
+		// agent claim human_approved without a new version.
+		{"exactly approved agent claim", func(f *RetrievalFacts) { f.Version.Trust = TrustAgentClaim }, RetrievalEligible, nil},
+		{"exactly approved agent claim without file source", func(f *RetrievalFacts) {
+			f.Version.Trust = TrustAgentClaim
+			f.Applicability = ApplicabilityUnknown
+		}, RetrievalEligible, []RetrievalLabel{LabelApplicabilityUnknown}},
+		{"exactly approved agent claim with mismatch", func(f *RetrievalFacts) {
+			f.Version.Trust = TrustAgentClaim
+			f.Applicability = ApplicabilityMismatch
+		}, RetrievalNotApplicable, nil},
+		{"exactly approved observation without file source", func(f *RetrievalFacts) { f.Applicability = ApplicabilityUnknown }, RetrievalEligible, []RetrievalLabel{LabelApplicabilityUnknown}},
 
 		{"active with mismatch", func(f *RetrievalFacts) { f.Applicability = ApplicabilityMismatch }, RetrievalNotApplicable, nil},
 
-		{"not human approved without file source", func(f *RetrievalFacts) { f.Applicability = ApplicabilityUnknown }, RetrievalNotApplicable, nil},
+		{"not human approved without file source", func(f *RetrievalFacts) { f.Applicability, f.ExactVersionApproved = ApplicabilityUnknown, false }, RetrievalNotApplicable, nil},
 		{"needs verification not human approved without file source", func(f *RetrievalFacts) {
 			f.Record.Status = StatusNeedsVerification
-			f.Applicability = ApplicabilityUnknown
+			f.Applicability, f.ExactVersionApproved = ApplicabilityUnknown, false
 		}, RetrievalNotApplicable, nil},
 
 		{"needs verification with mismatch", func(f *RetrievalFacts) {

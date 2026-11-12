@@ -6,23 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"time"
 
 	"github.com/MartinAndreev/conduit/internal/memory"
 	"github.com/MartinAndreev/conduit/internal/memory/deletion"
 	"github.com/MartinAndreev/conduit/internal/storage/turso/internal/generated/table"
 	jet "github.com/go-jet/jet/v2/sqlite"
 )
-
-// storedTimeLayout is UTC with a fixed-width nanosecond fraction, so the text
-// of stored times sorts as the times do (spec 012 "Търсене"). It parses as
-// time.RFC3339Nano.
-const storedTimeLayout = "2006-01-02T15:04:05.000000000Z"
-
-// formatStoredTime is the one format memory writes for its times.
-func formatStoredTime(t time.Time) string {
-	return t.UTC().Format(storedTimeLayout)
-}
 
 // ErrMemoryDeletionDiverged reports that the deletion's guarded writes did not
 // match the facts read in the same transaction: a listed version was already
@@ -37,26 +26,12 @@ var _ deletion.Store = memoryDeletionStore{}
 
 type memoryDeletionStore struct{ db *sql.DB }
 
-// WithinRecordDeletion runs operation on a pinned connection inside BEGIN
-// IMMEDIATE, so the write lock is held from before the facts are read until
-// the commit. As in the migration, a failed COMMIT leaves Turso's transaction
-// open, so every path that does not commit rolls back explicitly; the commit
-// is not cancelled once operation succeeded.
+// WithinRecordDeletion runs operation in one memory write transaction
+// (withMemoryWrite).
 func (s memoryDeletionStore) WithinRecordDeletion(ctx context.Context, operation func(deletion.Transaction) error) error {
-	conn, err := s.db.Conn(ctx)
-	if err != nil {
-		return fmt.Errorf("open memory deletion connection: %w", err)
-	}
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return errors.Join(fmt.Errorf("begin memory deletion: %w", err), conn.Close())
-	}
-	if err := operation(memoryDeletionTx{db: conn}); err != nil {
-		return errors.Join(err, rollbackAndRelease(conn, "memory deletion"))
-	}
-	if _, err := conn.ExecContext(context.WithoutCancel(ctx), "COMMIT"); err != nil {
-		return errors.Join(fmt.Errorf("commit memory deletion: %w", err), rollbackAndRelease(conn, "memory deletion"))
-	}
-	return conn.Close()
+	return withMemoryWrite(ctx, s.db, "memory deletion", func(conn *sql.Conn) error {
+		return operation(memoryDeletionTx{db: conn})
+	})
 }
 
 type memoryDeletionTx struct{ db database }
@@ -159,25 +134,9 @@ func (t memoryDeletionTx) DeleteRecordContent(ctx context.Context, d deletion.De
 }
 
 func (t memoryDeletionTx) exec(ctx context.Context, action string, statement jet.Statement) error {
-	query, args := statement.Sql()
-	if _, err := t.db.ExecContext(ctx, query, args...); err != nil {
-		return fmt.Errorf("%s: %w", action, err)
-	}
-	return nil
+	return execStatement(ctx, t.db, action, statement)
 }
 
 func (t memoryDeletionTx) execExpecting(ctx context.Context, action string, statement jet.Statement, rows int64) error {
-	query, args := statement.Sql()
-	result, err := t.db.ExecContext(ctx, query, args...)
-	if err != nil {
-		return fmt.Errorf("%s: %w", action, err)
-	}
-	changed, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("%s: inspect result: %w", action, err)
-	}
-	if changed != rows {
-		return fmt.Errorf("%s: %w", action, ErrMemoryDeletionDiverged)
-	}
-	return nil
+	return execExpectingRows(ctx, t.db, action, statement, rows, ErrMemoryDeletionDiverged)
 }

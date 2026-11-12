@@ -742,3 +742,33 @@ func TestUnapprovedHumanTrustIsExcluded(t *testing.T) {
 	blocked := compose(t, mem, request(linked("r1")))
 	wantKind(t, blocked, BlockedExplicitUnavailable)
 }
+
+// Admission and the manifest item use the effective trust: an agent claim a
+// human approved exactly ranks as human_approved, ahead of newer and more
+// relevant observations, without a new version.
+func TestExactlyApprovedAgentClaimRanksAsHumanApproved(t *testing.T) {
+	older := createdAt.Add(-time.Hour)
+	claim := func(approved bool) func(*Candidate) {
+		return func(c *Candidate) {
+			c.Version.Trust, c.ExactVersionApproved, c.VersionCreatedAt = memory.TrustAgentClaim, approved, older
+		}
+	}
+	var versions []Candidate
+	for _, id := range []string{"a", "b", "c", "d", "e"} {
+		versions = append(versions, note(id, "deploy blue"))
+	}
+	versions = append(versions, note("approved", "deploy", claim(true)), note("unapproved", "deploy", claim(false)))
+	got := compose(t, &fakeMemory{versions: versions}, request(query("deploy blue"), func(r *Request) { r.ModelLimitKnown, r.ModelLimit = false, 0 }))
+	wantKind(t, got, Composed)
+	if !slices.Equal(itemIDs(got), []string{"approved", "a", "b", "c", "d"}) {
+		t.Fatalf("items = %v", itemIDs(got))
+	}
+	if got.Items[0].Trust != memory.TrustHumanApproved || got.Items[1].Trust != memory.TrustConduitObserved {
+		t.Fatalf("item trust = %s, %s", got.Items[0].Trust, got.Items[1].Trust)
+	}
+	if !strings.Contains(got.Part.Text, "trust: human_approved") {
+		t.Fatalf("rendered part does not show the effective trust:\n%s", got.Part.Text)
+	}
+	wantExcluded(t, got, "unapproved-v1", StageEligibility, ExclusionKind(memory.RetrievalAgentClaim))
+	wantExcluded(t, got, "e-v1", StageAdmission, ExclusionKind(memory.ExclusionItemLimit))
+}

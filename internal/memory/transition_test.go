@@ -9,6 +9,8 @@ var created = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 func transitionFacts(from, to RecordStatus, actor Actor) RecordTransitionFacts {
 	return RecordTransitionFacts{
+		RequestProjectID:   "p1",
+		RecordFound:        true,
 		Record:             Record{ID: "r1", ProjectID: "p1", Status: from, CurrentVersionID: "v1", Version: 3, CreatedAt: created},
 		CurrentContentHash: "c1",
 		To:                 to,
@@ -29,10 +31,13 @@ func TestDecideRecordTransition(t *testing.T) {
 		f.NewVersionSources = []RecordSource{{Kind: SourceFile, Path: "a.go", BlobHash: "new"}, {Kind: SourceFile, Path: "b.go", BlobHash: "same"}, {Kind: SourceEvent, Ref: "e1"}}
 		return f
 	}
-	with := func(f RecordTransitionFacts, change func(*RecordTransitionFacts)) RecordTransitionFacts {
-		change(&f)
+	with := func(f RecordTransitionFacts, changes ...func(*RecordTransitionFacts)) RecordTransitionFacts {
+		for _, change := range changes {
+			change(&f)
+		}
 		return f
 	}
+	deleted := func(f *RecordTransitionFacts) { f.CurrentContentDeleted = true }
 	approve := func(f *RecordTransitionFacts) { f.ApprovedVersionID, f.ApprovedContentHash = "v1", "c1" }
 	reason := func(f *RecordTransitionFacts) { f.Reason = "no longer relevant" }
 	replace := func(f *RecordTransitionFacts) { f.ReplacementRecordID, f.ReplacementBecomesActive = "r2", true }
@@ -65,6 +70,13 @@ func TestDecideRecordTransition(t *testing.T) {
 		{"missing expected version is invalid", with(transitionFacts(StatusProposed, StatusActive, ActorHuman), func(f *RecordTransitionFacts) { f.ExpectedVersion = 0 }), TransitionInvalidFacts},
 		{"missing record version is invalid", with(transitionFacts(StatusProposed, StatusActive, ActorHuman), func(f *RecordTransitionFacts) { f.Record.Version = 0 }), TransitionInvalidFacts},
 		{"retention without clock is invalid", transitionFacts(StatusProposed, StatusArchived, ActorSystem), TransitionInvalidFacts},
+		{"unknown actor is invalid", transitionFacts(StatusProposed, StatusActive, "operator"), TransitionInvalidFacts},
+		{"missing request project is invalid", with(transitionFacts(StatusProposed, StatusActive, ActorHuman), func(f *RecordTransitionFacts) { f.RequestProjectID = "" }), TransitionInvalidFacts},
+		{"invalid request precedes not found", with(transitionFacts(StatusProposed, StatusActive, ""), func(f *RecordTransitionFacts) { f.RecordFound = false }), TransitionInvalidFacts},
+
+		{"missing record", with(transitionFacts(StatusProposed, StatusActive, ActorHuman), func(f *RecordTransitionFacts) { f.RecordFound, f.Record = false, Record{} }), TransitionNotFound},
+		{"record of another project", with(transitionFacts(StatusProposed, StatusActive, ActorHuman), func(f *RecordTransitionFacts) { f.RequestProjectID = "p2" }), TransitionNotFound},
+		{"not found precedes conflict", with(transitionFacts(StatusProposed, StatusActive, ActorHuman), func(f *RecordTransitionFacts) { f.RequestProjectID, f.ExpectedVersion = "p2", 2 }), TransitionNotFound},
 
 		{"stale expected version", with(transitionFacts(StatusProposed, StatusActive, ActorHuman), func(f *RecordTransitionFacts) { f.ExpectedVersion = 2 }), TransitionVersionConflict},
 		{"newer expected version", with(transitionFacts(StatusProposed, StatusActive, ActorHuman), func(f *RecordTransitionFacts) { f.ExpectedVersion = 4 }), TransitionVersionConflict},
@@ -82,6 +94,17 @@ func TestDecideRecordTransition(t *testing.T) {
 		{"human cannot expire proposal", with(transitionFacts(StatusProposed, StatusArchived, ActorHuman), at(proposalRetention)), TransitionActorNotAllowed},
 		{"human cannot mark stale", with(transitionFacts(StatusActive, StatusNeedsVerification, ActorHuman), source(ApplicabilityMismatch)), TransitionActorNotAllowed},
 		{"system cannot archive active", with(transitionFacts(StatusActive, StatusArchived, ActorSystem), reason), TransitionActorNotAllowed},
+
+		{"approval of deleted content", with(transitionFacts(StatusProposed, StatusActive, ActorHuman), approve, deleted), TransitionContentDeleted},
+		{"rejection of deleted content", with(transitionFacts(StatusProposed, StatusRejected, ActorHuman), reason, deleted), TransitionContentDeleted},
+		{"human archive of deleted content", with(transitionFacts(StatusActive, StatusArchived, ActorHuman), reason, deleted), TransitionContentDeleted},
+		{"human archive of deleted content needing verification", with(transitionFacts(StatusNeedsVerification, StatusArchived, ActorHuman), reason, deleted), TransitionContentDeleted},
+		{"reactivation of deleted content", with(reactivation(verifiedA, verifiedB), deleted), TransitionContentDeleted},
+		{"deleted content precedes missing reason", with(transitionFacts(StatusProposed, StatusRejected, ActorHuman), deleted), TransitionContentDeleted},
+		{"actor precedes deleted content", with(transitionFacts(StatusProposed, StatusActive, ActorAgent), approve, deleted), TransitionActorNotAllowed},
+		{"deleted proposal expires", with(transitionFacts(StatusProposed, StatusArchived, ActorSystem), at(proposalRetention), deleted), TransitionAllowed},
+		{"deleted record goes stale", with(transitionFacts(StatusActive, StatusNeedsVerification, ActorSystem), source(ApplicabilityMismatch), deleted), TransitionAllowed},
+		{"deleted record is superseded", with(transitionFacts(StatusActive, StatusSuperseded, ActorHuman), replace, deleted), TransitionAllowed},
 
 		{"approval of old version", with(transitionFacts(StatusProposed, StatusActive, ActorHuman), func(f *RecordTransitionFacts) { f.ApprovedVersionID, f.ApprovedContentHash = "v0", "c1" }), TransitionApprovalMismatch},
 		{"approval of other hash", with(transitionFacts(StatusProposed, StatusActive, ActorHuman), func(f *RecordTransitionFacts) { f.ApprovedVersionID, f.ApprovedContentHash = "v1", "c0" }), TransitionApprovalMismatch},
@@ -154,6 +177,53 @@ func TestTerminalStatusesHaveNoOutgoingTransition(t *testing.T) {
 	for from, rule := range transitionTable {
 		if from[0].Terminal() {
 			t.Fatalf("terminal status has transition %v by %s", from, rule.actor)
+		}
+	}
+}
+
+func TestProposalRetentionCutoff(t *testing.T) {
+	now := created.Add(proposalRetention)
+	if got := ProposalRetentionCutoff(now); !got.Equal(created) {
+		t.Fatalf("cutoff = %v", got)
+	}
+	f := transitionFacts(StatusProposed, StatusArchived, ActorSystem)
+	f.Now = now
+	f.Record.CreatedAt = ProposalRetentionCutoff(now)
+	if got := DecideRecordTransition(f); got.Kind != TransitionAllowed {
+		t.Fatalf("proposal created at the cutoff = %+v", got)
+	}
+}
+
+// The precheck reports exactly DecideRecordTransition's refusals before the
+// precondition, and allows whatever reaches the precondition.
+func TestPrecheckRecordTransition(t *testing.T) {
+	stale := transitionFacts(StatusActive, StatusNeedsVerification, ActorSystem)
+	stale.ExpectedVersion = 2
+	deleted := transitionFacts(StatusNeedsVerification, StatusActive, ActorHuman)
+	deleted.CurrentContentDeleted = true
+	foreign := transitionFacts(StatusActive, StatusNeedsVerification, ActorSystem)
+	foreign.RequestProjectID = "p2"
+	for _, f := range []RecordTransitionFacts{
+		stale, deleted, foreign,
+		transitionFacts(StatusActive, StatusNeedsVerification, ActorHuman),
+		transitionFacts(StatusArchived, StatusActive, ActorHuman),
+		transitionFacts(StatusProposed, StatusActive, ""),
+	} {
+		want := DecideRecordTransition(f)
+		if got := PrecheckRecordTransition(f); got != want || got.Kind == TransitionAllowed {
+			t.Fatalf("precheck %+v, decision %+v", got, want)
+		}
+	}
+	// Precondition facts are not consulted: no applicability, no verification.
+	for _, f := range []RecordTransitionFacts{
+		transitionFacts(StatusActive, StatusNeedsVerification, ActorSystem),
+		transitionFacts(StatusNeedsVerification, StatusActive, ActorHuman),
+	} {
+		if got := PrecheckRecordTransition(f); got.Kind != TransitionAllowed || got.Reason == "" {
+			t.Fatalf("precheck = %+v", got)
+		}
+		if DecideRecordTransition(f).Kind == TransitionAllowed {
+			t.Fatal("precondition was not evaluated")
 		}
 	}
 }

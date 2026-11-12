@@ -13,11 +13,11 @@ import (
 // content and get the conflict label, which needs every candidate's verdict.
 // A linked record that does not pass blocks the composition.
 func (c *Composer) decideEligibility(ctx context.Context, req Request, entries []*entry, out *Composition) ([]*entry, error) {
-	observe := newObserver(c.snapshot, req.Snapshot)
+	observe := NewSourceObserver(c.snapshot, req.Snapshot)
 	verdicts := make(map[string]bool, len(entries))
 	var eligible []*entry
 	for _, e := range entries {
-		applicability, err := observe.applicability(ctx, e.candidate.Sources)
+		applicability, err := observe.Applicability(ctx, e.candidate.Sources)
 		if err != nil {
 			return nil, err
 		}
@@ -104,25 +104,30 @@ func conflictFacts(candidate Candidate, verdicts map[string]bool) memory.Conflic
 	return facts
 }
 
-// observer reads each snapshot path once per composition.
-type observer struct {
+// SourceObserver decides the applicability of declared sources against one
+// target snapshot, reading each path once. Composition uses one per
+// composition; the record write path uses it to mark a record stale or
+// verify it.
+type SourceObserver struct {
 	reader   SnapshotReader
 	snapshot SnapshotRef
 	seen     map[string]FileObservation
 }
 
-func newObserver(reader SnapshotReader, snapshot SnapshotRef) *observer {
-	return &observer{reader: reader, snapshot: snapshot, seen: make(map[string]FileObservation)}
+// NewSourceObserver observes files of snapshot through reader.
+func NewSourceObserver(reader SnapshotReader, snapshot SnapshotRef) *SourceObserver {
+	return &SourceObserver{reader: reader, snapshot: snapshot, seen: make(map[string]FileObservation)}
 }
 
-// applicability observes every well-formed file source and decides. A
-// malformed file source is passed unobserved, so the rule reports it.
-func (o *observer) applicability(ctx context.Context, sources []memory.RecordSource) (memory.ApplicabilityKind, error) {
+// Applicability observes every well-formed file source and decides with
+// memory.DecideApplicability. A malformed file source is passed unobserved, so
+// the rule reports it.
+func (o *SourceObserver) Applicability(ctx context.Context, sources []memory.RecordSource) (memory.ApplicabilityKind, error) {
 	checks := make([]memory.SourceCheck, 0, len(sources))
 	for _, source := range sources {
 		check := memory.SourceCheck{Source: source}
 		if source.Kind == memory.SourceFile && source.Path != "" && source.BlobHash != "" {
-			observed, err := o.observe(ctx, source.Path)
+			observed, err := o.Observe(ctx, source.Path)
 			if err != nil {
 				return "", err
 			}
@@ -133,7 +138,9 @@ func (o *observer) applicability(ctx context.Context, sources []memory.RecordSou
 	return memory.DecideApplicability(memory.ApplicabilityFacts{Sources: checks}).Kind, nil
 }
 
-func (o *observer) observe(ctx context.Context, path string) (FileObservation, error) {
+// Observe returns path's observation in the snapshot, reading it once. The
+// error never repeats the path.
+func (o *SourceObserver) Observe(ctx context.Context, path string) (FileObservation, error) {
 	if observed, ok := o.seen[path]; ok {
 		return observed, nil
 	}

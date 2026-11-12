@@ -4,6 +4,13 @@ package memory
 // accepts before redaction (initial value).
 const MaxMaterialBytes = 32 * 1024
 
+// MaxStoredContentBytes bounds a stored version's content and its normalized
+// search text, each in UTF-8 bytes: 4 × MaxMaterialBytes. It is a storage cap,
+// not the admission limit: a version above MaxMaterialBytes may be stored but
+// is never admitted. The write path refuses text above it rather than
+// truncating. Storage's CHECK states the same bound.
+const MaxStoredContentBytes = 4 * MaxMaterialBytes
+
 // tokenBytes is the estimate's bytes per token. Three bytes per token
 // overestimates English text and stays close for Cyrillic, which takes two
 // bytes per letter.

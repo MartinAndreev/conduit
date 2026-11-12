@@ -117,9 +117,9 @@ func TestReadLinkedRecordsReturnsCurrentVersionFacts(t *testing.T) {
 		seedText(t, store, "project", id, "текст", 0)
 	}
 	mustExec(t, store, "UPDATE memory_records SET status = ? WHERE id = ?", string(memory.StatusArchived), "critic")
-	relate(t, store, "project", "subject", "rival", relationContradicts)
-	relate(t, store, "project", "rival", "subject", relationContradicts)
-	relate(t, store, "project", "critic", "subject", relationContradicts)
+	relate(t, store, "project", "subject", "rival", string(memory.RelationContradicts))
+	relate(t, store, "project", "rival", "subject", string(memory.RelationContradicts))
+	relate(t, store, "project", "critic", "subject", string(memory.RelationContradicts))
 	relate(t, store, "project", "successor", "subject", "supersedes")
 	seedText(t, store, "other", "foreign", "текст", 0)
 
@@ -439,7 +439,7 @@ func TestMemoryReadsReportStatementFailures(t *testing.T) {
 	seeded := &Store{db: store.db}
 	fixture := seedText(t, seeded, "project", "subject", "памет", 0)
 	seedText(t, seeded, "project", "rival", "друго", 1)
-	relate(t, seeded, "project", "subject", "rival", relationContradicts)
+	relate(t, seeded, "project", "subject", "rival", string(memory.RelationContradicts))
 	if err := insertSource(ctx, store.db, model.MemorySources{ID: "s", VersionID: fixture.version.ID, Kind: string(memory.SourceSpec), Ref: optional("spec")}); err != nil {
 		t.Fatal(err)
 	}
@@ -612,17 +612,17 @@ func TestReaderCapsContradictsPerRecord(t *testing.T) {
 		seedText(t, store, "project", other, "друго", 2)
 		switch {
 		case index < limit/2:
-			relate(t, store, "project", "crowded", other, relationContradicts)
+			relate(t, store, "project", "crowded", other, string(memory.RelationContradicts))
 		case index < limit/2+4:
-			relate(t, store, "project", "crowded", other, relationContradicts)
-			relate(t, store, "project", other, "crowded", relationContradicts)
+			relate(t, store, "project", "crowded", other, string(memory.RelationContradicts))
+			relate(t, store, "project", other, "crowded", string(memory.RelationContradicts))
 		default:
-			relate(t, store, "project", other, "crowded", relationContradicts)
+			relate(t, store, "project", other, "crowded", string(memory.RelationContradicts))
 		}
 		if index < limit {
-			relate(t, store, "project", "exact", other, relationContradicts)
+			relate(t, store, "project", "exact", other, string(memory.RelationContradicts))
 			if index%3 == 0 {
-				relate(t, store, "project", other, "exact", relationContradicts)
+				relate(t, store, "project", other, "exact", string(memory.RelationContradicts))
 			}
 		}
 	}
