@@ -42,7 +42,7 @@ func (s Service) Approve(ctx context.Context, request ApproveRequest) (Transitio
 			return fmt.Errorf("read memory record: %w", err)
 		}
 		facts := transitionFacts(request.ProjectID, request.ExpectedVersion, memory.StatusActive, request.Actor, stored, request.Now)
-		facts.ApprovedVersionID, facts.ApprovedContentHash = request.VersionID, request.ContentHash
+		facts.ApprovedVersionID, facts.ApprovedContentHash, facts.Reviewer = request.VersionID, request.ContentHash, request.Reviewer
 		decision := memory.DecideRecordTransition(facts)
 		result = TransitionResult{Kind: decision.Kind, Reason: decision.Reason}
 		if decision.Kind != memory.TransitionAllowed {
@@ -108,7 +108,7 @@ func (s Service) decideWithReason(ctx context.Context, request ReasonRequest, to
 			return fmt.Errorf("read memory record: %w", err)
 		}
 		facts := transitionFacts(request.ProjectID, request.ExpectedVersion, to, request.Actor, stored, request.Now)
-		facts.Reason = reason
+		facts.Reason, facts.Reviewer = reason, request.Reviewer
 		decision := memory.DecideRecordTransition(facts)
 		result = TransitionResult{Kind: decision.Kind, Reason: decision.Reason, Findings: findings}
 		if decision.Kind != memory.TransitionAllowed {

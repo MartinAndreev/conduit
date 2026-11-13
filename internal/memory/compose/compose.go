@@ -20,7 +20,8 @@ import (
 type Request struct {
 	ProjectID string
 	// AttemptID is the attempt the material is for; attempt-scoped versions
-	// are visible only to it.
+	// are visible only to it until a human approves the exact version
+	// (memory.EffectiveVisibility).
 	AttemptID string
 	// Snapshot is the target workspace snapshot that file sources are
 	// compared with.

@@ -11,6 +11,21 @@ const MaxMaterialBytes = 32 * 1024
 // truncating. Storage's CHECK states the same bound.
 const MaxStoredContentBytes = 4 * MaxMaterialBytes
 
+// MaxIdentityBytes bounds, in UTF-8 bytes, each stored identity value: IDs,
+// content and blob hashes, author and reviewer, project, run and attempt,
+// base commit, accepted result ref and redaction policy version. Storage's
+// CHECKs state the same bound; a test keeps the two equal.
+const MaxIdentityBytes = 256
+
+// MaxTextFieldBytes bounds, in UTF-8 bytes, each stored free-text field: a
+// source ref or path and a review reason. Storage's CHECKs state the same
+// bound; a test keeps the two equal.
+const MaxTextFieldBytes = 4096
+
+// Write paths measure these bounds on the stored value, after redaction,
+// which can lengthen text, and refuse a value above them rather than
+// truncating it.
+
 // tokenBytes is the estimate's bytes per token. Three bytes per token
 // overestimates English text and stays close for Cyrillic, which takes two
 // bytes per letter.

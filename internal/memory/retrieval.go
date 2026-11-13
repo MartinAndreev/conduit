@@ -62,7 +62,9 @@ type RetrievalDecision struct {
 // Checks run in the spec's order: project, visibility, current version,
 // lifecycle, trust (an agent claim no human approved exactly, then stored
 // human_approved trust without that approval), applicability. Trust is
-// EffectiveTrust: an exactly approved version counts as human_approved. A
+// EffectiveTrust: an exactly approved version counts as human_approved.
+// Visibility is EffectiveVisibility: an exactly approved attempt observation
+// is visible to the whole project. A
 // human origin version without approval is already not visible, so the trust
 // check catches the other origins. An index result that
 // is not the current version is classified before visibility, so every stale
@@ -116,13 +118,18 @@ func validOriginFields(scope Scope) bool {
 	return scope.RunID != "" && scope.AttemptID != "" && scope.BaseCommit != ""
 }
 
+// visibleToAttempt applies EffectiveVisibility: an attempt observation a
+// human approved exactly is visible in every attempt of the project. The
+// project-visibility conditions read the stored scope, so an approval does
+// not stand in for an accepted result or lift a human version into an
+// attempt.
 func visibleToAttempt(f RetrievalFacts) (bool, string) {
 	scope := f.Version.Scope
 	switch {
 	case scope.Visibility == VisibilityAttempt && scope.Origin == OriginHuman:
 		return false, "human decisions do not pass through an attempt"
-	case scope.Visibility == VisibilityAttempt && scope.AttemptID != f.CurrentAttemptID:
-		return false, "attempt-scoped version is visible only in its own attempt"
+	case EffectiveVisibility(scope, f.ExactVersionApproved) == VisibilityAttempt && scope.AttemptID != f.CurrentAttemptID:
+		return false, "attempt-scoped version is visible only in its own attempt until a human approves this exact version"
 	case scope.Visibility == VisibilityProject && scope.Origin == OriginAttempt && scope.AcceptedResultRef == "":
 		return false, "attempt observation reaches the project only through an accepted result"
 	case scope.Visibility == VisibilityProject && scope.Origin == OriginHuman && !f.ExactVersionApproved:

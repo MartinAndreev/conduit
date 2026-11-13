@@ -69,7 +69,7 @@ func proposalFromAcceptedResult(content string) records.CreateRequest {
 			RunID: "run", AttemptID: "attempt", BaseCommit: "abc", AcceptedResultRef: "result",
 		},
 		Sources: []memory.RecordSource{
-			{Kind: memory.SourceFile, Path: "internal/storage/turso/migration.go", BlobHash: "blob-m"},
+			{Kind: memory.SourceFile, Path: "internal/storage/turso/migration.go", BlobHash: "f6783ab4cb25f4cfec064862e7d2f5a8501117a0"},
 			{Kind: memory.SourceEvent, Ref: "event-1"},
 		},
 		Now: recordsNow,
@@ -166,7 +166,7 @@ func TestCreateHumanRecordIsStoredApprovedAndEligible(t *testing.T) {
 func TestAgentProposalBecomesEligibleOnlyByExactApproval(t *testing.T) {
 	ctx := context.Background()
 	store := openMemoryStore(t)
-	files := snapshotFiles{"internal/storage/turso/migration.go": "blob-m"}
+	files := snapshotFiles{"internal/storage/turso/migration.go": "f6783ab4cb25f4cfec064862e7d2f5a8501117a0"}
 	created := mustCreate(t, store, proposalFromAcceptedResult("Неуспешен COMMIT оставя транзакцията отворена"))
 	if created.Status != memory.StatusProposed {
 		t.Fatalf("create = %+v", created)
@@ -251,13 +251,13 @@ func TestMarkNeedsVerificationAndReactivate(t *testing.T) {
 	store := openMemoryStore(t)
 	request := humanText("Миграцията държи write lock")
 	request.Sources = []memory.RecordSource{
-		{Kind: memory.SourceFile, Path: "internal/storage/turso/migration.go", BlobHash: "blob-m"},
+		{Kind: memory.SourceFile, Path: "internal/storage/turso/migration.go", BlobHash: "f6783ab4cb25f4cfec064862e7d2f5a8501117a0"},
 		{Kind: memory.SourceSpec, Ref: "specs/012"},
 	}
 	created := mustCreate(t, store, request)
-	changed := snapshotFiles{"internal/storage/turso/migration.go": "blob-m2"}
+	changed := snapshotFiles{"internal/storage/turso/migration.go": "0009ce64669c375934511edc6125facbcae1063f"}
 	service := recordService(store, changed)
-	unchanged, err := recordService(store, snapshotFiles{"internal/storage/turso/migration.go": "blob-m"}).MarkNeedsVerification(ctx, records.VerificationRequest{ProjectID: "project", RecordID: created.RecordID, ExpectedVersion: 1, Snapshot: "snapshot", Now: recordsNow})
+	unchanged, err := recordService(store, snapshotFiles{"internal/storage/turso/migration.go": "f6783ab4cb25f4cfec064862e7d2f5a8501117a0"}).MarkNeedsVerification(ctx, records.VerificationRequest{ProjectID: "project", RecordID: created.RecordID, ExpectedVersion: 1, Snapshot: "snapshot", Now: recordsNow})
 	if err != nil || unchanged.Kind != memory.TransitionSourceNotMismatched {
 		t.Fatalf("mark unchanged = %+v, %v", unchanged, err)
 	}
@@ -269,7 +269,7 @@ func TestMarkNeedsVerificationAndReactivate(t *testing.T) {
 	if got, err := service.Reactivate(ctx, reactivate); err != nil || got.Kind != memory.TransitionVerificationMissing {
 		t.Fatalf("reactivate without verification = %+v, %v", got, err)
 	}
-	reactivate.Verifications = []records.Verification{{Path: "internal/storage/turso/migration.go", VerifiedHash: "blob-m2"}}
+	reactivate.Verifications = []records.Verification{{Path: "internal/storage/turso/migration.go", VerifiedHash: "0009ce64669c375934511edc6125facbcae1063f"}}
 	got, err := service.Reactivate(ctx, reactivate)
 	if err != nil || got.Kind != memory.TransitionAllowed || got.RecordVersion != 3 || got.VersionID == "" {
 		t.Fatalf("reactivate = %+v, %v", got, err)
@@ -285,7 +285,7 @@ func TestMarkNeedsVerificationAndReactivate(t *testing.T) {
 		t.Fatalf("versions = %v", versions)
 	}
 	if rows := queryStrings(t, store, "SELECT kind || '|' || coalesce(path, ref) || '|' || coalesce(blob_hash, '-') FROM memory_sources WHERE version_id = ? ORDER BY kind", got.VersionID); !slices.Equal(rows, []string{
-		"file|internal/storage/turso/migration.go|blob-m2", "spec|specs/012|-",
+		"file|internal/storage/turso/migration.go|0009ce64669c375934511edc6125facbcae1063f", "spec|specs/012|-",
 	}) {
 		t.Fatalf("new sources = %v", rows)
 	}
@@ -886,9 +886,9 @@ func TestFailureAfterIntermediateWritesRollsBack(t *testing.T) {
 	ctx := context.Background()
 	store := openMemoryStore(t)
 	request := humanText("Запис за проверка")
-	request.Sources = []memory.RecordSource{{Kind: memory.SourceFile, Path: "a.go", BlobHash: "blob-a"}}
+	request.Sources = []memory.RecordSource{{Kind: memory.SourceFile, Path: "a.go", BlobHash: "388b69a7a7db1b7be1ba7d3867c07e1cdc19d9f7"}}
 	stale := mustCreate(t, store, request)
-	files := snapshotFiles{"a.go": "blob-b"}
+	files := snapshotFiles{"a.go": "d63f2a2ff97b62fba0150067982990bf2a5f8286"}
 	if got, err := recordService(store, files).MarkNeedsVerification(ctx, records.VerificationRequest{ProjectID: "project", RecordID: stale.RecordID, ExpectedVersion: 1, Snapshot: "snapshot", Now: recordsNow}); err != nil || got.Kind != memory.TransitionAllowed {
 		t.Fatalf("mark = %+v, %v", got, err)
 	}
@@ -897,7 +897,7 @@ func TestFailureAfterIntermediateWritesRollsBack(t *testing.T) {
 	failing := records.Service{Store: failingLastWrite{store.MemoryRecords()}, Snapshot: files}
 
 	_, err := failing.Reactivate(ctx, records.ReactivateRequest{ProjectID: "project", RecordID: stale.RecordID, ExpectedVersion: 2, Actor: memory.ActorHuman, Reviewer: "fail-last", Snapshot: "snapshot",
-		Verifications: []records.Verification{{Path: "a.go", VerifiedHash: "blob-b"}}, Now: recordsNow})
+		Verifications: []records.Verification{{Path: "a.go", VerifiedHash: "d63f2a2ff97b62fba0150067982990bf2a5f8286"}}, Now: recordsNow})
 	if !errors.Is(err, ErrMemoryWriteDiverged) {
 		t.Fatalf("reactivate error = %v", err)
 	}

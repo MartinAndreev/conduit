@@ -49,6 +49,7 @@ func (s Service) Reactivate(ctx context.Context, request ReactivateRequest) (Tra
 			return fmt.Errorf("read memory record: %w", err)
 		}
 		facts := transitionFacts(request.ProjectID, request.ExpectedVersion, memory.StatusActive, request.Actor, stored, request.Now)
+		facts.Reviewer = request.Reviewer
 		// The snapshot is read only for a record that may make this move, so
 		// a missing or foreign record is never observed.
 		if precheck := memory.PrecheckRecordTransition(facts); precheck.Kind != memory.TransitionAllowed {

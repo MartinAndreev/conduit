@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -16,19 +17,20 @@ func transitionFacts(from, to RecordStatus, actor Actor) RecordTransitionFacts {
 		To:                 to,
 		Actor:              actor,
 		ExpectedVersion:    3,
+		Reviewer:           "martin",
 	}
 }
 
 func TestDecideRecordTransition(t *testing.T) {
-	verifiedA := SourceVerification{Path: "a.go", CurrentHash: "new", VerifiedHash: "new"}
-	verifiedB := SourceVerification{Path: "b.go", CurrentHash: "same", VerifiedHash: "same"}
+	verifiedA := SourceVerification{Path: "a.go", CurrentHash: "c2a6b03f190dfb2b4aa91f8af8d477a9bc3401dc", VerifiedHash: "c2a6b03f190dfb2b4aa91f8af8d477a9bc3401dc"}
+	verifiedB := SourceVerification{Path: "b.go", CurrentHash: "ff3390557335ba88d37755e41514beb03bc499ec", VerifiedHash: "ff3390557335ba88d37755e41514beb03bc499ec"}
 	reactivation := func(list ...SourceVerification) RecordTransitionFacts {
 		f := transitionFacts(StatusNeedsVerification, StatusActive, ActorHuman)
-		f.DeclaredSources = []RecordSource{{Kind: SourceFile, Path: "a.go", BlobHash: "old"}, {Kind: SourceFile, Path: "b.go", BlobHash: "same"}, {Kind: SourceEvent, Ref: "e1"}}
+		f.DeclaredSources = []RecordSource{{Kind: SourceFile, Path: "a.go", BlobHash: "c00dbbc9dadfbe1e232e93a729dd4752fade0abf"}, {Kind: SourceFile, Path: "b.go", BlobHash: "ff3390557335ba88d37755e41514beb03bc499ec"}, {Kind: SourceEvent, Ref: "e1"}}
 		f.Verifications = list
 		f.NewVersionID, f.ApprovedVersionID = "v2", "v2"
 		f.NewVersionContentHash, f.ApprovedContentHash = "c2", "c2"
-		f.NewVersionSources = []RecordSource{{Kind: SourceFile, Path: "a.go", BlobHash: "new"}, {Kind: SourceFile, Path: "b.go", BlobHash: "same"}, {Kind: SourceEvent, Ref: "e1"}}
+		f.NewVersionSources = []RecordSource{{Kind: SourceFile, Path: "a.go", BlobHash: "c2a6b03f190dfb2b4aa91f8af8d477a9bc3401dc"}, {Kind: SourceFile, Path: "b.go", BlobHash: "ff3390557335ba88d37755e41514beb03bc499ec"}, {Kind: SourceEvent, Ref: "e1"}}
 		return f
 	}
 	with := func(f RecordTransitionFacts, changes ...func(*RecordTransitionFacts)) RecordTransitionFacts {
@@ -102,6 +104,16 @@ func TestDecideRecordTransition(t *testing.T) {
 		{"reactivation of deleted content", with(reactivation(verifiedA, verifiedB), deleted), TransitionContentDeleted},
 		{"deleted content precedes missing reason", with(transitionFacts(StatusProposed, StatusRejected, ActorHuman), deleted), TransitionContentDeleted},
 		{"actor precedes deleted content", with(transitionFacts(StatusProposed, StatusActive, ActorAgent), approve, deleted), TransitionActorNotAllowed},
+		{"approval without reviewer", with(transitionFacts(StatusProposed, StatusActive, ActorHuman), approve, func(f *RecordTransitionFacts) { f.Reviewer = "" }), TransitionInvalidFacts},
+		{"approval reviewer at the bound", with(transitionFacts(StatusProposed, StatusActive, ActorHuman), approve, func(f *RecordTransitionFacts) { f.Reviewer = strings.Repeat("ж", MaxIdentityBytes/2) }), TransitionAllowed},
+		{"approval reviewer one byte over", with(transitionFacts(StatusProposed, StatusActive, ActorHuman), approve, func(f *RecordTransitionFacts) { f.Reviewer = strings.Repeat("ж", MaxIdentityBytes/2) + "x" }), TransitionInvalidFacts},
+		{"rejection reviewer one byte over", with(transitionFacts(StatusProposed, StatusRejected, ActorHuman), reason, func(f *RecordTransitionFacts) { f.Reviewer = strings.Repeat("r", MaxIdentityBytes+1) }), TransitionInvalidFacts},
+		{"archive reviewer one byte over", with(transitionFacts(StatusActive, StatusArchived, ActorHuman), reason, func(f *RecordTransitionFacts) { f.Reviewer = strings.Repeat("r", MaxIdentityBytes+1) }), TransitionInvalidFacts},
+		{"reactivation reviewer one byte over", with(reactivation(verifiedA, verifiedB), func(f *RecordTransitionFacts) { f.Reviewer = strings.Repeat("r", MaxIdentityBytes+1) }), TransitionInvalidFacts},
+		{"reviewer precedes deleted content", with(transitionFacts(StatusProposed, StatusActive, ActorHuman), approve, deleted, func(f *RecordTransitionFacts) { f.Reviewer = "" }), TransitionInvalidFacts},
+		{"actor precedes reviewer", with(transitionFacts(StatusProposed, StatusActive, ActorAgent), approve, func(f *RecordTransitionFacts) { f.Reviewer = "" }), TransitionActorNotAllowed},
+		{"system archive needs no reviewer", with(transitionFacts(StatusProposed, StatusArchived, ActorSystem), at(proposalRetention), func(f *RecordTransitionFacts) { f.Reviewer = "" }), TransitionAllowed},
+		{"supersede writes no review on the old record", with(transitionFacts(StatusActive, StatusSuperseded, ActorHuman), replace, func(f *RecordTransitionFacts) { f.Reviewer = "" }), TransitionAllowed},
 		{"deleted proposal expires", with(transitionFacts(StatusProposed, StatusArchived, ActorSystem), at(proposalRetention), deleted), TransitionAllowed},
 		{"deleted record goes stale", with(transitionFacts(StatusActive, StatusNeedsVerification, ActorSystem), source(ApplicabilityMismatch), deleted), TransitionAllowed},
 		{"deleted record is superseded", with(transitionFacts(StatusActive, StatusSuperseded, ActorHuman), replace, deleted), TransitionAllowed},
@@ -112,6 +124,12 @@ func TestDecideRecordTransition(t *testing.T) {
 
 		{"reject without reason", transitionFacts(StatusProposed, StatusRejected, ActorHuman), TransitionReasonRequired},
 		{"archive with blank reason", with(transitionFacts(StatusActive, StatusArchived, ActorHuman), func(f *RecordTransitionFacts) { f.Reason = "  " }), TransitionReasonRequired},
+		{"reject with a reason at the bound", with(transitionFacts(StatusProposed, StatusRejected, ActorHuman), func(f *RecordTransitionFacts) { f.Reason = strings.Repeat("r", MaxTextFieldBytes) }), TransitionAllowed},
+		{"reject with a reason one byte over", with(transitionFacts(StatusProposed, StatusRejected, ActorHuman), func(f *RecordTransitionFacts) { f.Reason = strings.Repeat("r", MaxTextFieldBytes+1) }), TransitionReasonTooLong},
+		{"archive with a reason over in bytes", with(transitionFacts(StatusNeedsVerification, StatusArchived, ActorHuman), func(f *RecordTransitionFacts) {
+			f.Reason = strings.Repeat("ж", MaxTextFieldBytes/2) + "r"
+		}), TransitionReasonTooLong},
+		{"deleted content precedes a long reason", with(transitionFacts(StatusProposed, StatusRejected, ActorHuman), deleted, func(f *RecordTransitionFacts) { f.Reason = strings.Repeat("r", MaxTextFieldBytes+1) }), TransitionContentDeleted},
 
 		{"one second before 90 days", with(transitionFacts(StatusProposed, StatusArchived, ActorSystem), at(proposalRetention-time.Second)), TransitionRetentionNotElapsed},
 		{"decided proposal is not expired", with(transitionFacts(StatusProposed, StatusArchived, ActorSystem), func(f *RecordTransitionFacts) {
@@ -125,36 +143,42 @@ func TestDecideRecordTransition(t *testing.T) {
 		{"unavailable source needs verification", with(transitionFacts(StatusActive, StatusNeedsVerification, ActorSystem), source(ApplicabilitySourceUnavailable)), TransitionAllowed},
 
 		{"no verification", reactivation(), TransitionVerificationMissing},
-		{"verified against stale hash", reactivation(SourceVerification{Path: "a.go", CurrentHash: "new", VerifiedHash: "older"}, verifiedB), TransitionVerificationMissing},
+		{"current hash is not a blob hash", reactivation(SourceVerification{Path: "a.go", CurrentHash: "password=hunter2", VerifiedHash: "password=hunter2"}, verifiedB), TransitionVerificationMissing},
+		{"uppercase current hash", reactivation(SourceVerification{Path: "a.go", CurrentHash: strings.Repeat("A", 40), VerifiedHash: strings.Repeat("A", 40)}, verifiedB), TransitionVerificationMissing},
+		{"verified against stale hash", reactivation(SourceVerification{Path: "a.go", CurrentHash: "c2a6b03f190dfb2b4aa91f8af8d477a9bc3401dc", VerifiedHash: "6fa5fbbc16c8f82ea478e5b933b345e46dd285ea"}, verifiedB), TransitionVerificationMissing},
 		{"empty hashes are not a verification", reactivation(SourceVerification{Path: "a.go"}, verifiedB), TransitionVerificationMissing},
 		{"declared source left unverified", reactivation(verifiedA), TransitionVerificationMissing},
 		{"duplicate verification", reactivation(verifiedA, verifiedA), TransitionVerificationMissing},
-		{"unrelated verification", reactivation(verifiedA, SourceVerification{Path: "c.go", CurrentHash: "x", VerifiedHash: "x"}), TransitionVerificationMissing},
-		{"extra verification", reactivation(verifiedA, verifiedB, SourceVerification{Path: "c.go", CurrentHash: "x", VerifiedHash: "x"}), TransitionVerificationMissing},
+		{"unrelated verification", reactivation(verifiedA, SourceVerification{Path: "c.go", CurrentHash: "11f6ad8ec52a2984abaafd7c3b516503785c2072", VerifiedHash: "11f6ad8ec52a2984abaafd7c3b516503785c2072"}), TransitionVerificationMissing},
+		{"extra verification", reactivation(verifiedA, verifiedB, SourceVerification{Path: "c.go", CurrentHash: "11f6ad8ec52a2984abaafd7c3b516503785c2072", VerifiedHash: "11f6ad8ec52a2984abaafd7c3b516503785c2072"}), TransitionVerificationMissing},
 		{"empty declared set", with(reactivation(verifiedA), func(f *RecordTransitionFacts) { f.DeclaredSources = nil }), TransitionVerificationMissing},
 		{"declared set without file sources", with(reactivation(), func(f *RecordTransitionFacts) { f.DeclaredSources = []RecordSource{{Kind: SourceEvent, Ref: "e1"}} }), TransitionVerificationMissing},
-		{"source back at declared hash reactivates", with(reactivation(SourceVerification{Path: "a.go", CurrentHash: "old", VerifiedHash: "old"}, verifiedB), func(f *RecordTransitionFacts) { f.NewVersionSources[0].BlobHash = "old" }), TransitionAllowed},
+		{"source back at declared hash reactivates", with(reactivation(SourceVerification{Path: "a.go", CurrentHash: "c00dbbc9dadfbe1e232e93a729dd4752fade0abf", VerifiedHash: "c00dbbc9dadfbe1e232e93a729dd4752fade0abf"}, verifiedB), func(f *RecordTransitionFacts) {
+			f.NewVersionSources[0].BlobHash = "c00dbbc9dadfbe1e232e93a729dd4752fade0abf"
+		}), TransitionAllowed},
 		{"reactivation without new version", with(reactivation(verifiedA, verifiedB), func(f *RecordTransitionFacts) { f.NewVersionID, f.ApprovedVersionID = "", "" }), TransitionApprovalMismatch},
 		{"reactivation reusing current version", with(reactivation(verifiedA, verifiedB), func(f *RecordTransitionFacts) { f.NewVersionID, f.ApprovedVersionID = "v1", "v1" }), TransitionApprovalMismatch},
 		{"approval names old version on reactivation", with(reactivation(verifiedA, verifiedB), func(f *RecordTransitionFacts) { f.ApprovedVersionID = "v1" }), TransitionApprovalMismatch},
 		{"approval names wrong content hash", with(reactivation(verifiedA, verifiedB), func(f *RecordTransitionFacts) { f.ApprovedContentHash = "c0" }), TransitionApprovalMismatch},
 		{"approval names old content hash", with(reactivation(verifiedA, verifiedB), func(f *RecordTransitionFacts) { f.ApprovedContentHash = "c1" }), TransitionApprovalMismatch},
 		{"empty approval and new content hash", with(reactivation(verifiedA, verifiedB), func(f *RecordTransitionFacts) { f.ApprovedContentHash, f.NewVersionContentHash = "", "" }), TransitionApprovalMismatch},
-		{"new version retains old source hash", with(reactivation(verifiedA, verifiedB), func(f *RecordTransitionFacts) { f.NewVersionSources[0].BlobHash = "old" }), TransitionApprovalMismatch},
+		{"new version retains old source hash", with(reactivation(verifiedA, verifiedB), func(f *RecordTransitionFacts) {
+			f.NewVersionSources[0].BlobHash = "c00dbbc9dadfbe1e232e93a729dd4752fade0abf"
+		}), TransitionApprovalMismatch},
 		{"new version with empty source hash", with(reactivation(verifiedA, verifiedB), func(f *RecordTransitionFacts) { f.NewVersionSources[1].BlobHash = "" }), TransitionApprovalMismatch},
 		{"new version misses a path", with(reactivation(verifiedA, verifiedB), func(f *RecordTransitionFacts) { f.NewVersionSources = f.NewVersionSources[:1] }), TransitionApprovalMismatch},
 		{"new version has no sources", with(reactivation(verifiedA, verifiedB), func(f *RecordTransitionFacts) { f.NewVersionSources = nil }), TransitionApprovalMismatch},
 		{"new version adds a path", with(reactivation(verifiedA, verifiedB), func(f *RecordTransitionFacts) {
-			f.NewVersionSources = append(f.NewVersionSources, RecordSource{Kind: SourceFile, Path: "c.go", BlobHash: "x"})
+			f.NewVersionSources = append(f.NewVersionSources, RecordSource{Kind: SourceFile, Path: "c.go", BlobHash: "11f6ad8ec52a2984abaafd7c3b516503785c2072"})
 		}), TransitionApprovalMismatch},
 		{"new version repeats a path", with(reactivation(verifiedA, verifiedB), func(f *RecordTransitionFacts) {
-			f.NewVersionSources = append(f.NewVersionSources, RecordSource{Kind: SourceFile, Path: "a.go", BlobHash: "new"})
+			f.NewVersionSources = append(f.NewVersionSources, RecordSource{Kind: SourceFile, Path: "a.go", BlobHash: "c2a6b03f190dfb2b4aa91f8af8d477a9bc3401dc"})
 		}), TransitionApprovalMismatch},
 		{"declared path repeated", with(reactivation(verifiedA, verifiedB), func(f *RecordTransitionFacts) {
-			f.DeclaredSources = append(f.DeclaredSources, RecordSource{Kind: SourceFile, Path: "a.go", BlobHash: "old"})
+			f.DeclaredSources = append(f.DeclaredSources, RecordSource{Kind: SourceFile, Path: "a.go", BlobHash: "c00dbbc9dadfbe1e232e93a729dd4752fade0abf"})
 		}), TransitionVerificationMissing},
 		{"declared path empty", with(reactivation(verifiedA, verifiedB), func(f *RecordTransitionFacts) {
-			f.DeclaredSources = append(f.DeclaredSources, RecordSource{Kind: SourceFile, BlobHash: "old"})
+			f.DeclaredSources = append(f.DeclaredSources, RecordSource{Kind: SourceFile, BlobHash: "c00dbbc9dadfbe1e232e93a729dd4752fade0abf"})
 		}), TransitionVerificationMissing},
 		{"verification precedes new version check", with(reactivation(verifiedA), func(f *RecordTransitionFacts) { f.NewVersionSources = nil }), TransitionVerificationMissing},
 		{"verification precedes approval", with(reactivation(verifiedA), func(f *RecordTransitionFacts) { f.ApprovedVersionID = "v1" }), TransitionVerificationMissing},

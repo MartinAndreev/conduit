@@ -5,9 +5,10 @@
 // consumer-side port.
 //
 // The atomic manifest, payload and dispatch intent port waits for the
-// dispatch intent of spec 003. Proposal parsing and deduplication, merging,
-// promotion of attempt observations on acceptance, and contradicts relations
-// are not written here.
+// dispatch intent of spec 003. Merging proposals into a human record is
+// written here (Merge); reading proposals from a report, the review queue
+// and its deduplication are internal/memory/proposals. Promotion of attempt
+// observations on acceptance and contradicts relations are not written here.
 package records
 
 import (

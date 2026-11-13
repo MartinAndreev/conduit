@@ -1,6 +1,9 @@
 package memory
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func opinionFacts(change ...func(*RecordOpinionFacts)) RecordOpinionFacts {
 	f := RecordOpinionFacts{
@@ -41,6 +44,8 @@ func TestDecideRecordOpinion(t *testing.T) {
 		{"no version", []change{func(f *RecordOpinionFacts) { f.VersionID = "" }}, OpinionInvalidFacts},
 		{"no content hash", []change{func(f *RecordOpinionFacts) { f.ContentHash = "" }}, OpinionInvalidFacts},
 		{"no reviewer", []change{func(f *RecordOpinionFacts) { f.Reviewer = "" }}, OpinionInvalidFacts},
+		{"reviewer one byte over", []change{func(f *RecordOpinionFacts) { f.Reviewer = strings.Repeat("ж", MaxIdentityBytes/2) + "x" }}, OpinionInvalidFacts},
+		{"reviewer at the bound", []change{func(f *RecordOpinionFacts) { f.Reviewer = strings.Repeat("ж", MaxIdentityBytes/2) }}, OpinionAdd},
 		{"unknown actor", []change{func(f *RecordOpinionFacts) { f.Actor = "operator" }}, OpinionInvalidFacts},
 
 		{"human through the opinion path", []change{func(f *RecordOpinionFacts) { f.Actor = ActorHuman }}, OpinionActorNotAllowed},
@@ -55,6 +60,11 @@ func TestDecideRecordOpinion(t *testing.T) {
 		{"hash precedes deleted content", []change{deleted, func(f *RecordOpinionFacts) { f.ContentHash = "c0" }}, OpinionHashMismatch},
 
 		{"reason on deleted content", []change{deleted}, OpinionContentDeleted},
+		{"deleted content precedes a long reason", []change{deleted, func(f *RecordOpinionFacts) { f.Reason = strings.Repeat("ж", MaxTextFieldBytes) }}, OpinionContentDeleted},
+
+		{"reason at the bound", []change{func(f *RecordOpinionFacts) { f.Reason = strings.Repeat("r", MaxTextFieldBytes) }}, OpinionAdd},
+		{"reason one byte over", []change{func(f *RecordOpinionFacts) { f.Reason = strings.Repeat("r", MaxTextFieldBytes+1) }}, OpinionReasonTooLong},
+		{"reason measured in bytes", []change{func(f *RecordOpinionFacts) { f.Reason = strings.Repeat("ж", MaxTextFieldBytes/2) + "r" }}, OpinionReasonTooLong},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

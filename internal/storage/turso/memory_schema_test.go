@@ -585,6 +585,18 @@ func TestMemoryColumnsHaveByteBounds(t *testing.T) {
 	}
 }
 
+// The write path's rules refuse identities and text fields above the domain
+// bounds; the schema's CHECKs, which the column bound tests above exercise at
+// and one byte over each bound, state the same values.
+func TestColumnBoundsEqualTheDomainBounds(t *testing.T) {
+	if schema.MaxIdentityBytes != memory.MaxIdentityBytes {
+		t.Fatalf("identity bound: schema %d, domain %d", schema.MaxIdentityBytes, memory.MaxIdentityBytes)
+	}
+	if schema.MaxTextFieldBytes != memory.MaxTextFieldBytes {
+		t.Fatalf("text field bound: schema %d, domain %d", schema.MaxTextFieldBytes, memory.MaxTextFieldBytes)
+	}
+}
+
 // Content and search text each accept exactly MaxStoredContentBytes and refuse
 // one byte more, independently of each other.
 func TestStoredContentAndSearchTextAreBounded(t *testing.T) {

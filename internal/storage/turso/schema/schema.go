@@ -9,7 +9,9 @@ import "slices"
 const Version = "2"
 
 // Byte bounds of the memory_* and context_* tables' free-text columns, as
-// their CHECKs state.
+// their CHECKs state. MaxIdentityBytes and MaxTextFieldBytes equal
+// memory.MaxIdentityBytes and memory.MaxTextFieldBytes, which the write
+// path's rules refuse above; a test keeps them equal.
 const (
 	MaxIdentityBytes  = 256
 	MaxTimestampBytes = 64

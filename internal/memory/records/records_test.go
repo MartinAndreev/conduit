@@ -25,7 +25,7 @@ func humanCreate() CreateRequest {
 		Content:  "Миграциите са адитивни; api_key = " + fakeSecret,
 		Scope:    memory.Scope{ProjectID: "p1", Visibility: memory.VisibilityProject, Origin: memory.OriginHuman},
 		Sources: []memory.RecordSource{
-			{Kind: memory.SourceFile, Path: "internal/storage/migration.go", BlobHash: "blob-m"},
+			{Kind: memory.SourceFile, Path: "internal/storage/migration.go", BlobHash: "f6783ab4cb25f4cfec064862e7d2f5a8501117a0"},
 			{Kind: memory.SourceSpec, Ref: "specs/012 token=" + fakeSecret},
 		},
 		Now: writeTime,
@@ -144,6 +144,7 @@ func TestInvalidRequestsTouchNoStore(t *testing.T) {
 		"reactivate without time":  func() error { _, err := s.Reactivate(ctx, ReactivateRequest{Reviewer: "martin"}); return err },
 		"supersede without author": func() error { _, err := s.Supersede(ctx, SupersedeRequest{Now: writeTime}); return err },
 		"opinion without time":     func() error { _, err := s.AddOpinion(ctx, OpinionRequest{}); return err },
+		"merge without author":     func() error { _, err := s.Merge(ctx, MergeRequest{Now: writeTime}); return err },
 	}
 	for name, call := range calls {
 		if err := call(); !errors.Is(err, ErrInvalidRequest) {
@@ -284,11 +285,11 @@ func TestMarkNeedsVerification(t *testing.T) {
 		want  memory.RecordTransitionKind
 	}{
 		{"changed source", map[string]compose.FileObservation{
-			"a.go": {Observation: memory.SourcePresent, Hash: "blob-other"}, "b.go": {Observation: memory.SourcePresent, Hash: "blob-b"},
+			"a.go": {Observation: memory.SourcePresent, Hash: "ae401827daa5a32153625b7b9ad17b13ec94fe0b"}, "b.go": {Observation: memory.SourcePresent, Hash: "d63f2a2ff97b62fba0150067982990bf2a5f8286"},
 		}, memory.TransitionAllowed},
-		{"missing source", map[string]compose.FileObservation{"a.go": {Observation: memory.SourcePresent, Hash: "blob-a"}}, memory.TransitionAllowed},
+		{"missing source", map[string]compose.FileObservation{"a.go": {Observation: memory.SourcePresent, Hash: "388b69a7a7db1b7be1ba7d3867c07e1cdc19d9f7"}}, memory.TransitionAllowed},
 		{"matching sources", map[string]compose.FileObservation{
-			"a.go": {Observation: memory.SourcePresent, Hash: "blob-a"}, "b.go": {Observation: memory.SourcePresent, Hash: "blob-b"},
+			"a.go": {Observation: memory.SourcePresent, Hash: "388b69a7a7db1b7be1ba7d3867c07e1cdc19d9f7"}, "b.go": {Observation: memory.SourcePresent, Hash: "d63f2a2ff97b62fba0150067982990bf2a5f8286"},
 		}, memory.TransitionSourceNotMismatched},
 	}
 	for _, tt := range tests {
@@ -328,18 +329,18 @@ func reactivateRequest(verifications ...Verification) ReactivateRequest {
 func TestReactivateCreatesAVersionWithTheVerifiedHashes(t *testing.T) {
 	store := newFakeStore(storedRecord(memory.StatusNeedsVerification))
 	snapshot := &fakeSnapshot{files: map[string]compose.FileObservation{
-		"a.go": {Observation: memory.SourcePresent, Hash: "blob-new"},
-		"b.go": {Observation: memory.SourcePresent, Hash: "blob-b"},
+		"a.go": {Observation: memory.SourcePresent, Hash: "8538bc9d48b5d707b9c87fe60ae34972bb8cff31"},
+		"b.go": {Observation: memory.SourcePresent, Hash: "d63f2a2ff97b62fba0150067982990bf2a5f8286"},
 	}}
 	s := Service{Store: store, Snapshot: snapshot, NewID: sequentialIDs()}
-	got, err := s.Reactivate(context.Background(), reactivateRequest(Verification{Path: "a.go", VerifiedHash: "blob-new"}, Verification{Path: "b.go", VerifiedHash: "blob-b"}))
+	got, err := s.Reactivate(context.Background(), reactivateRequest(Verification{Path: "a.go", VerifiedHash: "8538bc9d48b5d707b9c87fe60ae34972bb8cff31"}, Verification{Path: "b.go", VerifiedHash: "d63f2a2ff97b62fba0150067982990bf2a5f8286"}))
 	if err != nil || got.Kind != memory.TransitionAllowed || got.RecordVersion != 4 || got.VersionID != "version-1" {
 		t.Fatalf("result %+v, error %v", got, err)
 	}
 	wantWrites(t, store, "copy v1->version-1", "status r1 needs_verification->active", "review version-1 approve by human")
 	wantSources := []memory.RecordSource{
-		{Kind: memory.SourceFile, Path: "a.go", BlobHash: "blob-new"},
-		{Kind: memory.SourceFile, Path: "b.go", BlobHash: "blob-b"},
+		{Kind: memory.SourceFile, Path: "a.go", BlobHash: "8538bc9d48b5d707b9c87fe60ae34972bb8cff31"},
+		{Kind: memory.SourceFile, Path: "b.go", BlobHash: "d63f2a2ff97b62fba0150067982990bf2a5f8286"},
 		{Kind: memory.SourceSpec, Ref: "specs/012"},
 	}
 	copied := store.copies[0]
@@ -356,10 +357,10 @@ func TestReactivateCreatesAVersionWithTheVerifiedHashes(t *testing.T) {
 
 func TestReactivateRefusals(t *testing.T) {
 	present := map[string]compose.FileObservation{
-		"a.go": {Observation: memory.SourcePresent, Hash: "blob-new"},
-		"b.go": {Observation: memory.SourcePresent, Hash: "blob-b"},
+		"a.go": {Observation: memory.SourcePresent, Hash: "8538bc9d48b5d707b9c87fe60ae34972bb8cff31"},
+		"b.go": {Observation: memory.SourcePresent, Hash: "d63f2a2ff97b62fba0150067982990bf2a5f8286"},
 	}
-	both := []Verification{{Path: "a.go", VerifiedHash: "blob-new"}, {Path: "b.go", VerifiedHash: "blob-b"}}
+	both := []Verification{{Path: "a.go", VerifiedHash: "8538bc9d48b5d707b9c87fe60ae34972bb8cff31"}, {Path: "b.go", VerifiedHash: "d63f2a2ff97b62fba0150067982990bf2a5f8286"}}
 	tests := []struct {
 		name          string
 		files         map[string]compose.FileObservation
@@ -368,7 +369,7 @@ func TestReactivateRefusals(t *testing.T) {
 		want          memory.RecordTransitionKind
 		observed      []string
 	}{
-		{"verified hash is not current", present, []Verification{{Path: "a.go", VerifiedHash: "blob-a"}, both[1]}, nil, memory.TransitionVerificationMissing, []string{"a.go", "b.go"}},
+		{"verified hash is not current", present, []Verification{{Path: "a.go", VerifiedHash: "388b69a7a7db1b7be1ba7d3867c07e1cdc19d9f7"}, both[1]}, nil, memory.TransitionVerificationMissing, []string{"a.go", "b.go"}},
 		{"missing source", map[string]compose.FileObservation{"b.go": present["b.go"]}, both, nil, memory.TransitionVerificationMissing, []string{"a.go", "b.go"}},
 		{"undeclared path is not observed", present, append(slices.Clone(both), Verification{Path: "c.go", VerifiedHash: "x"}), nil, memory.TransitionVerificationMissing, []string{"a.go", "b.go"}},
 		{"one source left unverified", present, both[:1], nil, memory.TransitionVerificationMissing, []string{"a.go"}},
@@ -495,8 +496,8 @@ type failureCase struct {
 func failureCases() []failureCase {
 	ctx := context.Background()
 	present := map[string]compose.FileObservation{
-		"a.go": {Observation: memory.SourcePresent, Hash: "blob-new"},
-		"b.go": {Observation: memory.SourcePresent, Hash: "blob-b"},
+		"a.go": {Observation: memory.SourcePresent, Hash: "8538bc9d48b5d707b9c87fe60ae34972bb8cff31"},
+		"b.go": {Observation: memory.SourcePresent, Hash: "d63f2a2ff97b62fba0150067982990bf2a5f8286"},
 	}
 	reason := ReasonRequest{ProjectID: "p1", RecordID: "r1", ExpectedVersion: 3, Actor: memory.ActorHuman, Reviewer: "martin", Reason: "x", Now: writeTime}
 	withRecord := func(status memory.RecordStatus) func(*fakeStore) {
@@ -515,13 +516,13 @@ func failureCases() []failureCase {
 			return err
 		}},
 		{"mark", withRecord(memory.StatusActive), func(s Service) error {
-			s.Snapshot = &fakeSnapshot{files: map[string]compose.FileObservation{"a.go": {Observation: memory.SourcePresent, Hash: "blob-x"}}}
+			s.Snapshot = &fakeSnapshot{files: map[string]compose.FileObservation{"a.go": {Observation: memory.SourcePresent, Hash: "8f76e11356f466c4ac351ffe3638aec780cfe9f4"}}}
 			_, err := s.MarkNeedsVerification(ctx, VerificationRequest{ProjectID: "p1", RecordID: "r1", ExpectedVersion: 3, Now: writeTime})
 			return err
 		}},
 		{"reactivate", withRecord(memory.StatusNeedsVerification), func(s Service) error {
 			s.Snapshot = &fakeSnapshot{files: present}
-			_, err := s.Reactivate(ctx, reactivateRequest(Verification{Path: "a.go", VerifiedHash: "blob-new"}, Verification{Path: "b.go", VerifiedHash: "blob-b"}))
+			_, err := s.Reactivate(ctx, reactivateRequest(Verification{Path: "a.go", VerifiedHash: "8538bc9d48b5d707b9c87fe60ae34972bb8cff31"}, Verification{Path: "b.go", VerifiedHash: "d63f2a2ff97b62fba0150067982990bf2a5f8286"}))
 			return err
 		}},
 		{"supersede", withRecord(memory.StatusActive), func(s Service) error { _, err := s.Supersede(ctx, supersedeRequest()); return err }},
@@ -529,6 +530,11 @@ func failureCases() []failureCase {
 			s.records["r1"] = storedRecord(memory.StatusActive)
 			s.versions["r1/v0"] = VersionFacts{Found: true, ContentHash: "sha256:old"}
 		}, func(s Service) error { _, err := s.AddOpinion(ctx, opinionRequest()); return err }},
+		{"merge", func(s *fakeStore) {
+			for _, proposal := range mergedProposals() {
+				s.records[proposal.Record.ID] = proposal
+			}
+		}, func(s Service) error { _, err := s.Merge(ctx, mergeRequest()); return err }},
 	}
 }
 
@@ -711,4 +717,171 @@ func TestSnapshotIsNotReadForGeneralRefusals(t *testing.T) {
 			}
 		})
 	}
+}
+
+// lengthenedByRedaction fits the text field bound as written but not after
+// redaction replaces its secret with a longer placeholder.
+func lengthenedByRedaction() string {
+	return strings.Repeat("r", memory.MaxTextFieldBytes-12) + "\npassword=x"
+}
+
+// A value that redaction lengthens past its storage bound is a refusal on
+// the stored value, never truncated, and nothing is written.
+func TestValuesOverTheirBoundAfterRedactionAreRefused(t *testing.T) {
+	ctx := context.Background()
+	if len(lengthenedByRedaction()) > memory.MaxTextFieldBytes {
+		t.Fatal("fixture exceeds the bound before redaction")
+	}
+	reason := ReasonRequest{ProjectID: "p1", RecordID: "r1", ExpectedVersion: 3, Actor: memory.ActorHuman, Reviewer: "martin", Reason: lengthenedByRedaction(), Now: writeTime}
+	for name, run := range map[string]func(Service) (memory.RecordTransitionKind, error){
+		"reject": func(s Service) (memory.RecordTransitionKind, error) {
+			s.Store.(*fakeStore).records["r1"] = storedRecord(memory.StatusProposed)
+			got, err := s.Reject(ctx, reason)
+			return got.Kind, err
+		},
+		"archive": func(s Service) (memory.RecordTransitionKind, error) {
+			s.Store.(*fakeStore).records["r1"] = storedRecord(memory.StatusActive)
+			got, err := s.Archive(ctx, reason)
+			return got.Kind, err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := newFakeStore()
+			kind, err := run(service(store))
+			if err != nil || kind != memory.TransitionReasonTooLong {
+				t.Fatalf("kind %s, error %v", kind, err)
+			}
+			wantNoWrites(t, store)
+		})
+	}
+	t.Run("opinion", func(t *testing.T) {
+		store := newFakeStore(storedRecord(memory.StatusActive))
+		store.versions["r1/v0"] = VersionFacts{Found: true, ContentHash: "sha256:old"}
+		request := opinionRequest()
+		request.Reason = lengthenedByRedaction()
+		got, err := service(store).AddOpinion(ctx, request)
+		if err != nil || got.Kind != memory.OpinionReasonTooLong || got.ReviewID != "" || len(got.Findings) != 1 {
+			t.Fatalf("result %+v, error %v", got, err)
+		}
+		wantNoWrites(t, store)
+	})
+	t.Run("source path", func(t *testing.T) {
+		store := newFakeStore()
+		request := agentProposal()
+		request.Sources = []memory.RecordSource{{Kind: memory.SourceFile, Path: lengthenedByRedaction(), BlobHash: "0fd0bcfb44f83e7d5ac7a8922578276b9af48746"}}
+		got, err := service(store).CreateRecord(ctx, request)
+		if err != nil || got.Kind != memory.CreationInvalidSource || got.RecordID != "" {
+			t.Fatalf("result %+v, error %v", got, err)
+		}
+		wantNoWrites(t, store)
+	})
+	t.Run("merge reason", func(t *testing.T) {
+		store := newFakeStore(mergedProposals()...)
+		long := Service{Store: store, NewID: func(prefix string) (string, error) { return strings.Repeat("i", memory.MaxTextFieldBytes), nil }}
+		got, err := long.Merge(ctx, mergeRequest())
+		if err != nil || got.Applied || got.Transitions[0].Decision.Kind != memory.TransitionReasonTooLong {
+			t.Fatalf("result %+v, error %v", got, err)
+		}
+		wantNoWrites(t, store)
+	})
+}
+
+// A reviewer at MaxIdentityBytes (multibyte) is accepted; one byte more is
+// the rule's invalid_facts before any write, on every reviewed path.
+func TestReviewerIsBounded(t *testing.T) {
+	ctx := context.Background()
+	atBound := strings.Repeat("ж", memory.MaxIdentityBytes/2)
+	overBound := atBound + "x"
+	present := map[string]compose.FileObservation{
+		"a.go": {Observation: memory.SourcePresent, Hash: "8538bc9d48b5d707b9c87fe60ae34972bb8cff31"},
+		"b.go": {Observation: memory.SourcePresent, Hash: "d63f2a2ff97b62fba0150067982990bf2a5f8286"},
+	}
+	type outcome struct {
+		allowed bool
+		refused bool
+	}
+	run := map[string]func(Service, *fakeStore, string) outcome{
+		"approve": func(s Service, store *fakeStore, reviewer string) outcome {
+			store.records["r1"] = storedRecord(memory.StatusProposed)
+			got, err := s.Approve(ctx, ApproveRequest{ProjectID: "p1", RecordID: "r1", ExpectedVersion: 3, Actor: memory.ActorHuman, Reviewer: reviewer, VersionID: "v1", ContentHash: currentHash, Now: writeTime})
+			return outcome{err == nil && got.Kind == memory.TransitionAllowed, err == nil && got.Kind == memory.TransitionInvalidFacts}
+		},
+		"reject": func(s Service, store *fakeStore, reviewer string) outcome {
+			store.records["r1"] = storedRecord(memory.StatusProposed)
+			got, err := s.Reject(ctx, ReasonRequest{ProjectID: "p1", RecordID: "r1", ExpectedVersion: 3, Actor: memory.ActorHuman, Reviewer: reviewer, Reason: "x", Now: writeTime})
+			return outcome{err == nil && got.Kind == memory.TransitionAllowed, err == nil && got.Kind == memory.TransitionInvalidFacts}
+		},
+		"archive": func(s Service, store *fakeStore, reviewer string) outcome {
+			store.records["r1"] = storedRecord(memory.StatusActive)
+			got, err := s.Archive(ctx, ReasonRequest{ProjectID: "p1", RecordID: "r1", ExpectedVersion: 3, Actor: memory.ActorHuman, Reviewer: reviewer, Reason: "x", Now: writeTime})
+			return outcome{err == nil && got.Kind == memory.TransitionAllowed, err == nil && got.Kind == memory.TransitionInvalidFacts}
+		},
+		"reactivate": func(s Service, store *fakeStore, reviewer string) outcome {
+			store.records["r1"] = storedRecord(memory.StatusNeedsVerification)
+			s.Snapshot = &fakeSnapshot{files: present}
+			request := reactivateRequest(Verification{Path: "a.go", VerifiedHash: present["a.go"].Hash}, Verification{Path: "b.go", VerifiedHash: present["b.go"].Hash})
+			request.Reviewer = reviewer
+			got, err := s.Reactivate(ctx, request)
+			return outcome{err == nil && got.Kind == memory.TransitionAllowed, err == nil && got.Kind == memory.TransitionInvalidFacts}
+		},
+		"opinion": func(s Service, store *fakeStore, reviewer string) outcome {
+			store.records["r1"] = storedRecord(memory.StatusActive)
+			store.versions["r1/v0"] = VersionFacts{Found: true, ContentHash: "sha256:old"}
+			request := opinionRequest()
+			request.Reviewer = reviewer
+			got, err := s.AddOpinion(ctx, request)
+			return outcome{err == nil && got.Kind == memory.OpinionAdd, err == nil && got.Kind == memory.OpinionInvalidFacts}
+		},
+		"merge": func(s Service, store *fakeStore, reviewer string) outcome {
+			for _, proposal := range mergedProposals() {
+				store.records[proposal.Record.ID] = proposal
+			}
+			request := mergeRequest()
+			request.Author = reviewer
+			got, err := s.Merge(ctx, request)
+			refused := err == nil && !got.Applied && got.Creation.Kind == memory.CreationInvalidFacts && got.Transitions[0].Decision.Kind == memory.TransitionInvalidFacts
+			return outcome{err == nil && got.Applied, refused}
+		},
+	}
+	for name, procedure := range run {
+		t.Run(name, func(t *testing.T) {
+			store := newFakeStore()
+			if got := procedure(service(store), store, atBound); !got.allowed {
+				t.Fatalf("reviewer at the bound refused: %+v", got)
+			}
+			store = newFakeStore()
+			if got := procedure(service(store), store, overBound); !got.refused {
+				t.Fatalf("reviewer over the bound not refused: %+v", got)
+			}
+			wantNoWrites(t, store)
+		})
+	}
+}
+
+// A secret posing as a blob hash is refused, never stored.
+func TestCreateRefusesABlobHashOutsideItsGrammar(t *testing.T) {
+	store := newFakeStore()
+	request := agentProposal()
+	request.Sources = []memory.RecordSource{{Kind: memory.SourceFile, Path: "a.go", BlobHash: "password=hunter2"}}
+	got, err := service(store).CreateRecord(context.Background(), request)
+	if err != nil || got.Kind != memory.CreationInvalidSource || strings.Contains(got.Reason, "hunter2") {
+		t.Fatalf("result %+v, error %v", got, err)
+	}
+	wantNoWrites(t, store)
+}
+
+// A snapshot hash outside the blob hash grammar is never a verification, so
+// a faulty snapshot adapter cannot make Reactivate store it.
+func TestReactivateRefusesAnInvalidSnapshotHash(t *testing.T) {
+	store := newFakeStore(storedRecord(memory.StatusNeedsVerification))
+	snapshot := &fakeSnapshot{files: map[string]compose.FileObservation{
+		"a.go": {Observation: memory.SourcePresent, Hash: "password=hunter2"},
+		"b.go": {Observation: memory.SourcePresent, Hash: "d63f2a2ff97b62fba0150067982990bf2a5f8286"},
+	}}
+	got, err := Service{Store: store, Snapshot: snapshot, NewID: sequentialIDs()}.Reactivate(context.Background(),
+		reactivateRequest(Verification{Path: "a.go", VerifiedHash: "password=hunter2"}, Verification{Path: "b.go", VerifiedHash: "d63f2a2ff97b62fba0150067982990bf2a5f8286"}))
+	if err != nil || got.Kind != memory.TransitionVerificationMissing {
+		t.Fatalf("result %+v, error %v", got, err)
+	}
+	wantNoWrites(t, store)
 }

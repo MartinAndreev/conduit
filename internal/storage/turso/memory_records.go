@@ -121,15 +121,13 @@ func (t memoryRecordTx) ReadVersion(ctx context.Context, recordID, versionID str
 
 // ReadExpiredProposals selects and orders by the text of created_at, which
 // the writer stores in UTC with a fixed width, so text order is time order
-// and a position's time formats back to the stored text.
+// (positionAfter).
 func (t memoryRecordTx) ReadExpiredProposals(ctx context.Context, cutoff time.Time, after records.ProposalPosition, limit int) ([]records.ProposalPosition, error) {
 	recordTable := table.MemoryRecords
 	condition := recordTable.Status.EQ(jet.String(string(memory.StatusProposed))).
 		AND(recordTable.CreatedAt.LT_EQ(jet.String(formatStoredTime(cutoff))))
 	if after.RecordID != "" {
-		afterTime := jet.String(formatStoredTime(after.CreatedAt))
-		condition = condition.AND(recordTable.CreatedAt.GT(afterTime).
-			OR(recordTable.CreatedAt.EQ(afterTime).AND(recordTable.ID.GT(jet.String(after.RecordID)))))
+		condition = condition.AND(positionAfter(after))
 	}
 	query, args := jet.SELECT(recordTable.CreatedAt, recordTable.ID).FROM(recordTable).WHERE(condition).
 		ORDER_BY(recordTable.CreatedAt, recordTable.ID).LIMIT(int64(limit)).Sql()

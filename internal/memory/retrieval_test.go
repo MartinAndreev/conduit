@@ -76,16 +76,38 @@ func TestDecideRetrievalEligibility(t *testing.T) {
 		{"version scope in another project", func(f *RetrievalFacts) { f.Version.Scope.ProjectID = "p2" }, RetrievalForeignProject, nil},
 
 		{"other attempt", func(f *RetrievalFacts) {
-			f.Version.Scope.Visibility = VisibilityAttempt
+			f.Version.Scope.Visibility, f.Version.Scope.AcceptedResultRef = VisibilityAttempt, ""
 			f.Version.Scope.AttemptID = "a2"
+			f.ExactVersionApproved = false
 		}, RetrievalNotVisible, nil},
 		{"attempt scope with no current attempt", func(f *RetrievalFacts) {
-			f.CurrentAttemptID, f.Version.Scope.Visibility = "", VisibilityAttempt
+			f.CurrentAttemptID, f.Version.Scope.Visibility, f.Version.Scope.AcceptedResultRef = "", VisibilityAttempt, ""
+			f.ExactVersionApproved = false
+		}, RetrievalNotVisible, nil},
+		// Effective visibility: a human approval of the exact version makes an
+		// attempt observation visible to the whole project.
+		{"approved attempt version in another attempt", func(f *RetrievalFacts) {
+			f.Version.Trust = TrustAgentClaim
+			f.Version.Scope.Visibility, f.Version.Scope.AcceptedResultRef = VisibilityAttempt, ""
+			f.Version.Scope.AttemptID = "a2"
+		}, RetrievalEligible, nil},
+		{"approved attempt version with no current attempt", func(f *RetrievalFacts) {
+			f.CurrentAttemptID, f.Version.Scope.Visibility, f.Version.Scope.AcceptedResultRef = "", VisibilityAttempt, ""
+		}, RetrievalEligible, nil},
+		{"unapproved agent claim in another attempt", func(f *RetrievalFacts) {
+			f.Version.Trust, f.ExactVersionApproved = TrustAgentClaim, false
+			f.Version.Scope.Visibility, f.Version.Scope.AcceptedResultRef = VisibilityAttempt, ""
+			f.Version.Scope.AttemptID = "a2"
 		}, RetrievalNotVisible, nil},
 		{"human origin in attempt scope", func(f *RetrievalFacts) {
 			human(f)
 			f.Version.Scope.Visibility = VisibilityAttempt
 		}, RetrievalNotVisible, nil},
+		{"unapproved human origin in attempt scope", func(f *RetrievalFacts) {
+			human(f)
+			f.Version.Scope.Visibility, f.ExactVersionApproved = VisibilityAttempt, false
+		}, RetrievalNotVisible, nil},
+		// An approval does not stand in for the accepted result.
 		{"project without accepted result", func(f *RetrievalFacts) { f.Version.Scope.AcceptedResultRef = "" }, RetrievalNotVisible, nil},
 		{"human without exact approval", func(f *RetrievalFacts) {
 			human(f)

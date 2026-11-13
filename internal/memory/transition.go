@@ -41,6 +41,9 @@ type RecordTransitionFacts struct {
 	// request field or an agent binding cannot claim it.
 	Actor           Actor
 	ExpectedVersion int64
+	// Reviewer is who the review of a reviewed transition names: non-empty
+	// and within MaxIdentityBytes. Transitions that write no review ignore it.
+	Reviewer string
 
 	// ApprovedVersionID and ApprovedContentHash are what the approval names.
 	ApprovedVersionID   string
@@ -85,9 +88,12 @@ const (
 	// version whose content was deleted: an approval, a reason, or a new
 	// version copied from it. Otherwise deleted text could return through a
 	// review reason or source, and nobody can review text that is gone.
-	TransitionContentDeleted      RecordTransitionKind = "content_deleted"
-	TransitionApprovalMismatch    RecordTransitionKind = "approval_mismatch"
-	TransitionReasonRequired      RecordTransitionKind = "reason_required"
+	TransitionContentDeleted   RecordTransitionKind = "content_deleted"
+	TransitionApprovalMismatch RecordTransitionKind = "approval_mismatch"
+	TransitionReasonRequired   RecordTransitionKind = "reason_required"
+	// TransitionReasonTooLong refuses a reason above MaxTextFieldBytes after
+	// redaction; it is never truncated.
+	TransitionReasonTooLong       RecordTransitionKind = "reason_too_long"
 	TransitionRetentionNotElapsed RecordTransitionKind = "retention_not_elapsed"
 	TransitionDecisionRecorded    RecordTransitionKind = "decision_recorded"
 	TransitionSourceNotMismatched RecordTransitionKind = "source_not_mismatched"
@@ -103,7 +109,8 @@ type RecordTransitionDecision struct {
 type transitionRule struct {
 	actor Actor
 	// writesOnCurrentVersion is true when the transition writes a review onto
-	// the current version or copies it into a new one.
+	// the current version or copies it into a new one. Each such transition
+	// writes the reviewer's review, so it also needs a valid reviewer.
 	writesOnCurrentVersion bool
 	precondition           func(RecordTransitionFacts) RecordTransitionDecision
 }
@@ -130,8 +137,10 @@ var transitionTable = map[[2]RecordStatus]transitionRule{
 // Order: invalid request facts; a missing or foreign record; invalid record
 // facts; a stale expected version, which precedes every other refusal because
 // the remaining facts were read against a record that has since changed; a
-// transition the lifecycle does not have; the wrong actor; a write onto
-// deleted content; the transition's precondition.
+// transition the lifecycle does not have; the wrong actor; for a transition
+// that writes a review, a missing reviewer or one above MaxIdentityBytes
+// (invalid_facts); a write onto deleted content; the transition's
+// precondition.
 func DecideRecordTransition(f RecordTransitionFacts) RecordTransitionDecision {
 	rule, decision := precheckTransition(f)
 	if decision.Kind != TransitionAllowed {
@@ -173,6 +182,9 @@ func precheckTransition(f RecordTransitionFacts) (transitionRule, RecordTransiti
 	if f.Actor != rule.actor {
 		return transitionRule{}, RecordTransitionDecision{Kind: TransitionActorNotAllowed, Reason: "transition requires actor " + string(rule.actor)}
 	}
+	if rule.writesOnCurrentVersion && (f.Reviewer == "" || len(f.Reviewer) > MaxIdentityBytes) {
+		return transitionRule{}, RecordTransitionDecision{Kind: TransitionInvalidFacts, Reason: "a reviewed transition needs a reviewer within the identity bound"}
+	}
 	if rule.writesOnCurrentVersion && f.CurrentContentDeleted {
 		return transitionRule{}, RecordTransitionDecision{Kind: TransitionContentDeleted, Reason: "the current version's content was deleted; nothing is written onto it"}
 	}
@@ -194,6 +206,9 @@ func approvalNamesCurrentVersion(f RecordTransitionFacts) RecordTransitionDecisi
 func reasonGiven(f RecordTransitionFacts) RecordTransitionDecision {
 	if strings.TrimSpace(f.Reason) == "" {
 		return RecordTransitionDecision{Kind: TransitionReasonRequired, Reason: "transition requires a stated reason"}
+	}
+	if len(f.Reason) > MaxTextFieldBytes {
+		return RecordTransitionDecision{Kind: TransitionReasonTooLong, Reason: "the stated reason exceeds the text field bound"}
 	}
 	return allowedTransition()
 }
@@ -241,7 +256,9 @@ func sourcesVerified(f RecordTransitionFacts) RecordTransitionDecision {
 
 // verifiedFileHashes returns the verified hash by declared file path. It
 // reports false for a duplicate or empty declared path, or any verification
-// that is missing, repeated, unrelated, or not against the current hash.
+// that is missing, repeated, unrelated, not against the current hash, or
+// whose hash is not a git blob hash (ValidBlobHash), so a faulty snapshot
+// adapter cannot store an invalid hash.
 func verifiedFileHashes(declared []RecordSource, verifications []SourceVerification) (map[string]string, bool) {
 	declaredPaths := make(map[string]bool)
 	for _, source := range declared {
@@ -259,7 +276,7 @@ func verifiedFileHashes(declared []RecordSource, verifications []SourceVerificat
 	verified := make(map[string]string, len(verifications))
 	for _, verification := range verifications {
 		if _, repeated := verified[verification.Path]; repeated || !declaredPaths[verification.Path] ||
-			verification.CurrentHash == "" || verification.VerifiedHash != verification.CurrentHash {
+			!ValidBlobHash(verification.CurrentHash) || verification.VerifiedHash != verification.CurrentHash {
 			return nil, false
 		}
 		verified[verification.Path] = verification.VerifiedHash

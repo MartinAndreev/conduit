@@ -218,3 +218,19 @@ func ContentHash(content string) string {
 	sum := sha256.Sum256([]byte(content))
 	return contentHashPrefix + hex.EncodeToString(sum[:])
 }
+
+// ValidBlobHash reports whether value is a git blob hash: exactly 40 (SHA-1)
+// or 64 (SHA-256) lowercase hexadecimal digits. A file source's blob hash is a
+// machine identity, not text: it is never redacted, so anything else is
+// refused rather than stored.
+func ValidBlobHash(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for index := 0; index < len(value); index++ {
+		if c := value[index]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}

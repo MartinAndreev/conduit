@@ -7,8 +7,23 @@ type DeduplicationSubject struct {
 	AttemptID  string
 }
 
-// DeduplicationFacts compare two proposals. ContentMatches is the caller's
-// similarity result; the spec does not define the matching method.
+// SearchTextIdentity identifies a normalized search text: the version of the
+// normalization that produced it and a digest storage computes from it.
+type SearchTextIdentity struct {
+	NormalizationVersion int64
+	Digest               string
+}
+
+// SameSearchText is the duplicate match (Martin, 2026-11-12): exact equality
+// of normalized search text under the same normalization version. Texts
+// normalized by different versions never match, and an identity without a
+// version or digest matches nothing.
+func SameSearchText(left, right SearchTextIdentity) bool {
+	return left.NormalizationVersion > 0 && left.Digest != "" && left == right
+}
+
+// DeduplicationFacts compare two proposals. ContentMatches is SameSearchText
+// of their current versions.
 type DeduplicationFacts struct {
 	Left           DeduplicationSubject
 	Right          DeduplicationSubject

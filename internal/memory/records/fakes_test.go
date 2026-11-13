@@ -163,8 +163,8 @@ func storedRecord(status memory.RecordStatus) RecordFacts {
 		Record:             memory.Record{ID: "r1", ProjectID: "p1", Category: memory.CategoryFact, Status: status, CurrentVersionID: "v1", Version: 3, CreatedAt: writeTime.Add(-100 * 24 * time.Hour)},
 		CurrentContentHash: currentHash,
 		Sources: []memory.RecordSource{
-			{Kind: memory.SourceFile, Path: "a.go", BlobHash: "blob-a"},
-			{Kind: memory.SourceFile, Path: "b.go", BlobHash: "blob-b"},
+			{Kind: memory.SourceFile, Path: "a.go", BlobHash: "388b69a7a7db1b7be1ba7d3867c07e1cdc19d9f7"},
+			{Kind: memory.SourceFile, Path: "b.go", BlobHash: "d63f2a2ff97b62fba0150067982990bf2a5f8286"},
 			{Kind: memory.SourceSpec, Ref: "specs/012"},
 		},
 	}

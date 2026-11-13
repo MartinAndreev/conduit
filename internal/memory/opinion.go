@@ -43,6 +43,9 @@ const (
 	// OpinionContentDeleted refuses a reason on a version whose content was
 	// deleted, so deleted text cannot return through memory_reviews.reason.
 	OpinionContentDeleted RecordOpinionKind = "content_deleted"
+	// OpinionReasonTooLong refuses a reason above MaxTextFieldBytes after
+	// redaction; it is never truncated.
+	OpinionReasonTooLong RecordOpinionKind = "reason_too_long"
 )
 
 type RecordOpinionDecision struct {
@@ -56,12 +59,13 @@ type RecordOpinionDecision struct {
 //
 // Order: invalid request facts; a human actor, before anything about the
 // record is revealed; a missing or foreign record or version; a content hash
-// that is not the version's; a reason on deleted content; add. An opinion
+// that is not the version's; a reason on deleted content; a reason above
+// MaxTextFieldBytes; add. An opinion
 // without a reason on deleted content is added.
 func DecideRecordOpinion(f RecordOpinionFacts) RecordOpinionDecision {
 	if f.RequestProjectID == "" || f.RequestRecordID == "" || f.VersionID == "" || f.ContentHash == "" ||
-		f.Reviewer == "" || !slices.Contains(Actors(), f.Actor) {
-		return RecordOpinionDecision{Kind: OpinionInvalidFacts, Reason: "opinion needs a project, record, version, content hash, reviewer and known actor"}
+		f.Reviewer == "" || len(f.Reviewer) > MaxIdentityBytes || !slices.Contains(Actors(), f.Actor) {
+		return RecordOpinionDecision{Kind: OpinionInvalidFacts, Reason: "opinion needs a project, record, version, content hash, a reviewer within the identity bound and a known actor"}
 	}
 	if f.Actor == ActorHuman {
 		return RecordOpinionDecision{Kind: OpinionActorNotAllowed, Reason: "only an agent or the system adds an opinion here"}
@@ -74,6 +78,9 @@ func DecideRecordOpinion(f RecordOpinionFacts) RecordOpinionDecision {
 	}
 	if f.ContentDeleted && f.Reason != "" {
 		return RecordOpinionDecision{Kind: OpinionContentDeleted, Reason: "the version's content was deleted; an opinion on it carries no reason"}
+	}
+	if len(f.Reason) > MaxTextFieldBytes {
+		return RecordOpinionDecision{Kind: OpinionReasonTooLong, Reason: "the reason exceeds the text field bound"}
 	}
 	return RecordOpinionDecision{Kind: OpinionAdd, Reason: "opinion names an existing version and its content hash"}
 }
