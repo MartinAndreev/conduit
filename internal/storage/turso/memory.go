@@ -299,25 +299,11 @@ func countTrue(flags []bool) int {
 // content and of the version's sources. Content above memory.MaxMaterialBytes
 // is not read: it comes back NULL with its size, and the size rule excludes it.
 func candidateProjections() []jet.Projection {
-	records, versions, reviews, sources := table.MemoryRecords, table.MemoryRecordVersions, table.MemoryReviews, table.MemorySources
-	approved := jet.EXISTS(
-		jet.SELECT(jet.Int(1)).FROM(reviews).WHERE(
-			reviews.VersionID.EQ(versions.ID).
-				AND(reviews.ContentHash.EQ(versions.ContentHash)).
-				AND(reviews.Actor.EQ(jet.String(string(memory.ActorHuman)))).
-				AND(reviews.Decision.EQ(jet.String(string(memory.ReviewApprove)))),
-		),
-	)
+	records, versions := table.MemoryRecords, table.MemoryRecordVersions
+	approved := exactVersionApproved()
 	contentBytes := byteLength(versions.Content)
 	boundedContent := jet.CASE().WHEN(contentBytes.LT_EQ(jet.Int(memory.MaxMaterialBytes))).THEN(versions.Content)
-	sourceCount := jet.SELECT(jet.COUNT(jet.STAR)).FROM(sources).WHERE(sources.VersionID.EQ(versions.ID))
-	sourceBytes := jet.SELECT(
-		jet.COALESCE(jet.SUMi(
-			jet.IntExp(jet.COALESCE(byteLength(sources.Ref), jet.Int(0))).
-				ADD(jet.IntExp(jet.COALESCE(byteLength(sources.Path), jet.Int(0)))).
-				ADD(jet.IntExp(jet.COALESCE(byteLength(sources.BlobHash), jet.Int(0)))),
-		), jet.Int(0)),
-	).FROM(sources).WHERE(sources.VersionID.EQ(versions.ID))
+	sourceCount, sourceBytes := sourceSizes()
 	return []jet.Projection{
 		records.ID, records.ProjectID, records.Status, records.CurrentVersionID, records.Version, records.CreatedAt,
 		versions.ID, versions.RecordID, versions.ProjectID, boundedContent, jet.COALESCE(contentBytes, jet.Int(0)), versions.ContentHash, versions.ContentDeletedAt,
@@ -325,6 +311,37 @@ func candidateProjections() []jet.Projection {
 		versions.RunID, versions.AttemptID, versions.BaseCommit, versions.AcceptedResultRef, versions.CreatedAt,
 		approved, sourceCount, sourceBytes,
 	}
+}
+
+// exactVersionApproved is whether a human approve review names the selected
+// memory_record_versions row's exact version and content hash, the fact of
+// memory.EffectiveTrust.
+func exactVersionApproved() jet.BoolExpression {
+	versions, reviews := table.MemoryRecordVersions, table.MemoryReviews
+	return jet.EXISTS(
+		jet.SELECT(jet.Int(1)).FROM(reviews).WHERE(
+			reviews.VersionID.EQ(versions.ID).
+				AND(reviews.ContentHash.EQ(versions.ContentHash)).
+				AND(reviews.Actor.EQ(jet.String(string(memory.ActorHuman)))).
+				AND(reviews.Decision.EQ(jet.String(string(memory.ReviewApprove)))),
+		),
+	)
+}
+
+// sourceSizes are the stored count and memory.SourceBytes size of the
+// selected memory_record_versions row's sources, so a reader can decide
+// whether to load them before reading any.
+func sourceSizes() (jet.Projection, jet.Projection) {
+	versions, sources := table.MemoryRecordVersions, table.MemorySources
+	count := jet.SELECT(jet.COUNT(jet.STAR)).FROM(sources).WHERE(sources.VersionID.EQ(versions.ID))
+	size := jet.SELECT(
+		jet.COALESCE(jet.SUMi(
+			jet.IntExp(jet.COALESCE(byteLength(sources.Ref), jet.Int(0))).
+				ADD(jet.IntExp(jet.COALESCE(byteLength(sources.Path), jet.Int(0)))).
+				ADD(jet.IntExp(jet.COALESCE(byteLength(sources.BlobHash), jet.Int(0)))),
+		), jet.Int(0)),
+	).FROM(sources).WHERE(sources.VersionID.EQ(versions.ID))
+	return count, size
 }
 
 // byteLength is the UTF-8 size of a text value: length() of a BLOB counts

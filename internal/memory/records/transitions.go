@@ -93,44 +93,65 @@ func (s Service) Archive(ctx context.Context, request ReasonRequest) (Transition
 	return s.decideWithReason(ctx, request, memory.StatusArchived, memory.ReviewOpinion, "archive")
 }
 
-// decideWithReason is the shared flow of Reject and Archive: redact the
-// reason, read, decide the transition to `to`, and write the status change
-// with a review of the current version carrying the reason.
+// ArchiveWithin is Archive inside the caller's transaction tx: it redacts the
+// reason, reads the record, decides and, only when allowed, writes the status
+// change and the human's opinion review with the reason. A procedure that
+// must decide something else in the same transaction first, such as the
+// confirmation of an agent's archive suggestion, calls it; the caller owns
+// the commit. A refusal writes nothing.
+func (s Service) ArchiveWithin(ctx context.Context, tx Transaction, request ReasonRequest) (TransitionResult, error) {
+	if err := validRequest(request.Now, request.Reviewer); err != nil {
+		return TransitionResult{}, err
+	}
+	return s.decideWithReasonIn(ctx, tx, request, memory.StatusArchived, memory.ReviewOpinion)
+}
+
+// decideWithReason is the shared flow of Reject and Archive in their own
+// transaction (decideWithReasonIn).
 func (s Service) decideWithReason(ctx context.Context, request ReasonRequest, to memory.RecordStatus, decisionKind memory.ReviewDecision, action string) (TransitionResult, error) {
 	if err := validRequest(request.Now, request.Reviewer); err != nil {
 		return TransitionResult{}, err
 	}
-	reason, findings := redactReason(request.Reason)
 	var result TransitionResult
 	err := s.Store.WithinRecordWrite(ctx, func(tx Transaction) error {
-		stored, err := tx.ReadRecord(ctx, request.RecordID)
-		if err != nil {
-			return fmt.Errorf("read memory record: %w", err)
-		}
-		facts := transitionFacts(request.ProjectID, request.ExpectedVersion, to, request.Actor, stored, request.Now)
-		facts.Reason, facts.Reviewer = reason, request.Reviewer
-		decision := memory.DecideRecordTransition(facts)
-		result = TransitionResult{Kind: decision.Kind, Reason: decision.Reason, Findings: findings}
-		if decision.Kind != memory.TransitionAllowed {
-			return nil
-		}
-		review := Review{
-			VersionID:   stored.Record.CurrentVersionID,
-			ContentHash: stored.CurrentContentHash,
-			Decision:    decisionKind,
-			Actor:       request.Actor,
-			Reviewer:    request.Reviewer,
-			Reason:      reason,
-		}
-		if err := s.writeReviewedChange(ctx, tx, statusChange(stored, request.ExpectedVersion, to, request.Now), review); err != nil {
-			return err
-		}
-		result.RecordVersion = request.ExpectedVersion + 1
-		return nil
+		var err error
+		result, err = s.decideWithReasonIn(ctx, tx, request, to, decisionKind)
+		return err
 	})
 	if err != nil {
 		return TransitionResult{}, fmt.Errorf("%s memory record: %w", action, err)
 	}
+	return result, nil
+}
+
+// decideWithReasonIn redacts the reason, reads, decides the transition to
+// `to`, and writes the status change with a review of the current version
+// carrying the reason, all in tx.
+func (s Service) decideWithReasonIn(ctx context.Context, tx Transaction, request ReasonRequest, to memory.RecordStatus, decisionKind memory.ReviewDecision) (TransitionResult, error) {
+	reason, findings := redactReason(request.Reason)
+	stored, err := tx.ReadRecord(ctx, request.RecordID)
+	if err != nil {
+		return TransitionResult{}, fmt.Errorf("read memory record: %w", err)
+	}
+	facts := transitionFacts(request.ProjectID, request.ExpectedVersion, to, request.Actor, stored, request.Now)
+	facts.Reason, facts.Reviewer = reason, request.Reviewer
+	decision := memory.DecideRecordTransition(facts)
+	result := TransitionResult{Kind: decision.Kind, Reason: decision.Reason, Findings: findings}
+	if decision.Kind != memory.TransitionAllowed {
+		return result, nil
+	}
+	review := Review{
+		VersionID:   stored.Record.CurrentVersionID,
+		ContentHash: stored.CurrentContentHash,
+		Decision:    decisionKind,
+		Actor:       request.Actor,
+		Reviewer:    request.Reviewer,
+		Reason:      reason,
+	}
+	if err := s.writeReviewedChange(ctx, tx, statusChange(stored, request.ExpectedVersion, to, request.Now), review); err != nil {
+		return TransitionResult{}, err
+	}
+	result.RecordVersion = request.ExpectedVersion + 1
 	return result, nil
 }
 

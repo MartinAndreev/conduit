@@ -105,36 +105,56 @@ func (s Service) DeleteRecord(ctx context.Context, request Request) (Result, err
 	}
 	var result Result
 	err := s.Store.WithinRecordDeletion(ctx, func(tx Transaction) error {
-		facts, err := tx.ReadRecordDeletionFacts(ctx, request.RecordID)
-		if err != nil {
-			return fmt.Errorf("read deletion facts: %w", err)
-		}
-		decision := memory.DecideRecordDeletion(memory.RecordDeletionFacts{
-			RequestProjectID: request.ProjectID,
-			RequestRecordID:  request.RecordID,
-			ExpectedVersion:  request.ExpectedVersion,
-			Actor:            request.Actor,
-			RecordFound:      facts.Found,
-			Record:           facts.Record,
-			Versions:         facts.Versions,
-		})
-		result = Result{Kind: decision.Kind, Reason: decision.Reason}
-		if decision.Kind != memory.DeletionDelete {
-			return nil
-		}
-		deletion, err := s.deletion(request, decision.Versions)
-		if err != nil {
-			return err
-		}
-		if err := tx.DeleteRecordContent(ctx, deletion); err != nil {
-			return fmt.Errorf("delete record content: %w", err)
-		}
-		result.Receipts, result.RecordVersion = deletion.Receipts, request.ExpectedVersion+1
-		return nil
+		var err error
+		result, err = s.deleteIn(ctx, tx, request)
+		return err
 	})
 	if err != nil {
 		return Result{}, fmt.Errorf("delete memory record: %w", err)
 	}
+	return result, nil
+}
+
+// DeleteWithin is DeleteRecord inside the caller's transaction tx: it reads
+// the record's facts, decides with memory.DecideRecordDeletion and, only for
+// a delete decision, deletes. A procedure that must decide something else in
+// the same transaction first, such as the confirmation of an agent's delete
+// suggestion, calls it; the caller owns the commit. Any other decision writes
+// nothing.
+func (s Service) DeleteWithin(ctx context.Context, tx Transaction, request Request) (Result, error) {
+	if request.Now.IsZero() {
+		return Result{}, ErrInvalidRequest
+	}
+	return s.deleteIn(ctx, tx, request)
+}
+
+// deleteIn reads, decides and, only for a delete decision, deletes in tx.
+func (s Service) deleteIn(ctx context.Context, tx Transaction, request Request) (Result, error) {
+	facts, err := tx.ReadRecordDeletionFacts(ctx, request.RecordID)
+	if err != nil {
+		return Result{}, fmt.Errorf("read deletion facts: %w", err)
+	}
+	decision := memory.DecideRecordDeletion(memory.RecordDeletionFacts{
+		RequestProjectID: request.ProjectID,
+		RequestRecordID:  request.RecordID,
+		ExpectedVersion:  request.ExpectedVersion,
+		Actor:            request.Actor,
+		RecordFound:      facts.Found,
+		Record:           facts.Record,
+		Versions:         facts.Versions,
+	})
+	result := Result{Kind: decision.Kind, Reason: decision.Reason}
+	if decision.Kind != memory.DeletionDelete {
+		return result, nil
+	}
+	deletion, err := s.deletion(request, decision.Versions)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := tx.DeleteRecordContent(ctx, deletion); err != nil {
+		return Result{}, fmt.Errorf("delete record content: %w", err)
+	}
+	result.Receipts, result.RecordVersion = deletion.Receipts, request.ExpectedVersion+1
 	return result, nil
 }
 

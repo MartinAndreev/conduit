@@ -10,7 +10,7 @@ import (
 )
 
 // OpinionRequest is an agent's or the system's opinion about one exact
-// version.
+// version. An agent's audit opinion also suggests an action (task 5.5).
 type OpinionRequest struct {
 	ProjectID   string
 	RecordID    string
@@ -18,9 +18,11 @@ type OpinionRequest struct {
 	ContentHash string
 	Actor       memory.Actor
 	Reviewer    string
-	// Reason is optional.
+	// Reason is optional without a suggestion and required with one.
 	Reason string
-	Now    time.Time
+	// Suggestion is empty for a plain opinion.
+	Suggestion memory.Suggestion
+	Now        time.Time
 }
 
 // OpinionResult reports the decision. ReviewID is set only for
@@ -34,9 +36,11 @@ type OpinionResult struct {
 
 // AddOpinion redacts the reason, reads the record and the named version,
 // decides with memory.DecideRecordOpinion and, only when allowed, writes the
-// opinion review, in one transaction. An opinion names its exact version and
-// content hash instead of an expected record version, and does not change
-// the record: it never changes trust, lifecycle or eligibility.
+// opinion review with its suggestion, in one transaction. An opinion names
+// its exact version and content hash instead of an expected record version,
+// and does not change the record: it never changes trust, lifecycle or
+// eligibility. A suggestion is only a stored proposal; a human confirms it
+// separately.
 func (s Service) AddOpinion(ctx context.Context, request OpinionRequest) (OpinionResult, error) {
 	if request.Now.IsZero() {
 		return OpinionResult{}, ErrInvalidRequest
@@ -65,6 +69,7 @@ func (s Service) AddOpinion(ctx context.Context, request OpinionRequest) (Opinio
 			VersionFound:      version.Found,
 			StoredContentHash: version.ContentHash,
 			ContentDeleted:    version.ContentDeleted,
+			Suggestion:        request.Suggestion,
 		})
 		result = OpinionResult{Kind: decision.Kind, Reason: decision.Reason, Findings: findings}
 		if decision.Kind != memory.OpinionAdd {
@@ -82,6 +87,7 @@ func (s Service) AddOpinion(ctx context.Context, request OpinionRequest) (Opinio
 			Actor:       request.Actor,
 			Reviewer:    request.Reviewer,
 			Reason:      reason,
+			Suggestion:  request.Suggestion,
 			ReviewedAt:  request.Now.UTC(),
 		}
 		if err := tx.InsertReview(ctx, review); err != nil {

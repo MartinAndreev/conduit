@@ -28,6 +28,11 @@ func opinionFacts(change ...func(*RecordOpinionFacts)) RecordOpinionFacts {
 func TestDecideRecordOpinion(t *testing.T) {
 	type change = func(*RecordOpinionFacts)
 	deleted := func(f *RecordOpinionFacts) { f.ContentDeleted = true }
+	// suggest names the current version v1 with the suggestion.
+	suggest := func(suggestion Suggestion) change {
+		return func(f *RecordOpinionFacts) { f.Suggestion, f.Record.CurrentVersionID = suggestion, "v1" }
+	}
+	status := func(status RecordStatus) change { return func(f *RecordOpinionFacts) { f.Record.Status = status } }
 	tests := []struct {
 		name    string
 		changes []change
@@ -65,6 +70,34 @@ func TestDecideRecordOpinion(t *testing.T) {
 		{"reason at the bound", []change{func(f *RecordOpinionFacts) { f.Reason = strings.Repeat("r", MaxTextFieldBytes) }}, OpinionAdd},
 		{"reason one byte over", []change{func(f *RecordOpinionFacts) { f.Reason = strings.Repeat("r", MaxTextFieldBytes+1) }}, OpinionReasonTooLong},
 		{"reason measured in bytes", []change{func(f *RecordOpinionFacts) { f.Reason = strings.Repeat("ж", MaxTextFieldBytes/2) + "r" }}, OpinionReasonTooLong},
+
+		{"archive suggestion on the current active version", []change{suggest(SuggestArchive)}, OpinionAdd},
+		{"archive suggestion on a stale record", []change{suggest(SuggestArchive), status(StatusNeedsVerification)}, OpinionAdd},
+		{"delete suggestion on the current version", []change{suggest(SuggestDelete)}, OpinionAdd},
+		{"delete suggestion on an archived record", []change{suggest(SuggestDelete), status(StatusArchived)}, OpinionAdd},
+		{"delete suggestion on a proposal", []change{suggest(SuggestDelete), status(StatusProposed)}, OpinionAdd},
+		{"unknown suggestion", []change{suggest("forget")}, OpinionInvalidFacts},
+		{"unknown suggestion precedes the actor", []change{suggest("forget"), func(f *RecordOpinionFacts) { f.Actor = ActorHuman }}, OpinionInvalidFacts},
+		{"system suggestion", []change{suggest(SuggestArchive), func(f *RecordOpinionFacts) { f.Actor = ActorSystem }}, OpinionActorNotAllowed},
+		{"human suggestion", []change{suggest(SuggestDelete), func(f *RecordOpinionFacts) { f.Actor = ActorHuman }}, OpinionActorNotAllowed},
+		{"suggestion actor precedes not found", []change{suggest(SuggestDelete), func(f *RecordOpinionFacts) { f.Actor, f.RecordFound = ActorSystem, false }}, OpinionActorNotAllowed},
+		{"suggestion on another project", []change{suggest(SuggestArchive), func(f *RecordOpinionFacts) { f.Record.ProjectID = "p2" }}, OpinionNotFound},
+		{"suggestion with another hash", []change{suggest(SuggestArchive), func(f *RecordOpinionFacts) { f.ContentHash = "c0" }}, OpinionHashMismatch},
+		{"suggestion without reason on deleted content", []change{suggest(SuggestDelete), deleted, func(f *RecordOpinionFacts) { f.Reason = "" }}, OpinionContentDeleted},
+		{"deleted content precedes a missing reason", []change{suggest(SuggestArchive), deleted, func(f *RecordOpinionFacts) { f.Reason = " " }}, OpinionContentDeleted},
+		{"suggestion without reason", []change{suggest(SuggestArchive), func(f *RecordOpinionFacts) { f.Reason = "" }}, OpinionReasonRequired},
+		{"suggestion with a blank reason", []change{suggest(SuggestDelete), func(f *RecordOpinionFacts) { f.Reason = " \n\t" }}, OpinionReasonRequired},
+		{"missing reason precedes an old version", []change{suggest(SuggestDelete), func(f *RecordOpinionFacts) { f.Reason, f.Record.CurrentVersionID = "", "v9" }}, OpinionReasonRequired},
+		{"suggestion reason one byte over", []change{suggest(SuggestArchive), func(f *RecordOpinionFacts) { f.Reason = strings.Repeat("r", MaxTextFieldBytes+1) }}, OpinionReasonTooLong},
+		{"long reason precedes an old version", []change{suggest(SuggestArchive), func(f *RecordOpinionFacts) {
+			f.Reason, f.Record.CurrentVersionID = strings.Repeat("r", MaxTextFieldBytes+1), "v9"
+		}}, OpinionReasonTooLong},
+		{"suggestion on an older version", []change{suggest(SuggestArchive), func(f *RecordOpinionFacts) { f.Record.CurrentVersionID = "v9" }}, OpinionVersionNotCurrent},
+		{"old version precedes the status", []change{suggest(SuggestArchive), status(StatusArchived), func(f *RecordOpinionFacts) { f.Record.CurrentVersionID = "v9" }}, OpinionVersionNotCurrent},
+		{"archive suggestion on an archived record", []change{suggest(SuggestArchive), status(StatusArchived)}, OpinionStatusNotApplicable},
+		{"archive suggestion on a proposal", []change{suggest(SuggestArchive), status(StatusProposed)}, OpinionStatusNotApplicable},
+		{"archive suggestion on a superseded record", []change{suggest(SuggestArchive), status(StatusSuperseded)}, OpinionStatusNotApplicable},
+		{"delete suggestion on an unknown status", []change{suggest(SuggestDelete), status("lost")}, OpinionStatusNotApplicable},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

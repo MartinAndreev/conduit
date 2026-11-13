@@ -12,7 +12,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"regexp"
 	"slices"
 	"strings"
 	"unicode"
@@ -30,17 +29,6 @@ const (
 	neutralizedMarker = "[neutralized-memory-marker]"
 	quotePrefix       = "| "
 )
-
-// identityPattern is the grammar of record and version IDs, which are never
-// masked. It covers the IDs of internal/id ("<prefix>-<hex>") and admits no
-// whitespace, quotes, "=", ":", "@", "/" or ".", so an ID cannot pose as
-// another field, a URL credential or an assignment. A vendor token shape still
-// fits the charset; secretInIdentity rejects it.
-var identityPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
-
-// contentHashPattern is the grammar of a version's content hash: SHA-256 as
-// lowercase hex with its algorithm prefix.
-var contentHashPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 // Marker is the boundary of one manifest's memory block.
 type Marker string
@@ -178,11 +166,7 @@ type redactedItem struct {
 // the redactor. It returns a reason when the redactor breaks its contract.
 func redactItem(item Item, r *redactionPass, marker string) (redactedItem, string) {
 	r.findings = nil
-	sources := make([]memory.RecordSource, len(item.Sources))
-	for i, source := range item.Sources {
-		sources[i] = memory.RecordSource{Kind: source.Kind, Ref: r.redact(source.Ref), Path: r.redact(source.Path)}
-	}
-	item.Sources = sources
+	item.Sources = r.redactSources(item.Sources)
 	if item.Mode == ModeIncludedText {
 		item.Text = r.redact(item.Text)
 	}
@@ -219,6 +203,16 @@ func (r *redactionPass) redact(value string) string {
 	}
 	r.findings = redaction.MergeFindings(r.findings, result.Findings)
 	return result.Text
+}
+
+// redactSources returns the sources with every ref and path redacted and
+// without blob hashes, which are not shown.
+func (r *redactionPass) redactSources(sources []memory.RecordSource) []memory.RecordSource {
+	redacted := make([]memory.RecordSource, len(sources))
+	for i, source := range sources {
+		redacted[i] = memory.RecordSource{Kind: source.Kind, Ref: r.redact(source.Ref), Path: r.redact(source.Path)}
+	}
+	return redacted
 }
 
 // neutralize replaces every exact marker occurrence and reports how many.
@@ -332,14 +326,22 @@ func invalidInput(in Input, redactor redaction.Redactor) string {
 // the whole input; the reason names only the item and the field.
 func secretInIdentity(items []Item, redactor redaction.Redactor) string {
 	for i, item := range items {
-		for _, field := range []struct{ name, value string }{
-			{"record id", item.RecordID},
-			{"version id", item.VersionID},
-			{"content hash", item.ContentHash},
-		} {
-			if !unchangedByRedaction(field.value, redactor) {
-				return fmt.Sprintf("item %d: %s contains a detected secret", i+1, field.name)
-			}
+		if reason := secretInItemIdentity(i, item.RecordID, item.VersionID, item.ContentHash, redactor); reason != "" {
+			return reason
+		}
+	}
+	return ""
+}
+
+// secretInItemIdentity checks one item's identities; index is 0-based.
+func secretInItemIdentity(index int, recordID, versionID, contentHash string, redactor redaction.Redactor) string {
+	for _, field := range []struct{ name, value string }{
+		{"record id", recordID},
+		{"version id", versionID},
+		{"content hash", contentHash},
+	} {
+		if !unchangedByRedaction(field.value, redactor) {
+			return fmt.Sprintf("item %d: %s contains a detected secret", index+1, field.name)
 		}
 	}
 	return ""
@@ -350,7 +352,7 @@ func secretInIdentity(items []Item, redactor redaction.Redactor) string {
 // and without a finding. Callers use it to decide whether an ID may be shown
 // outside a rendered part, for example in an exclusion.
 func SafeIdentity(id string, redactor redaction.Redactor) bool {
-	return identityPattern.MatchString(id) && unchangedByRedaction(id, redactor)
+	return memory.ValidIdentity(id) && unchangedByRedaction(id, redactor)
 }
 
 func unchangedByRedaction(value string, redactor redaction.Redactor) bool {
@@ -361,10 +363,10 @@ func unchangedByRedaction(value string, redactor redaction.Redactor) bool {
 // invalidItem checks the rendering format; trust, labels and sources are
 // memory's decision.
 func invalidItem(item Item) string {
-	if !identityPattern.MatchString(item.RecordID) || !identityPattern.MatchString(item.VersionID) {
+	if !memory.ValidIdentity(item.RecordID) || !memory.ValidIdentity(item.VersionID) {
 		return "record and version ids must match the id grammar"
 	}
-	if !contentHashPattern.MatchString(item.ContentHash) {
+	if !memory.ValidContentHash(item.ContentHash) {
 		return "content hash must be sha256: followed by 64 lowercase hex digits"
 	}
 	decision := memory.DecideRenderableItem(memory.RenderableItemFacts{Trust: item.Trust, Labels: item.Labels, Sources: item.Sources})

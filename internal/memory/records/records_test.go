@@ -145,6 +145,10 @@ func TestInvalidRequestsTouchNoStore(t *testing.T) {
 		"supersede without author": func() error { _, err := s.Supersede(ctx, SupersedeRequest{Now: writeTime}); return err },
 		"opinion without time":     func() error { _, err := s.AddOpinion(ctx, OpinionRequest{}); return err },
 		"merge without author":     func() error { _, err := s.Merge(ctx, MergeRequest{Now: writeTime}); return err },
+		"archive within without time": func() error {
+			_, err := s.ArchiveWithin(ctx, fakeTransaction{store}, reason)
+			return err
+		},
 	}
 	for name, call := range calls {
 		if err := call(); !errors.Is(err, ErrInvalidRequest) {
@@ -482,6 +486,66 @@ func TestAddOpinion(t *testing.T) {
 	got, err = service(deleted).AddOpinion(context.Background(), withoutReason)
 	if err != nil || got.Kind != memory.OpinionAdd || deleted.reviews[0].Reason != "" {
 		t.Fatalf("result %+v, error %v", got, err)
+	}
+}
+
+// An agent's audit opinion carries its suggestion into the review; the rule
+// refuses one about an older version and writes nothing.
+func TestAddOpinionWithSuggestion(t *testing.T) {
+	suggestion := opinionRequest()
+	suggestion.VersionID, suggestion.ContentHash, suggestion.Suggestion = "v1", currentHash, memory.SuggestDelete
+	suggestion.Reason = "obsolete: token=hunter2"
+	store := newFakeStore(storedRecord(memory.StatusActive))
+	store.versions["r1/v1"] = VersionFacts{Found: true, ContentHash: currentHash}
+	got, err := service(store).AddOpinion(context.Background(), suggestion)
+	if err != nil || got.Kind != memory.OpinionAdd || got.ReviewID != "review-1" || len(got.Findings) != 1 {
+		t.Fatalf("result %+v, error %v", got, err)
+	}
+	review := store.reviews[0]
+	if review.Suggestion != memory.SuggestDelete || review.Actor != memory.ActorAgent || review.VersionID != "v1" || strings.Contains(review.Reason, "hunter2") {
+		t.Fatalf("review = %+v", review)
+	}
+
+	older := newFakeStore(storedRecord(memory.StatusActive))
+	older.versions["r1/v0"] = VersionFacts{Found: true, ContentHash: "sha256:old"}
+	stale := opinionRequest()
+	stale.Suggestion = memory.SuggestArchive
+	got, err = service(older).AddOpinion(context.Background(), stale)
+	if err != nil || got.Kind != memory.OpinionVersionNotCurrent || got.ReviewID != "" {
+		t.Fatalf("result %+v, error %v", got, err)
+	}
+	wantNoWrites(t, older)
+}
+
+// ArchiveWithin runs Archive's read, decision and writes in the caller's
+// transaction and leaves the commit to it.
+func TestArchiveWithinUsesTheCallersTransaction(t *testing.T) {
+	store := newFakeStore(storedRecord(memory.StatusNeedsVerification))
+	request := ReasonRequest{ProjectID: "p1", RecordID: "r1", ExpectedVersion: 3, Actor: memory.ActorHuman, Reviewer: "martin", Reason: "obsolete", Now: writeTime}
+	got, err := service(store).ArchiveWithin(context.Background(), fakeTransaction{store}, request)
+	if err != nil || got.Kind != memory.TransitionAllowed || got.RecordVersion != 4 {
+		t.Fatalf("result %+v, error %v", got, err)
+	}
+	if store.transactions != 0 {
+		t.Fatalf("transactions = %d", store.transactions)
+	}
+	wantWrites(t, store, "status r1 needs_verification->archived", "review v1 opinion by human")
+	if store.reviews[0].Reason != "obsolete" || store.reviews[0].Suggestion != "" {
+		t.Fatalf("review = %+v", store.reviews[0])
+	}
+
+	stale := newFakeStore(storedRecord(memory.StatusActive))
+	request.ExpectedVersion = 2
+	got, err = service(stale).ArchiveWithin(context.Background(), fakeTransaction{stale}, request)
+	if err != nil || got.Kind != memory.TransitionVersionConflict {
+		t.Fatalf("result %+v, error %v", got, err)
+	}
+	wantNoWrites(t, stale)
+
+	failing := newFakeStore(storedRecord(memory.StatusActive))
+	failing.failures["ReadRecord"] = errInjected
+	if _, err := service(failing).ArchiveWithin(context.Background(), fakeTransaction{failing}, request); !errors.Is(err, errInjected) {
+		t.Fatalf("error = %v", err)
 	}
 }
 

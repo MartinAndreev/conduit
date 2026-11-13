@@ -186,3 +186,24 @@ func TestDeleteRecordDefaultsToRandomReceiptIDs(t *testing.T) {
 		t.Fatalf("receipts = %+v", got.Receipts)
 	}
 }
+
+// DeleteWithin runs the deletion in the caller's transaction and leaves the
+// commit to it; a refusal writes nothing.
+func TestDeleteWithinUsesTheCallersTransaction(t *testing.T) {
+	store := &fakeStore{facts: storedRecord()}
+	service := Service{Store: store, NewID: sequentialIDs()}
+	got, err := service.DeleteWithin(context.Background(), fakeTransaction{store}, humanRequest())
+	if err != nil || got.Kind != memory.DeletionDelete || got.RecordVersion != 5 || len(store.deletions) != 1 || store.transactions != 0 {
+		t.Fatalf("result %+v, error %v, deletions %d, transactions %d", got, err, len(store.deletions), store.transactions)
+	}
+	stale := &fakeStore{facts: storedRecord()}
+	request := humanRequest()
+	request.ExpectedVersion = 3
+	if got, err := service.DeleteWithin(context.Background(), fakeTransaction{stale}, request); err != nil || got.Kind != memory.DeletionVersionConflict || len(stale.deletions) != 0 {
+		t.Fatalf("result %+v, error %v", got, err)
+	}
+	request.Now = time.Time{}
+	if _, err := service.DeleteWithin(context.Background(), fakeTransaction{stale}, request); !errors.Is(err, ErrInvalidRequest) || len(stale.readIDs) != 1 {
+		t.Fatalf("error %v, reads %v", err, stale.readIDs)
+	}
+}

@@ -5,14 +5,11 @@
 package proposals
 
 import (
-	"bytes"
 	"encoding/json"
-	"io"
-	"strings"
-	"unicode"
 
 	"github.com/MartinAndreev/conduit/internal/memory"
 	"github.com/MartinAndreev/conduit/internal/memory/redaction"
+	"github.com/MartinAndreev/conduit/internal/memory/reportblock"
 )
 
 // BlockInfo is the info string of the fenced code block that carries an
@@ -26,27 +23,6 @@ type SearchNormalizer interface {
 	// write for content.
 	SearchTextIdentity(content string) memory.SearchTextIdentity
 }
-
-// BlockKind is what the report held, read as a whole.
-type BlockKind string
-
-const (
-	// BlockAbsent: no proposal block. The report proposes nothing; this is
-	// not an error.
-	BlockAbsent BlockKind = "absent"
-	// BlockRead: exactly one block, which decoded; its entries were decided.
-	BlockRead BlockKind = "read"
-	// BlockMultiple: more than one proposal block, counting an unclosed one.
-	// None is read, because none can be told to be the report's.
-	BlockMultiple BlockKind = "multiple"
-	// BlockMalformed: one block that is unclosed, is not one JSON object,
-	// has a field other than "proposals", or whose "proposals" is missing or
-	// not an array. Nothing is read.
-	BlockMalformed BlockKind = "malformed"
-	// BlockTooLarge: the report is over memory.MaxReportBytes. It is refused
-	// as a whole: nothing is scanned, decoded or redacted.
-	BlockTooLarge BlockKind = "too_large"
-)
 
 // Proposal is one kept entry, with its content, refs and paths redacted.
 type Proposal struct {
@@ -70,7 +46,7 @@ type DropCount struct {
 // order, without zero counts. It holds nothing else from the report: no raw
 // text, field or field name, and no decoder error.
 type Extraction struct {
-	Block     BlockKind
+	Block     reportblock.Kind
 	Findings  []redaction.Finding
 	Entries   int
 	Proposals []Proposal
@@ -78,7 +54,7 @@ type Extraction struct {
 }
 
 // Extract reads an agent's report (Martin, 2026-11-13): a report over
-// memory.MaxReportBytes is refused whole (BlockTooLarge). Otherwise it finds
+// memory.MaxReportBytes is refused whole (reportblock.TooLarge). Otherwise it finds
 // the proposal block in the raw report and decodes its JSON, then redacts
 // each decoded content, ref and path once, and decides each entry with
 // memory.DecideProposalKeep in report order. Decoding comes first, so a
@@ -97,9 +73,6 @@ type Extraction struct {
 // It is pure: it performs no I/O. Its result holds only redacted field text,
 // enums, counts and validated hashes.
 func Extract(report string, redactor redaction.Redactor, normalizer SearchNormalizer) Extraction {
-	if len(report) > memory.MaxReportBytes {
-		return Extraction{Block: BlockTooLarge}
-	}
 	var extraction Extraction
 	var entries []json.RawMessage
 	extraction.Block, entries = readBlock(report)
@@ -163,25 +136,20 @@ func redactProposal(proposal Proposal, redactor redaction.Redactor) (Proposal, [
 	return proposal, findings
 }
 
-// readBlock finds the one proposal block and decodes its envelope,
-// {"proposals": [...]}, refusing any other field and trailing data.
-func readBlock(text string) (BlockKind, []json.RawMessage) {
-	bodies, unclosed := proposalBlocks(text)
-	switch blocks := len(bodies); {
-	case unclosed && blocks > 0, blocks > 1:
-		return BlockMultiple, nil
-	case unclosed:
-		return BlockMalformed, nil
-	case blocks == 0:
-		return BlockAbsent, nil
+// readBlock finds the one proposal block (reportblock.Find) and decodes its
+// envelope, {"proposals": [...]}, refusing any other field and trailing data.
+func readBlock(text string) (reportblock.Kind, []json.RawMessage) {
+	kind, body := reportblock.Find(text, BlockInfo)
+	if kind != reportblock.Read {
+		return kind, nil
 	}
 	var envelope struct {
 		Proposals *[]json.RawMessage `json:"proposals"`
 	}
-	if !decodeObject([]byte(bodies[0]), &envelope, 1) || envelope.Proposals == nil {
-		return BlockMalformed, nil
+	if !reportblock.DecodeObject([]byte(body), &envelope, 1) || envelope.Proposals == nil {
+		return reportblock.Malformed, nil
 	}
-	return BlockRead, *envelope.Proposals
+	return reportblock.Read, *envelope.Proposals
 }
 
 type entryJSON struct {
@@ -201,7 +169,7 @@ type sourceJSON struct {
 // of the format's fields with their types; the rule then drops the entry.
 func decodeEntry(raw json.RawMessage) (entryJSON, bool) {
 	var entry entryJSON
-	if !decodeObject(raw, &entry, entryKeyDepth) {
+	if !reportblock.DecodeObject(raw, &entry, entryKeyDepth) {
 		return entryJSON{}, false
 	}
 	return entry, true
@@ -218,175 +186,5 @@ func proposalOf(entry entryJSON) Proposal {
 	return proposal
 }
 
-// decodeObject decodes exactly one JSON object into target, refusing unknown
-// fields, repeated fields and trailing data. Field names match as
-// encoding/json matches them, ignoring case, so a repeat is a name equal to
-// an earlier one of the same object under that folding. Objects nested
-// deeper than keyDepth are not checked for repeats here: the envelope checks
-// only its own fields, and each entry is decoded, and checked, on its own.
-// The decoder's error is dropped: it can quote report text.
-func decodeObject(data []byte, target any, keyDepth int) bool {
-	if !bytes.HasPrefix(bytes.TrimSpace(data), []byte("{")) || !uniqueKeys(data, keyDepth) {
-		return false
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return false
-	}
-	_, err := decoder.Token()
-	return err == io.EOF
-}
-
 // entryKeyDepth checks an entry's own fields and those of its sources.
 const entryKeyDepth = 2
-
-// maxNesting bounds the objects and arrays open at once in a proposal block,
-// counted from the block's top value. The format needs 5 (envelope,
-// proposals, entry, sources, source); anything deeper is malformed, and the
-// bound keeps the key check's work and memory per level fixed.
-const maxNesting = 8
-
-// keyFrame is one open object or array of the key check.
-type keyFrame struct {
-	object    bool
-	expectKey bool
-	// objectsAround counts the objects that enclose this one.
-	objectsAround int
-	names         map[string]bool
-}
-
-// uniqueKeys reports whether data's first value nests at most maxNesting
-// objects and arrays and no object of it, down to keyDepth levels of object
-// nesting, names a field twice under encoding/json's case folding. It walks
-// the tokens iteratively, so no input can deepen the call stack. Invalid
-// JSON reports false; decoding refuses it anyway.
-func uniqueKeys(data []byte, keyDepth int) bool {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	var stack []keyFrame
-	for {
-		token, err := decoder.Token()
-		if err != nil {
-			return false
-		}
-		switch token {
-		case json.Delim('{'), json.Delim('['):
-			if len(stack) == maxNesting {
-				return false
-			}
-			frame := keyFrame{object: token == json.Delim('{'), expectKey: true}
-			if len(stack) > 0 {
-				top := stack[len(stack)-1]
-				frame.objectsAround = top.objectsAround
-				if top.object {
-					frame.objectsAround++
-				}
-			}
-			if frame.object {
-				frame.names = make(map[string]bool)
-			}
-			stack = append(stack, frame)
-			continue
-		case json.Delim('}'), json.Delim(']'):
-			stack = stack[:len(stack)-1]
-		default:
-			if top := len(stack) - 1; top >= 0 && stack[top].object && stack[top].expectKey {
-				folded := foldName(token.(string))
-				if stack[top].objectsAround < keyDepth && stack[top].names[folded] {
-					return false
-				}
-				stack[top].names[folded], stack[top].expectKey = true, false
-				continue
-			}
-		}
-		// A value ended: the enclosing object expects its next key.
-		if len(stack) == 0 {
-			return true
-		}
-		if top := len(stack) - 1; stack[top].object {
-			stack[top].expectKey = true
-		}
-	}
-}
-
-// foldName maps every rune to the smallest rune of its simple case folding
-// orbit, so two names are equal exactly when strings.EqualFold, the matching
-// encoding/json uses, finds them equal (for example "ſ" and "s").
-func foldName(name string) string {
-	return strings.Map(func(r rune) rune {
-		smallest := r
-		for folded := unicode.SimpleFold(r); folded != r; folded = unicode.SimpleFold(folded) {
-			smallest = min(smallest, folded)
-		}
-		return smallest
-	}, name)
-}
-
-// fence is an open fenced code block.
-type fence struct {
-	char      byte
-	length    int
-	proposals bool
-}
-
-// proposalBlocks returns the bodies of the closed fenced code blocks whose
-// info string is exactly BlockInfo, and whether such a block is still open at
-// the end of the text. Fences follow CommonMark: up to three spaces of
-// indentation, three or more backticks or tildes, and a closing fence of the
-// same character at least as long with nothing after it. A fence inside
-// another block is that block's content. LF, CRLF and a lone CR end a line.
-func proposalBlocks(text string) ([]string, bool) {
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	text = strings.ReplaceAll(text, "\r", "\n")
-	var bodies, body []string
-	var open *fence
-	for _, line := range strings.Split(text, "\n") {
-		switch {
-		case open == nil:
-			if opened, ok := openingFence(line); ok {
-				open, body = &opened, nil
-			}
-		case closesFence(line, *open):
-			if open.proposals {
-				bodies = append(bodies, strings.Join(body, "\n"))
-			}
-			open = nil
-		default:
-			body = append(body, line)
-		}
-	}
-	return bodies, open != nil && open.proposals
-}
-
-// fenceRun splits a line into its fence character run, after at most three
-// spaces of indentation, and the rest of the line. The run is empty when the
-// line does not start with three or more backticks or tildes.
-func fenceRun(line string) (string, string) {
-	indent := len(line) - len(strings.TrimLeft(line, " "))
-	if indent > 3 {
-		return "", ""
-	}
-	line = line[indent:]
-	if line == "" || (line[0] != '`' && line[0] != '~') {
-		return "", ""
-	}
-	length := len(line) - len(strings.TrimLeft(line, line[:1]))
-	if length < 3 {
-		return "", ""
-	}
-	return line[:length], line[length:]
-}
-
-func openingFence(line string) (fence, bool) {
-	run, info := fenceRun(line)
-	if run == "" || (run[0] == '`' && strings.Contains(info, "`")) {
-		return fence{}, false
-	}
-	return fence{char: run[0], length: len(run), proposals: strings.TrimSpace(info) == BlockInfo}, true
-}
-
-func closesFence(line string, open fence) bool {
-	run, rest := fenceRun(line)
-	return run != "" && run[0] == open.char && len(run) >= open.length && strings.TrimSpace(rest) == ""
-}

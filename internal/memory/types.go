@@ -5,6 +5,7 @@ package memory
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"regexp"
 	"slices"
 	"time"
 )
@@ -233,4 +234,29 @@ func ValidBlobHash(value string) bool {
 		}
 	}
 	return true
+}
+
+// identityPattern is the grammar of record and version IDs, which are never
+// masked. It covers the IDs of internal/id ("<prefix>-<hex>") and admits no
+// whitespace, quotes, "=", ":", "@", "/" or ".", so an ID cannot pose as
+// another field, a URL credential or an assignment. A vendor token shape
+// still fits the charset, so a caller that shows an ID also checks that
+// redaction leaves it unchanged.
+var identityPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
+
+// contentHashPattern is the grammar of a version's content hash: SHA-256 as
+// lowercase hex with its algorithm prefix.
+var contentHashPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+// ValidIdentity reports whether value fits the grammar of a record or version
+// ID: Latin letters, digits, "_" and "-", starting with a letter or digit, at
+// most 128 characters.
+func ValidIdentity(value string) bool {
+	return identityPattern.MatchString(value)
+}
+
+// ValidContentHash reports whether value is a content hash as ContentHash
+// writes it: "sha256:" and 64 lowercase hexadecimal digits.
+func ValidContentHash(value string) bool {
+	return contentHashPattern.MatchString(value)
 }

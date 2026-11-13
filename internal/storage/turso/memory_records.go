@@ -263,8 +263,8 @@ func (t memoryRecordTx) CopyVersion(ctx context.Context, copied records.VersionC
 }
 
 // InsertReview selects the named version and content hash, so a review of a
-// missing version writes nothing, and a review with a reason is refused on a
-// version whose content was deleted (spec 012 "Задължение на пътищата за
+// missing version writes nothing, writes the suggestion when there is one,
+// and refuses a review with a reason on a version whose content was deleted (spec 012 "Задължение на пътищата за
 // запис").
 func (t memoryRecordTx) InsertReview(ctx context.Context, review records.Review) error {
 	reviews, versions := table.MemoryReviews, table.MemoryRecordVersions
@@ -278,6 +278,10 @@ func (t memoryRecordTx) InsertReview(ctx context.Context, review records.Review)
 		columns = append(columns, reviews.Reason)
 		projections = append(projections, jet.String(review.Reason))
 		named = named.AND(versions.ContentDeletedAt.IS_NULL())
+	}
+	if review.Suggestion != "" {
+		columns = append(columns, reviews.Suggestion)
+		projections = append(projections, jet.String(string(review.Suggestion)))
 	}
 	insert := reviews.INSERT(columns).QUERY(jet.SELECT(projections[0], projections[1:]...).FROM(versions).WHERE(named))
 	return execExpectingRows(ctx, t.db, "insert memory review", insert, 1, ErrMemoryWriteDiverged)

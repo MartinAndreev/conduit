@@ -89,6 +89,14 @@ func replaced(t *testing.T, statements []string, old, replacement string) []stri
 	return result
 }
 
+// withoutSuggestion is the v2 draft before task 5.5: memory_reviews without
+// the suggestion column and its CHECK.
+func withoutSuggestion(t *testing.T, statements []string) []string {
+	t.Helper()
+	statements = replaced(t, statements, "\n\t\tsuggestion TEXT CHECK (suggestion IN ('archive', 'delete')),", "")
+	return replaced(t, statements, ",\n\t\tCHECK (suggestion IS NULL OR (decision = 'opinion' AND actor = 'agent'))", "")
+}
+
 // Matching column names are not enough: a database whose tables lack a
 // constraint or an index is refused, before migrating and when current.
 func TestRejectsSchemaWithDroppedConstraintWithoutMutation(t *testing.T) {
@@ -103,7 +111,8 @@ func TestRejectsSchemaWithDroppedConstraintWithoutMutation(t *testing.T) {
 		{"v2 with v1 table missing unique sequence", "2", slices.Concat(replaced(t, v1, ",\n\t\tUNIQUE(run_id, sequence)", ""), v2)},
 		{"v2 without source foreign key", "2", slices.Concat(v1, replaced(t, v2, " REFERENCES memory_record_versions (id)", ""))},
 		{"v2 without accepted result check", "2", slices.Concat(v1, replaced(t, v2, ",\n\t\tCHECK (origin <> 'attempt' OR visibility <> 'project' OR accepted_result_ref IS NOT NULL)", ""))},
-		{"v2 draft review without actor", "2", slices.Concat(v1, replaced(t, replaced(t, v2, "\n\t\tactor TEXT NOT NULL CHECK (actor IN ('human', 'system', 'agent')),", ""), ",\n\t\tCHECK (actor = 'human' OR decision = 'opinion')", ""))},
+		{"v2 draft review without actor", "2", slices.Concat(v1, replaced(t, replaced(t, withoutSuggestion(t, v2), "\n\t\tactor TEXT NOT NULL CHECK (actor IN ('human', 'system', 'agent')),", ""), ",\n\t\tCHECK (actor = 'human' OR decision = 'opinion')", ""))},
+		{"v2 draft review without suggestion", "2", slices.Concat(v1, withoutSuggestion(t, v2))},
 		{"v2 draft receipt with free subject kind", "2", slices.Concat(v1, replaced(t, v2, "subject_kind TEXT NOT NULL CHECK (subject_kind IN ('memory_version', 'manifest_payload'))", "subject_kind TEXT NOT NULL CHECK (length(subject_kind) > 0)"))},
 		{"v2 draft context columns without byte bounds", "2", slices.Concat(v1, replaced(t, v2, "reason TEXT NOT NULL CHECK (length(CAST(reason AS BLOB)) BETWEEN 1 AND 4096),\n\t\ttrust", "reason TEXT NOT NULL CHECK (length(reason) > 0),\n\t\ttrust"))},
 		{"v2 without review index", "2", slices.Concat(v1, replaced(t, v2, "CREATE INDEX memory_reviews_version ON memory_reviews (version_id)", ""))},

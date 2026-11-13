@@ -16,4 +16,5 @@ type MemoryReviews struct {
 	Reviewer    string
 	Reason      *string
 	ReviewedAt  string
+	Suggestion  *string
 }

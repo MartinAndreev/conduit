@@ -63,8 +63,9 @@ type Transaction interface {
 	// FromVersionID, with Sources as its sources. It fails when FromVersionID
 	// is not the record's or its content was deleted.
 	CopyVersion(ctx context.Context, version VersionCopy) error
-	// InsertReview writes a review of an exact version and content hash. A
-	// review with a reason fails when the version's content was deleted.
+	// InsertReview writes a review of an exact version and content hash,
+	// with its suggestion if any. A review with a reason fails when the
+	// version's content was deleted.
 	InsertReview(ctx context.Context, review Review) error
 	// InsertRelation writes a relation between two records of one project.
 	InsertRelation(ctx context.Context, relation Relation) error
@@ -127,7 +128,8 @@ type VersionCopy struct {
 	CreatedAt     time.Time
 }
 
-// Review is one memory_reviews row. An empty Reason is stored as absent.
+// Review is one memory_reviews row. An empty Reason or Suggestion is stored
+// as absent. Only an agent opinion carries a Suggestion.
 type Review struct {
 	ID          string
 	VersionID   string
@@ -136,6 +138,7 @@ type Review struct {
 	Actor       memory.Actor
 	Reviewer    string
 	Reason      string
+	Suggestion  memory.Suggestion
 	ReviewedAt  time.Time
 }
 

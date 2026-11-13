@@ -10,6 +10,7 @@ import (
 
 	"github.com/MartinAndreev/conduit/internal/memory"
 	"github.com/MartinAndreev/conduit/internal/memory/redaction"
+	"github.com/MartinAndreev/conduit/internal/memory/reportblock"
 )
 
 func recordRequest(report string) RecordRequest {
@@ -27,7 +28,7 @@ func TestRecordProposalsCreatesEachKeptProposal(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantDropped := []DropCount{{Kind: memory.ProposalInvalidCategory, Count: 1}, {Kind: memory.ProposalOverLimit, Count: 2}}
-	if got.Extraction.Block != BlockRead || !slices.Equal(got.Extraction.Dropped, wantDropped) ||
+	if got.Extraction.Block != reportblock.Read || !slices.Equal(got.Extraction.Dropped, wantDropped) ||
 		!slices.Equal(got.Extraction.Findings, []redaction.Finding{{Kind: redaction.KindGitHubToken, Count: 1}}) {
 		t.Fatalf("extraction = %+v", got.Extraction)
 	}
@@ -65,7 +66,7 @@ func TestRecordProposalsWithoutABlockWritesNothing(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			store := newFakeRecords()
 			got, err := proposalService(store).RecordProposals(context.Background(), recordRequest(report))
-			if err != nil || got.Recorded != nil || got.Extraction.Block == BlockRead || store.transactions != 0 {
+			if err != nil || got.Recorded != nil || got.Extraction.Block == reportblock.Read || store.transactions != 0 {
 				t.Fatalf("result %+v, error %v", got, err)
 			}
 		})
@@ -168,7 +169,7 @@ func TestRecordProposalsRefusesATooLargeReport(t *testing.T) {
 	}
 	store := newFakeRecords()
 	got, err := proposalService(store).RecordProposals(context.Background(), recordRequest(padded(memory.MaxReportBytes+1)))
-	if err != nil || got.Recorded != nil || got.Extraction.Block != BlockTooLarge || got.Extraction.Entries != 0 || store.transactions != 0 {
+	if err != nil || got.Recorded != nil || got.Extraction.Block != reportblock.TooLarge || got.Extraction.Entries != 0 || store.transactions != 0 {
 		t.Fatalf("result %+v, error %v", got, err)
 	}
 	got, err = proposalService(store).RecordProposals(context.Background(), recordRequest(padded(memory.MaxReportBytes)))
