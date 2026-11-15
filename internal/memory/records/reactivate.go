@@ -95,19 +95,22 @@ func (s Service) observeVerifications(ctx context.Context, request ReactivateReq
 			declaredFiles[source.Path] = true
 		}
 	}
-	observer := compose.NewSourceObserver(s.Snapshot, request.Snapshot)
+	var paths []string
+	for _, verification := range request.Verifications {
+		if declaredFiles[verification.Path] {
+			paths = append(paths, verification.Path)
+		}
+	}
+	// All declared paths are observed with one snapshot read.
+	observed, err := compose.NewSourceObserver(s.Snapshot, request.Snapshot).Observe(ctx, paths)
+	if err != nil {
+		return nil, err
+	}
 	verifications := make([]memory.SourceVerification, len(request.Verifications))
 	for index, verification := range request.Verifications {
 		verifications[index] = memory.SourceVerification{Path: verification.Path, VerifiedHash: verification.VerifiedHash}
-		if !declaredFiles[verification.Path] {
-			continue
-		}
-		observed, err := observer.Observe(ctx, verification.Path)
-		if err != nil {
-			return nil, err
-		}
-		if observed.Observation == memory.SourcePresent {
-			verifications[index].CurrentHash = observed.Hash
+		if current, ok := observed[verification.Path]; ok && current.Observation == memory.SourcePresent {
+			verifications[index].CurrentHash = current.Hash
 		}
 	}
 	return verifications, nil

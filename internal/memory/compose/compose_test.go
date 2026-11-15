@@ -201,6 +201,63 @@ func TestSnapshotObservedOncePerPath(t *testing.T) {
 	}
 }
 
+// Every candidate's file sources are observed with one snapshot read, and
+// each candidate still gets its own observation.
+func TestSnapshotObservedInOneBatchPerComposition(t *testing.T) {
+	sources := func(paths ...string) func(*Candidate) {
+		return func(c *Candidate) {
+			c.Sources = nil
+			for _, p := range paths {
+				c.Sources = append(c.Sources, memory.RecordSource{Kind: memory.SourceFile, Path: p, BlobHash: "blob-" + strings.TrimSuffix(strings.TrimPrefix(p, "docs/"), ".md")})
+			}
+		}
+	}
+	mem := &fakeMemory{versions: []Candidate{
+		note("r1", "deploy", sources("docs/a.md", "docs/b.md")),
+		note("r2", "deploy", sources("docs/b.md", "docs/c.md")),
+		note("r3", "deploy", sources("docs/d.md")),
+	}}
+	snap := &fakeSnapshot{files: map[string]FileObservation{"docs/c.md": {Observation: memory.SourceMissing}}}
+	got := composeWith(t, mem, snap, nil, request(query("deploy")))
+	wantKind(t, got, Composed)
+	if snap.batches != 1 || len(snap.calls) != 4 {
+		t.Fatalf("snapshot read in %d batches: %v", snap.batches, snap.calls)
+	}
+	labels := map[string][]memory.RetrievalLabel{}
+	for _, item := range got.Items {
+		labels[item.RecordID] = item.Labels
+	}
+	want := map[string][]memory.RetrievalLabel{"r1": nil, "r2": {memory.LabelNeedsVerification}, "r3": nil}
+	if !reflect.DeepEqual(labels, want) {
+		t.Fatalf("labels = %v, want %v", labels, want)
+	}
+}
+
+// The record write path's Applicability returns the snapshot error without
+// naming a path.
+func TestSourceObserverApplicabilityError(t *testing.T) {
+	cause := errors.New("snapshot gone")
+	sources := []memory.RecordSource{{Kind: memory.SourceFile, Path: "docs/a.md", BlobHash: "blob-a"}}
+	_, err := NewSourceObserver(&fakeSnapshot{err: cause}, "snap1").Applicability(context.Background(), sources)
+	if !errors.Is(err, cause) || strings.Contains(err.Error(), "docs/") {
+		t.Fatalf("err = %v", err)
+	}
+	kind, err := NewSourceObserver(&fakeSnapshot{}, "snap1").Applicability(context.Background(), sources)
+	if err != nil || kind != memory.ApplicabilityApplicable {
+		t.Fatalf("kind %v, err %v", kind, err)
+	}
+}
+
+// A reader that returns fewer observations than paths breaks the port's
+// contract; composition fails without naming a path.
+func TestSnapshotReaderShortResultFails(t *testing.T) {
+	c, _ := New(&fakeMemory{versions: []Candidate{note("r1", "deploy")}}, &fakeSnapshot{short: true}, redaction.Policy{})
+	_, err := c.ComposeContext(context.Background(), request(query("deploy")))
+	if err == nil || strings.Contains(err.Error(), "docs/") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestStaleIndexResultsAreCounted(t *testing.T) {
 	old := func(c *Candidate) { c.Version.ID = c.Record.ID + "-v0" }
 	mem := &fakeMemory{

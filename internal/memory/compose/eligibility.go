@@ -8,19 +8,24 @@ import (
 )
 
 // decideEligibility evaluates every candidate: file sources against the
-// target snapshot, then retrieval eligibility. Every exclusion is recorded and
+// target snapshot, then retrieval eligibility. Every candidate's file sources
+// are observed first, with one snapshot read. Every exclusion is recorded and
 // stale index results are counted. Eligible candidates then lose deleted
 // content and get the conflict label, which needs every candidate's verdict.
 // A linked record that does not pass blocks the composition.
 func (c *Composer) decideEligibility(ctx context.Context, req Request, entries []*entry, out *Composition) ([]*entry, error) {
-	observe := NewSourceObserver(c.snapshot, req.Snapshot)
+	var paths []string
+	for _, e := range entries {
+		paths = append(paths, ObservablePaths(e.candidate.Sources)...)
+	}
+	observed, err := NewSourceObserver(c.snapshot, req.Snapshot).Observe(ctx, paths)
+	if err != nil {
+		return nil, err
+	}
 	verdicts := make(map[string]bool, len(entries))
 	var eligible []*entry
 	for _, e := range entries {
-		applicability, err := observe.Applicability(ctx, e.candidate.Sources)
-		if err != nil {
-			return nil, err
-		}
+		applicability := decideApplicability(e.candidate.Sources, observed)
 		decision := memory.DecideRetrievalEligibility(memory.RetrievalFacts{
 			TargetProjectID:      req.ProjectID,
 			CurrentAttemptID:     req.AttemptID,
@@ -106,8 +111,8 @@ func conflictFacts(candidate Candidate, verdicts map[string]bool) memory.Conflic
 
 // SourceObserver decides the applicability of declared sources against one
 // target snapshot, reading each path once. Composition uses one per
-// composition; the record write path uses it to mark a record stale or
-// verify it.
+// composition and observes all its paths with one SnapshotReader call; the
+// record write path uses it to mark a record stale or verify it.
 type SourceObserver struct {
 	reader   SnapshotReader
 	snapshot SnapshotRef
@@ -119,37 +124,77 @@ func NewSourceObserver(reader SnapshotReader, snapshot SnapshotRef) *SourceObser
 	return &SourceObserver{reader: reader, snapshot: snapshot, seen: make(map[string]FileObservation)}
 }
 
+// ObservablePaths returns the paths of the well-formed file sources, the only
+// ones Applicability observes.
+func ObservablePaths(sources []memory.RecordSource) []string {
+	var paths []string
+	for _, source := range sources {
+		if observable(source) {
+			paths = append(paths, source.Path)
+		}
+	}
+	return paths
+}
+
+func observable(source memory.RecordSource) bool {
+	return source.Kind == memory.SourceFile && source.Path != "" && source.BlobHash != ""
+}
+
 // Applicability observes every well-formed file source and decides with
 // memory.DecideApplicability. A malformed file source is passed unobserved, so
-// the rule reports it.
+// the rule reports it. Paths not observed yet are read with one call.
 func (o *SourceObserver) Applicability(ctx context.Context, sources []memory.RecordSource) (memory.ApplicabilityKind, error) {
+	observed, err := o.Observe(ctx, ObservablePaths(sources))
+	if err != nil {
+		return "", err
+	}
+	return decideApplicability(sources, observed), nil
+}
+
+// decideApplicability pairs each well-formed file source with its observation
+// and decides with memory.DecideApplicability.
+func decideApplicability(sources []memory.RecordSource, observed map[string]FileObservation) memory.ApplicabilityKind {
 	checks := make([]memory.SourceCheck, 0, len(sources))
 	for _, source := range sources {
 		check := memory.SourceCheck{Source: source}
-		if source.Kind == memory.SourceFile && source.Path != "" && source.BlobHash != "" {
-			observed, err := o.Observe(ctx, source.Path)
-			if err != nil {
-				return "", err
-			}
-			check.Observation, check.ObservedHash = observed.Observation, observed.Hash
+		if observable(source) {
+			check.Observation, check.ObservedHash = observed[source.Path].Observation, observed[source.Path].Hash
 		}
 		checks = append(checks, check)
 	}
-	return memory.DecideApplicability(memory.ApplicabilityFacts{Sources: checks}).Kind, nil
+	return memory.DecideApplicability(memory.ApplicabilityFacts{Sources: checks}).Kind
 }
 
-// Observe returns path's observation in the snapshot, reading it once. The
-// error never repeats the path.
-func (o *SourceObserver) Observe(ctx context.Context, path string) (FileObservation, error) {
-	if observed, ok := o.seen[path]; ok {
-		return observed, nil
+// Observe returns the observation of every path in the snapshot. The distinct
+// paths not observed yet are read with one SnapshotReader call, in the order
+// they first appear; when every path was seen, the reader is not called. The
+// error never repeats a path.
+func (o *SourceObserver) Observe(ctx context.Context, paths []string) (map[string]FileObservation, error) {
+	var unseen []string
+	pending := make(map[string]bool)
+	for _, path := range paths {
+		if _, ok := o.seen[path]; !ok && !pending[path] {
+			pending[path] = true
+			unseen = append(unseen, path)
+		}
 	}
-	observed, err := o.reader.ObserveFile(ctx, o.snapshot, path)
-	if err != nil {
-		// The path is not repeated: it is memory material that has not been
-		// redacted yet.
-		return FileObservation{}, fmt.Errorf("observe memory source in target snapshot: %w", err)
+	if len(unseen) > 0 {
+		observed, err := o.reader.ObserveFiles(ctx, o.snapshot, unseen)
+		if err != nil {
+			// The paths are not repeated: they are memory material that has
+			// not been redacted yet.
+			return nil, fmt.Errorf("observe memory sources in target snapshot: %w", err)
+		}
+		if len(observed) != len(unseen) {
+			return nil, fmt.Errorf("observe memory sources in target snapshot: reader returned %d observations for %d paths", len(observed), len(unseen))
+		}
+		for index, path := range unseen {
+			o.seen[path] = observed[index]
+		}
 	}
-	o.seen[path] = observed
-	return observed, nil
+	result := make(map[string]FileObservation, len(paths))
+	for _, path := range paths {
+		result[path] = o.seen[path]
+	}
+	return result, nil
 }

@@ -116,21 +116,29 @@ func (t fakeTransaction) InsertRelation(_ context.Context, relation Relation) er
 }
 
 // fakeSnapshot maps paths to observations; err fails every observation.
+// observed lists every observed path in order, batches the ObserveFiles calls.
 type fakeSnapshot struct {
 	files    map[string]compose.FileObservation
 	err      error
 	observed []string
+	batches  int
 }
 
-func (f *fakeSnapshot) ObserveFile(_ context.Context, _ compose.SnapshotRef, path string) (compose.FileObservation, error) {
-	f.observed = append(f.observed, path)
+func (f *fakeSnapshot) ObserveFiles(_ context.Context, _ compose.SnapshotRef, paths []string) ([]compose.FileObservation, error) {
+	f.batches++
+	f.observed = append(f.observed, paths...)
 	if f.err != nil {
-		return compose.FileObservation{}, f.err
+		return nil, f.err
 	}
-	if observed, ok := f.files[path]; ok {
-		return observed, nil
+	observed := make([]compose.FileObservation, 0, len(paths))
+	for _, path := range paths {
+		if observation, ok := f.files[path]; ok {
+			observed = append(observed, observation)
+			continue
+		}
+		observed = append(observed, compose.FileObservation{Observation: memory.SourceMissing})
 	}
-	return compose.FileObservation{Observation: memory.SourceMissing}, nil
+	return observed, nil
 }
 
 func sequentialIDs() func(string) (string, error) {

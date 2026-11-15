@@ -21,8 +21,12 @@ import (
 // file sources.
 type noFiles struct{}
 
-func (noFiles) ObserveFile(context.Context, compose.SnapshotRef, string) (compose.FileObservation, error) {
-	return compose.FileObservation{Observation: memory.SourceMissing}, nil
+func (noFiles) ObserveFiles(_ context.Context, _ compose.SnapshotRef, paths []string) ([]compose.FileObservation, error) {
+	observed := make([]compose.FileObservation, len(paths))
+	for index := range observed {
+		observed[index] = compose.FileObservation{Observation: memory.SourceMissing}
+	}
+	return observed, nil
 }
 
 // Through the real reader, an oversized linked record blocks composition

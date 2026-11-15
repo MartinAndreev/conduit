@@ -148,22 +148,37 @@ func (f *fakeMemory) SearchRecords(_ context.Context, q SearchQuery) (SearchResu
 }
 
 // fakeSnapshot reports every path present with the hash note gives its
-// source, unless overridden.
+// source, unless overridden. calls lists every observed path in order,
+// batches the number of ObserveFiles calls.
 type fakeSnapshot struct {
-	files map[string]FileObservation
-	err   error
-	calls []string
+	files   map[string]FileObservation
+	err     error
+	calls   []string
+	batches int
+	// short drops the last observation, breaking the port's contract.
+	short bool
 }
 
-func (f *fakeSnapshot) ObserveFile(_ context.Context, snapshot SnapshotRef, p string) (FileObservation, error) {
-	f.calls = append(f.calls, string(snapshot)+":"+p)
+func (f *fakeSnapshot) ObserveFiles(_ context.Context, snapshot SnapshotRef, paths []string) ([]FileObservation, error) {
+	f.batches++
+	for _, p := range paths {
+		f.calls = append(f.calls, string(snapshot)+":"+p)
+	}
 	if f.err != nil {
-		return FileObservation{}, f.err
+		return nil, f.err
 	}
-	if observed, ok := f.files[p]; ok {
-		return observed, nil
+	observed := make([]FileObservation, 0, len(paths))
+	for _, p := range paths {
+		if observation, ok := f.files[p]; ok {
+			observed = append(observed, observation)
+			continue
+		}
+		observed = append(observed, FileObservation{Observation: memory.SourcePresent, Hash: "blob-" + strings.TrimSuffix(path.Base(p), ".md")})
 	}
-	return FileObservation{Observation: memory.SourcePresent, Hash: "blob-" + strings.TrimSuffix(path.Base(p), ".md")}, nil
+	if f.short {
+		observed = observed[:len(observed)-1]
+	}
+	return observed, nil
 }
 
 // scriptedRedactor wraps the real policy and lets a test change the policy

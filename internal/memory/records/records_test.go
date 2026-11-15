@@ -303,8 +303,8 @@ func TestMarkNeedsVerification(t *testing.T) {
 			if err != nil || got.Kind != tt.want {
 				t.Fatalf("result %+v, error %v", got, err)
 			}
-			if !slices.Equal(snapshot.observed, []string{"a.go", "b.go"}) {
-				t.Fatalf("observed = %v", snapshot.observed)
+			if !slices.Equal(snapshot.observed, []string{"a.go", "b.go"}) || snapshot.batches != 1 {
+				t.Fatalf("observed = %v in %d batches", snapshot.observed, snapshot.batches)
 			}
 			if tt.want != memory.TransitionAllowed {
 				wantNoWrites(t, store)
@@ -391,8 +391,8 @@ func TestReactivateRefusals(t *testing.T) {
 			if err != nil || got.Kind != tt.want || got.VersionID != "" || got.RecordVersion != 0 {
 				t.Fatalf("result %+v, error %v", got, err)
 			}
-			if !slices.Equal(snapshot.observed, tt.observed) {
-				t.Fatalf("observed = %v", snapshot.observed)
+			if !slices.Equal(snapshot.observed, tt.observed) || (tt.observed != nil) != (snapshot.batches == 1) || snapshot.batches > 1 {
+				t.Fatalf("observed = %v in %d batches", snapshot.observed, snapshot.batches)
 			}
 			wantNoWrites(t, store)
 		})
@@ -717,9 +717,9 @@ func TestSweepCursorMovesPastRefusedProposals(t *testing.T) {
 // countingSnapshot counts observations and fails each one.
 type countingSnapshot struct{ observations int }
 
-func (c *countingSnapshot) ObserveFile(context.Context, compose.SnapshotRef, string) (compose.FileObservation, error) {
+func (c *countingSnapshot) ObserveFiles(context.Context, compose.SnapshotRef, []string) ([]compose.FileObservation, error) {
 	c.observations++
-	return compose.FileObservation{}, errors.New("snapshot must not be read")
+	return nil, errors.New("snapshot must not be read")
 }
 
 // Refusals that do not depend on the sources are decided before the

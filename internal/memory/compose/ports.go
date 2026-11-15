@@ -94,17 +94,21 @@ type SearchResult struct {
 }
 
 // SnapshotRef identifies the target workspace snapshot; its meaning belongs
-// to the snapshot reader.
+// to the snapshot reader. The git workspace reader (internal/memoryinfra)
+// takes the absolute path of the workspace directory, so the snapshot is the
+// working tree with its uncommitted changes.
 type SnapshotRef string
 
 // SnapshotReader observes files of the target workspace snapshot.
 type SnapshotReader interface {
-	// ObserveFile hashes path in the snapshot, in the same hash format as a
-	// file source's blob hash. A missing or unreadable file is an observation,
-	// not an error; an error means the snapshot itself could not be read.
-	// An error must not contain the path or file contents: composition
-	// returns it to its caller before any redaction.
-	ObserveFile(ctx context.Context, snapshot SnapshotRef, path string) (FileObservation, error)
+	// ObserveFiles observes every path in the snapshot with one read of it
+	// and returns one observation per path, in the order of paths. A present
+	// file's hash is in the same format as a file source's blob hash. A
+	// missing or unreadable file is an observation, not an error; an error
+	// means the snapshot itself could not be read, and then no observation is
+	// returned. An error must not contain a path or file contents:
+	// composition returns it to its caller before any redaction.
+	ObserveFiles(ctx context.Context, snapshot SnapshotRef, paths []string) ([]FileObservation, error)
 }
 
 // FileObservation is one file in the snapshot. Hash is set only for present.

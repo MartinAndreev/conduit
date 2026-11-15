@@ -31,11 +31,15 @@ const fakeSecretValue = "sk-test-0123456789abcdefghijklmnop"
 // missing.
 type snapshotFiles map[string]string
 
-func (f snapshotFiles) ObserveFile(_ context.Context, _ compose.SnapshotRef, path string) (compose.FileObservation, error) {
-	if hash, ok := f[path]; ok {
-		return compose.FileObservation{Observation: memory.SourcePresent, Hash: hash}, nil
+func (f snapshotFiles) ObserveFiles(_ context.Context, _ compose.SnapshotRef, paths []string) ([]compose.FileObservation, error) {
+	observed := make([]compose.FileObservation, len(paths))
+	for index, path := range paths {
+		observed[index] = compose.FileObservation{Observation: memory.SourceMissing}
+		if hash, ok := f[path]; ok {
+			observed[index] = compose.FileObservation{Observation: memory.SourcePresent, Hash: hash}
+		}
 	}
-	return compose.FileObservation{Observation: memory.SourceMissing}, nil
+	return observed, nil
 }
 
 func recordService(store *Store, files snapshotFiles) records.Service {
