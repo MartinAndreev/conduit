@@ -172,3 +172,25 @@ func TestConfirmPropagatesFailures(t *testing.T) {
 		})
 	}
 }
+
+// An agent or system caller is refused from the request facts: neither the
+// transaction nor the reader runs, so a failing read of an existing review
+// cannot tell it apart from a missing one.
+func TestConfirmSuggestionRefusesTheActorBeforeReading(t *testing.T) {
+	for _, actor := range []memory.Actor{memory.ActorAgent, memory.ActorSystem} {
+		for _, reviewID := range []string{"review-r1", "review-missing"} {
+			store := suggestionStore("r1", memory.StatusActive, memory.SuggestArchive)
+			store.failures["ReadSuggestion"] = errInjected
+			store.failTransaction = 1
+			request := confirmRequest(reviewID)
+			request.Actor = actor
+			got, err := auditService(store).ConfirmSuggestion(context.Background(), request)
+			if err != nil || got.Kind != memory.SuggestionActorNotAllowed || got.Reason == "" {
+				t.Fatalf("%s %s: result %+v, error %v", actor, reviewID, got, err)
+			}
+			if store.transactions != 0 || len(store.reads) != 0 {
+				t.Fatalf("%s %s: transactions %d, reads %v", actor, reviewID, store.transactions, store.reads)
+			}
+		}
+	}
+}

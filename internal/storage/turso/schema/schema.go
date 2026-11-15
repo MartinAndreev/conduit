@@ -50,8 +50,10 @@ var Version1Statements = []string{
 // The memory_records -> current version reference is deferred so a record and
 // its first version can be inserted in one transaction. A memory_reviews row
 // names who recorded it (actor) and the person or agent (reviewer); only a
-// human approves or rejects, system and agent reviews are opinions. Only an
-// agent opinion carries a suggestion (memory.Suggestions, task 5.5).
+// human approves, rejects or dismisses, system and agent reviews are
+// opinions. Only an agent opinion carries a suggestion (memory.Suggestions,
+// task 5.5), and a human dismissal always carries the dismissed one (Martin,
+// 7а, 2026-11-15).
 //
 // Every free-text memory_* and context_* column has a UTF-8 byte bound, so no
 // read loads an unbounded value: identities, hashes and other metadata
@@ -124,7 +126,7 @@ var Version2Statements = []string{
 		id TEXT NOT NULL PRIMARY KEY CHECK (length(CAST(id AS BLOB)) BETWEEN 1 AND 256),
 		version_id TEXT NOT NULL,
 		content_hash TEXT NOT NULL,
-		decision TEXT NOT NULL CHECK (decision IN ('approve', 'reject', 'opinion')),
+		decision TEXT NOT NULL CHECK (decision IN ('approve', 'reject', 'opinion', 'dismiss')),
 		actor TEXT NOT NULL CHECK (actor IN ('human', 'system', 'agent')),
 		reviewer TEXT NOT NULL CHECK (length(CAST(reviewer AS BLOB)) BETWEEN 1 AND 256),
 		reason TEXT CHECK (length(CAST(reason AS BLOB)) BETWEEN 1 AND 4096),
@@ -132,7 +134,8 @@ var Version2Statements = []string{
 		suggestion TEXT CHECK (suggestion IN ('archive', 'delete')),
 		FOREIGN KEY (version_id, content_hash) REFERENCES memory_record_versions (id, content_hash),
 		CHECK (actor = 'human' OR decision = 'opinion'),
-		CHECK (suggestion IS NULL OR (decision = 'opinion' AND actor = 'agent'))
+		CHECK (suggestion IS NULL OR (decision = 'opinion' AND actor = 'agent') OR decision = 'dismiss'),
+		CHECK (decision <> 'dismiss' OR (actor = 'human' AND suggestion IS NOT NULL))
 	)`,
 	`CREATE INDEX memory_reviews_version ON memory_reviews (version_id)`,
 	`CREATE TABLE memory_relations (

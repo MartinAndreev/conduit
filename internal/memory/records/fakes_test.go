@@ -19,8 +19,10 @@ var writeTime = time.Date(2026, 11, 12, 10, 0, 0, 5, time.FixedZone("EET", 2*60*
 // write is appended as one line to writes; failures are injected by method
 // name.
 type fakeStore struct {
-	records   map[string]RecordFacts
-	versions  map[string]VersionFacts
+	records  map[string]RecordFacts
+	versions map[string]VersionFacts
+	// dismissed holds "version|hash|action" of the human dismissals.
+	dismissed map[string]bool
 	expired   []ProposalPosition
 	failures  map[string]error
 	withinErr error
@@ -39,7 +41,7 @@ type fakeStore struct {
 }
 
 func newFakeStore(records ...RecordFacts) *fakeStore {
-	store := &fakeStore{records: make(map[string]RecordFacts), versions: make(map[string]VersionFacts), failures: make(map[string]error)}
+	store := &fakeStore{records: make(map[string]RecordFacts), versions: make(map[string]VersionFacts), dismissed: make(map[string]bool), failures: make(map[string]error)}
 	for _, record := range records {
 		store.records[record.Record.ID] = record
 	}
@@ -66,6 +68,12 @@ func (t fakeTransaction) ReadRecord(_ context.Context, recordID string) (RecordF
 func (t fakeTransaction) ReadVersion(_ context.Context, recordID, versionID string) (VersionFacts, error) {
 	t.store.reads = append(t.store.reads, "version "+recordID+"/"+versionID)
 	return t.store.versions[recordID+"/"+versionID], t.fail("ReadVersion")
+}
+
+func (t fakeTransaction) ReadSuggestionDismissed(_ context.Context, versionID, contentHash string, suggestion memory.Suggestion) (bool, error) {
+	key := versionID + "|" + contentHash + "|" + string(suggestion)
+	t.store.reads = append(t.store.reads, "dismissal "+key)
+	return t.store.dismissed[key], t.fail("ReadSuggestionDismissed")
 }
 
 // ReadExpiredProposals pages store.expired, which tests keep in sweep order,

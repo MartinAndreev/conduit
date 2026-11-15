@@ -489,12 +489,18 @@ func TestAddOpinion(t *testing.T) {
 	}
 }
 
-// An agent's audit opinion carries its suggestion into the review; the rule
-// refuses one about an older version and writes nothing.
-func TestAddOpinionWithSuggestion(t *testing.T) {
+// suggestionRequest is an agent's delete suggestion about the current version.
+func suggestionRequest() OpinionRequest {
 	suggestion := opinionRequest()
 	suggestion.VersionID, suggestion.ContentHash, suggestion.Suggestion = "v1", currentHash, memory.SuggestDelete
 	suggestion.Reason = "obsolete: token=hunter2"
+	return suggestion
+}
+
+// An agent's audit opinion carries its suggestion into the review; the rule
+// refuses one about an older version and writes nothing.
+func TestAddOpinionWithSuggestion(t *testing.T) {
+	suggestion := suggestionRequest()
 	store := newFakeStore(storedRecord(memory.StatusActive))
 	store.versions["r1/v1"] = VersionFacts{Found: true, ContentHash: currentHash}
 	got, err := service(store).AddOpinion(context.Background(), suggestion)
@@ -515,6 +521,36 @@ func TestAddOpinionWithSuggestion(t *testing.T) {
 		t.Fatalf("result %+v, error %v", got, err)
 	}
 	wantNoWrites(t, older)
+}
+
+// A suggestion a human dismissed for the version, content hash and action is
+// refused and writes nothing; the other action is still added, and a plain
+// opinion does not read dismissals.
+func TestAddOpinionRefusesADismissedSuggestion(t *testing.T) {
+	store := newFakeStore(storedRecord(memory.StatusActive))
+	store.versions["r1/v1"] = VersionFacts{Found: true, ContentHash: currentHash}
+	store.dismissed["v1|"+currentHash+"|delete"] = true
+	got, err := service(store).AddOpinion(context.Background(), suggestionRequest())
+	if err != nil || got.Kind != memory.OpinionSuggestionDismissed || got.ReviewID != "" || got.Reason == "" || strings.Contains(got.Reason, "v1") {
+		t.Fatalf("result %+v, error %v", got, err)
+	}
+	if !slices.Equal(store.reads, []string{"record r1", "version r1/v1", "dismissal v1|" + currentHash + "|delete"}) {
+		t.Fatalf("reads = %v", store.reads)
+	}
+	wantNoWrites(t, store)
+
+	archive := suggestionRequest()
+	archive.Suggestion = memory.SuggestArchive
+	got, err = service(store).AddOpinion(context.Background(), archive)
+	if err != nil || got.Kind != memory.OpinionAdd || store.reviews[0].Suggestion != memory.SuggestArchive {
+		t.Fatalf("result %+v, error %v", got, err)
+	}
+
+	plain := newFakeStore(storedRecord(memory.StatusActive))
+	plain.versions["r1/v0"] = VersionFacts{Found: true, ContentHash: "sha256:old"}
+	if _, err := service(plain).AddOpinion(context.Background(), opinionRequest()); err != nil || slices.ContainsFunc(plain.reads, func(read string) bool { return strings.HasPrefix(read, "dismissal ") }) {
+		t.Fatalf("reads = %v, error %v", plain.reads, err)
+	}
 }
 
 // ArchiveWithin runs Archive's read, decision and writes in the caller's
@@ -594,6 +630,10 @@ func failureCases() []failureCase {
 			s.records["r1"] = storedRecord(memory.StatusActive)
 			s.versions["r1/v0"] = VersionFacts{Found: true, ContentHash: "sha256:old"}
 		}, func(s Service) error { _, err := s.AddOpinion(ctx, opinionRequest()); return err }},
+		{"suggestion", func(s *fakeStore) {
+			s.records["r1"] = storedRecord(memory.StatusActive)
+			s.versions["r1/v1"] = VersionFacts{Found: true, ContentHash: currentHash}
+		}, func(s Service) error { _, err := s.AddOpinion(ctx, suggestionRequest()); return err }},
 		{"merge", func(s *fakeStore) {
 			for _, proposal := range mergedProposals() {
 				s.records[proposal.Record.ID] = proposal
@@ -606,7 +646,7 @@ func failureCases() []failureCase {
 // with its cause. The fake does not roll back, so a failing write may
 // follow earlier ones; the real store rolls them back.
 func TestFailuresAreReturnedWithTheirCause(t *testing.T) {
-	methods := []string{"ReadRecord", "ReadVersion", "ReadExpiredProposals", "InsertRecord", "ChangeStatus", "CopyVersion", "InsertReview", "InsertRelation"}
+	methods := []string{"ReadRecord", "ReadVersion", "ReadSuggestionDismissed", "ReadExpiredProposals", "InsertRecord", "ChangeStatus", "CopyVersion", "InsertReview", "InsertRelation"}
 	for _, tc := range failureCases() {
 		// A clean run counts the IDs and methods the procedure uses.
 		clean := newFakeStore()
@@ -651,7 +691,7 @@ func TestFailuresAreReturnedWithTheirCause(t *testing.T) {
 // calledBy maps a fake's read or write line to the port method behind it.
 func calledBy(line, method string) bool {
 	prefixes := map[string]string{
-		"ReadRecord": "record ", "ReadVersion": "version ", "InsertRecord": "insert record ", "ChangeStatus": "status ",
+		"ReadRecord": "record ", "ReadVersion": "version ", "ReadSuggestionDismissed": "dismissal ", "InsertRecord": "insert record ", "ChangeStatus": "status ",
 		"CopyVersion": "copy ", "InsertReview": "review ", "InsertRelation": "relation ", "ReadExpiredProposals": "expired ",
 	}
 	return strings.HasPrefix(line, prefixes[method])

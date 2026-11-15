@@ -10,7 +10,8 @@ import (
 	"github.com/MartinAndreev/conduit/internal/memory/records"
 )
 
-// ConfirmationStore runs one confirmation in one storage transaction.
+// ConfirmationStore runs one confirmation or one dismissal in one storage
+// transaction.
 type ConfirmationStore interface {
 	// WithinSuggestionConfirmation runs operation in one write transaction
 	// that holds the database write lock from before its first read, so no
@@ -20,15 +21,18 @@ type ConfirmationStore interface {
 	WithinSuggestionConfirmation(ctx context.Context, operation func(ConfirmationTransaction) error) error
 }
 
-// ConfirmationTransaction is the reads and writes of one confirmation, valid
-// only inside WithinSuggestionConfirmation: the suggestion's facts and the
-// record write and deletion transactions of the confirmed action.
+// ConfirmationTransaction is the reads and writes of one confirmation or
+// dismissal, valid only inside WithinSuggestionConfirmation: the suggestion's
+// facts, the record write and deletion transactions of the confirmed action,
+// and the record write's InsertReview for a dismissal.
 type ConfirmationTransaction interface {
 	records.Transaction
 	deletion.Transaction
-	// ReadSuggestion reads the review with reviewID, in any project, and
-	// the current state of the record of the version it names. A missing
-	// review is Standing.ReviewFound false, not an error.
+	// ReadSuggestion reads the review with reviewID, in any project, the
+	// current state of the record of the version it names, and whether a
+	// human dismissal names the review's version, content hash and
+	// suggestion. A missing review is Standing.ReviewFound false, not an
+	// error.
 	ReadSuggestion(ctx context.Context, reviewID string) (StoredSuggestion, error)
 }
 
@@ -73,14 +77,15 @@ var confirmers = map[memory.Suggestion]confirmer{
 	memory.SuggestDelete:  Service.confirmDelete,
 }
 
-// ConfirmSuggestion confirms one agent suggestion, in one transaction: it
-// reads the suggestion and its record, decides with
-// memory.DecideSuggestionConfirmation (an agent or system cannot confirm; a
-// stale, deleted or status-moved suggestion no longer applies) and, only when
-// it applies, performs the action through the existing procedure in the same
-// transaction: records.Service.ArchiveWithin (memory.DecideRecordTransition
-// to archived, with the human's own reason) or deletion.Service.DeleteWithin
-// (memory.DecideRecordDeletion). The request's expected version guards the
+// ConfirmSuggestion confirms one agent suggestion. An invalid request or a
+// non-human actor is refused from the request facts before the transaction,
+// without any read. Otherwise, in one transaction, it reads the suggestion
+// and its record, decides with memory.DecideSuggestionConfirmation (a stale,
+// dismissed, deleted or status-moved suggestion no longer applies) and, only
+// when it applies, performs the action through the existing procedure in the
+// same transaction: records.Service.ArchiveWithin
+// (memory.DecideRecordTransition to archived, with the human's own reason) or
+// deletion.Service.DeleteWithin (memory.DecideRecordDeletion). The request's expected version guards the
 // action against a concurrent change. Any refusal writes nothing. An error
 // before the commit means nothing was written; after a failed commit the
 // outcome may be unknown, and a retry then reports the action's own
@@ -88,6 +93,16 @@ var confirmers = map[memory.Suggestion]confirmer{
 func (s Service) ConfirmSuggestion(ctx context.Context, request ConfirmRequest) (ConfirmResult, error) {
 	if request.Now.IsZero() || request.Reviewer == "" {
 		return ConfirmResult{}, ErrInvalidRequest
+	}
+	// The request facts alone decide invalid_facts and actor_not_allowed;
+	// refusing them before the transaction reads nothing, so an agent or
+	// system caller learns nothing about the review, not even a read error.
+	if early := memory.DecideSuggestionConfirmation(memory.SuggestionConfirmationFacts{
+		ReviewID: request.ReviewID,
+		Actor:    request.Actor,
+		Standing: memory.SuggestionStandingFacts{RequestProjectID: request.ProjectID},
+	}); early.Kind == memory.SuggestionInvalidInput || early.Kind == memory.SuggestionActorNotAllowed {
+		return ConfirmResult{Kind: early.Kind, Reason: early.Reason}, nil
 	}
 	var result ConfirmResult
 	err := s.Confirmations.WithinSuggestionConfirmation(ctx, func(tx ConfirmationTransaction) error {

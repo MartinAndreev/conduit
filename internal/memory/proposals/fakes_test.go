@@ -60,6 +60,10 @@ func (fakeTx) ReadVersion(context.Context, string, string) (records.VersionFacts
 	return records.VersionFacts{}, nil
 }
 
+func (fakeTx) ReadSuggestionDismissed(context.Context, string, string, memory.Suggestion) (bool, error) {
+	return false, nil
+}
+
 func (fakeTx) ReadExpiredProposals(context.Context, time.Time, records.ProposalPosition, int) ([]records.ProposalPosition, error) {
 	return nil, nil
 }

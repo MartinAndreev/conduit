@@ -171,8 +171,10 @@ func readAuditRecords(ctx context.Context, tx *sql.Tx, ids []string) ([]audit.Ma
 	return result, nil
 }
 
-// ReadAgentSuggestions reads one page of the reviews carrying a suggestion
-// about versions of the project's records, whatever their standing, ordered
+// ReadAgentSuggestions reads one page of the agent opinions carrying a
+// suggestion about versions of the project's records, whatever their
+// standing (a human dismissal, which also names an action, is not read),
+// ordered
 // by the text of reviewed_at then id (the writer stores times in UTC with a
 // fixed width, so text order is time order), each with its record's current
 // state. It reads one row past the page to learn whether more follow.
@@ -181,7 +183,8 @@ func (r memoryReader) ReadAgentSuggestions(ctx context.Context, projectID string
 		return audit.SuggestionPage{}, fmt.Errorf("read agent suggestions: page size must be positive, got %d", limit)
 	}
 	reviews, named := table.MemoryReviews, table.MemoryRecordVersions.AS("named")
-	condition := named.ProjectID.EQ(jet.String(projectID)).AND(reviews.Suggestion.IS_NOT_NULL())
+	condition := named.ProjectID.EQ(jet.String(projectID)).AND(reviews.Suggestion.IS_NOT_NULL()).
+		AND(reviews.Actor.EQ(jet.String(string(memory.ActorAgent)))).AND(reviews.Decision.EQ(jet.String(string(memory.ReviewOpinion))))
 	if after.ReviewID != "" {
 		afterTime := jet.String(formatStoredTime(after.ReviewedAt))
 		condition = condition.AND(reviews.ReviewedAt.GT(afterTime).
@@ -206,8 +209,9 @@ func (r memoryReader) ReadAgentSuggestions(ctx context.Context, projectID string
 }
 
 // readSuggestions reads the reviews matching condition, in (reviewed_at, id)
-// order, with the record of the version each names and that record's current
-// version. The review's version is aliased "named" in condition.
+// order, with the record of the version each names, that record's current
+// version, and whether a human dismissal names the review's version, content
+// hash and suggestion. The review's version is aliased "named" in condition.
 func readSuggestions(ctx context.Context, db database, condition jet.BoolExpression, limit int) ([]audit.StoredSuggestion, error) {
 	reviews, recordTable, versions := table.MemoryReviews, table.MemoryRecords, table.MemoryRecordVersions
 	named := versions.AS("named")
@@ -216,6 +220,7 @@ func readSuggestions(ctx context.Context, db database, condition jet.BoolExpress
 		reviews.Actor, reviews.Decision, jet.COALESCE(reviews.Suggestion, jet.String("")), reviews.VersionID, reviews.ContentHash,
 		recordTable.ID, recordTable.ProjectID, recordTable.Category, recordTable.Status, recordTable.CurrentVersionID, recordTable.Version, recordTable.CreatedAt,
 		versions.ContentHash, versions.ContentDeletedAt.IS_NOT_NULL(),
+		dismissalExists(reviews.VersionID, reviews.ContentHash, reviews.Suggestion),
 	).FROM(
 		reviews.
 			INNER_JOIN(named, named.ID.EQ(reviews.VersionID)).
@@ -236,7 +241,7 @@ func readSuggestions(ctx context.Context, db database, condition jet.BoolExpress
 			&stored.ReviewID, &stored.Reviewer, &stored.Reason, &reviewedAt,
 			&standing.Actor, &standing.Decision, &standing.Suggestion, &standing.VersionID, &standing.ContentHash,
 			&record.ID, &record.ProjectID, &record.Category, &record.Status, &record.CurrentVersionID, &record.Version, &createdAt,
-			&standing.CurrentContentHash, &standing.CurrentContentDeleted,
+			&standing.CurrentContentHash, &standing.CurrentContentDeleted, &standing.Dismissed,
 		); err != nil {
 			return nil, fmt.Errorf("scan memory suggestion: %w", ErrUndecodableMemoryRow)
 		}
@@ -255,11 +260,36 @@ func readSuggestions(ctx context.Context, db database, condition jet.BoolExpress
 	return result, nil
 }
 
+// dismissalExists is true when a human dismissal names the version, the
+// content hash and the action. It is the one statement of "dismissed" for the
+// suggestion reads and the agent's recording.
+func dismissalExists(versionID, contentHash, action jet.StringExpression) jet.BoolExpression {
+	dismissals := table.MemoryReviews.AS("dismissal")
+	return jet.EXISTS(jet.SELECT(jet.Int(1)).FROM(dismissals).WHERE(
+		dismissals.VersionID.EQ(versionID).
+			AND(dismissals.ContentHash.EQ(contentHash)).
+			AND(dismissals.Suggestion.EQ(action)).
+			AND(dismissals.Decision.EQ(jet.String(string(memory.ReviewDismiss)))).
+			AND(dismissals.Actor.EQ(jet.String(string(memory.ActorHuman)))),
+	))
+}
+
+// ReadSuggestionDismissed reads whether a human dismissal names the version,
+// the content hash and the action.
+func (t memoryRecordTx) ReadSuggestionDismissed(ctx context.Context, versionID, contentHash string, suggestion memory.Suggestion) (bool, error) {
+	query, args := jet.SELECT(dismissalExists(jet.String(versionID), jet.String(contentHash), jet.String(string(suggestion)))).Sql()
+	var dismissed bool
+	if _, err := scanOne(ctx, t.db, "read memory suggestion dismissal", query, args, &dismissed); err != nil {
+		return false, err
+	}
+	return dismissed, nil
+}
+
 type memorySuggestionStore struct{ db *sql.DB }
 
-// WithinSuggestionConfirmation runs operation in one memory write
-// transaction (withMemoryWrite) whose record write and deletion statements
-// share the pinned connection.
+// WithinSuggestionConfirmation runs one confirmation or dismissal in one
+// memory write transaction (withMemoryWrite) whose record write and deletion
+// statements share the pinned connection.
 func (s memorySuggestionStore) WithinSuggestionConfirmation(ctx context.Context, operation func(audit.ConfirmationTransaction) error) error {
 	return withMemoryWrite(ctx, s.db, "memory suggestion confirmation", func(conn *sql.Conn) error {
 		return operation(memorySuggestionTx{memoryRecordTx: memoryRecordTx{db: conn}, memoryDeletionTx: memoryDeletionTx{db: conn}})

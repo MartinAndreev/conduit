@@ -32,8 +32,8 @@ var doomedVersions = []string{"doomed-v1", "doomed-v2", "doomed-v3"}
 
 // seedDoomed stores record "doomed" with three versions (current v3, record
 // version 3), each with a spec and a file source and a review with a reason:
-// a human approval of v3, a human rejection of v1, an agent and a system
-// opinion on v2. Every deleted text carries leakMarker. Record "keeper" stays,
+// a human approval of v3 and a human dismissal of an archive suggestion on
+// v3, a human rejection of v1, an agent and a system opinion on v2. Every deleted text carries leakMarker. Record "keeper" stays,
 // with its own source and review reason, and contradicts "doomed".
 func seedDoomed(t *testing.T, store *Store) map[string]string {
 	t.Helper()
@@ -80,7 +80,9 @@ func seedDoomed(t *testing.T, store *Store) map[string]string {
 		newReview("reject-v1", versions[0], memory.ActorHuman, memory.ReviewReject),
 		newReview("agent-v2", versions[1], memory.ActorAgent, memory.ReviewOpinion),
 		newReview("system-v2", versions[1], memory.ActorSystem, memory.ReviewOpinion),
+		newReview("dismiss-v3", versions[2], memory.ActorHuman, memory.ReviewDismiss),
 	}
+	reviews[len(reviews)-1].Suggestion = optional(string(memory.SuggestArchive))
 	for _, review := range reviews {
 		review.Reason = optional("причина " + leakMarker + " от " + review.ID)
 		mustReview(t, store, review)
@@ -279,11 +281,16 @@ func TestDeleteRecordClearsContentOfEveryVersion(t *testing.T) {
 	if got := queryStrings(t, store, "SELECT id || ':' || decision || ':' || actor || ':' || reviewer || ':' || reviewed_at || ':' || version_id || ':' || content_hash || ':' || coalesce(reason, '<NULL>') FROM memory_reviews ORDER BY id"); !slices.Equal(got, []string{
 		"agent-v2:opinion:agent:reviewer-agent:" + memoryTime + ":doomed-v2:" + hashes["doomed-v2"] + ":<NULL>",
 		"approve-v3:approve:human:reviewer-human:" + memoryTime + ":doomed-v3:" + hashes["doomed-v3"] + ":<NULL>",
+		"dismiss-v3:dismiss:human:reviewer-human:" + memoryTime + ":doomed-v3:" + hashes["doomed-v3"] + ":<NULL>",
 		"keeper-reject:reject:human:reviewer-human:" + memoryTime + ":keeper-v1:sha256:keeper:остава",
 		"reject-v1:reject:human:reviewer-human:" + memoryTime + ":doomed-v1:" + hashes["doomed-v1"] + ":<NULL>",
 		"system-v2:opinion:system:reviewer-system:" + memoryTime + ":doomed-v2:" + hashes["doomed-v2"] + ":<NULL>",
 	}) {
 		t.Fatalf("reviews = %v", got)
+	}
+	// The dismissal row stays with its action; only its reason is cleared.
+	if got := queryStrings(t, store, "SELECT id || ':' || suggestion FROM memory_reviews WHERE suggestion IS NOT NULL"); !slices.Equal(got, []string{"dismiss-v3:archive"}) {
+		t.Fatalf("suggestions = %v", got)
 	}
 	if got := queryStrings(t, store, "SELECT from_record_id || '>' || to_record_id || ':' || kind FROM memory_relations"); !slices.Equal(got, []string{"keeper>doomed:contradicts"}) {
 		t.Fatalf("relations = %v", got)

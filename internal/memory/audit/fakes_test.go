@@ -21,9 +21,11 @@ var errInjected = errors.New("injected failure")
 // memory and appends one line per write. Transaction number failTransaction
 // (from 1) fails before it runs; failures inject an error by method name.
 type fakeStore struct {
-	records       map[string]records.RecordFacts
-	versions      map[string]records.VersionFacts
-	suggestions   map[string]StoredSuggestion
+	records     map[string]records.RecordFacts
+	versions    map[string]records.VersionFacts
+	suggestions map[string]StoredSuggestion
+	// dismissed holds "version|hash|action" of the human dismissals.
+	dismissed     map[string]bool
 	deletionFacts map[string]deletion.RecordFacts
 	failures      map[string]error
 
@@ -42,6 +44,7 @@ func newFakeStore() *fakeStore {
 		records:       make(map[string]records.RecordFacts),
 		versions:      make(map[string]records.VersionFacts),
 		suggestions:   make(map[string]StoredSuggestion),
+		dismissed:     make(map[string]bool),
 		deletionFacts: make(map[string]deletion.RecordFacts),
 		failures:      make(map[string]error),
 	}
@@ -79,6 +82,12 @@ func (t fakeTx) ReadRecord(_ context.Context, recordID string) (records.RecordFa
 func (t fakeTx) ReadVersion(_ context.Context, recordID, versionID string) (records.VersionFacts, error) {
 	t.store.reads = append(t.store.reads, "version "+recordID+"/"+versionID)
 	return t.store.versions[recordID+"/"+versionID], t.fail("ReadVersion")
+}
+
+func (t fakeTx) ReadSuggestionDismissed(_ context.Context, versionID, contentHash string, suggestion memory.Suggestion) (bool, error) {
+	key := versionID + "|" + contentHash + "|" + string(suggestion)
+	t.store.reads = append(t.store.reads, "dismissal "+key)
+	return t.store.dismissed[key], t.fail("ReadSuggestionDismissed")
 }
 
 func (fakeTx) ReadExpiredProposals(context.Context, time.Time, records.ProposalPosition, int) ([]records.ProposalPosition, error) {
@@ -138,6 +147,7 @@ func auditService(store *fakeStore) Service {
 		Records:       records.Service{Store: store, NewID: sequentialIDs()},
 		Deletion:      deletion.Service{NewID: sequentialIDs()},
 		Confirmations: store,
+		NewID:         sequentialIDs(),
 	}
 }
 

@@ -168,6 +168,10 @@ type SuggestionStandingFacts struct {
 	VersionID   string
 	ContentHash string
 
+	// Dismissed is true when a human dismissal names the review's version,
+	// content hash and suggestion.
+	Dismissed bool
+
 	// RecordFound is false when the review's version has no record.
 	RecordFound           bool
 	Record                Record
@@ -190,6 +194,9 @@ const (
 	// SuggestionStale: the record's current version is no longer the one the
 	// suggestion names.
 	SuggestionStale SuggestionKind = "stale"
+	// SuggestionDismissed: a human dismissed the suggested action for the
+	// version and content hash the suggestion names.
+	SuggestionDismissed SuggestionKind = "dismissed"
 	// SuggestionContentDeleted: the record's content was deleted.
 	SuggestionContentDeleted SuggestionKind = "content_deleted"
 	// SuggestionStatusMoved: the record's status no longer permits the
@@ -212,9 +219,10 @@ type SuggestionDecision struct {
 // Order: no request project (invalid_facts); a missing review, one that is
 // not an agent opinion with a known suggestion, or a missing or foreign
 // record (not_found); a version or content hash that is no longer the
-// record's current one (stale); deleted content; a status the action cannot
-// apply to (status_moved: archive needs a status a human may archive, delete
-// any status); applies.
+// record's current one (stale); a human dismissal of the same action for the
+// same version and content hash (dismissed); deleted content; a status the
+// action cannot apply to (status_moved: archive needs a status a human may
+// archive, delete any status); applies.
 func DecideSuggestionStanding(f SuggestionStandingFacts) SuggestionDecision {
 	if f.RequestProjectID == "" {
 		return SuggestionDecision{Kind: SuggestionInvalidInput, Reason: "the request needs a project"}
@@ -225,6 +233,9 @@ func DecideSuggestionStanding(f SuggestionStandingFacts) SuggestionDecision {
 	}
 	if f.VersionID != f.Record.CurrentVersionID || f.ContentHash != f.CurrentContentHash {
 		return SuggestionDecision{Kind: SuggestionStale, Reason: "the record has a newer version than the suggestion names"}
+	}
+	if f.Dismissed {
+		return SuggestionDecision{Kind: SuggestionDismissed, Reason: "a human dismissed this action for the version the suggestion names"}
 	}
 	if f.CurrentContentDeleted {
 		return SuggestionDecision{Kind: SuggestionContentDeleted, Reason: "the record's content was deleted"}
@@ -262,4 +273,101 @@ func DecideSuggestionConfirmation(f SuggestionConfirmationFacts) SuggestionDecis
 		return SuggestionDecision{Kind: SuggestionActorNotAllowed, Reason: "only a human confirms a suggestion"}
 	}
 	return DecideSuggestionStanding(f.Standing)
+}
+
+// SuggestionDismissalFacts are a human's dismissal of one suggestion and the
+// suggestion's standing facts, read in the dismissal's write transaction.
+type SuggestionDismissalFacts struct {
+	ReviewID string
+	// Actor is established by the presentation entry point; a request field
+	// or an agent binding cannot claim human.
+	Actor Actor
+	// Reviewer is the person dismissing.
+	Reviewer string
+	// ExpectedVersion is the record's version the human saw.
+	ExpectedVersion int64
+	// Reason is the human's optional reason, after redaction.
+	Reason   string
+	Standing SuggestionStandingFacts
+}
+
+type SuggestionDismissalKind string
+
+const (
+	// SuggestionDismiss: the human may dismiss the suggestion.
+	SuggestionDismiss                  SuggestionDismissalKind = "dismiss"
+	SuggestionDismissalInvalidFacts    SuggestionDismissalKind = "invalid_facts"
+	SuggestionDismissalActorNotAllowed SuggestionDismissalKind = "actor_not_allowed"
+	SuggestionDismissalNotFound        SuggestionDismissalKind = "not_found"
+	SuggestionDismissalStale           SuggestionDismissalKind = "stale"
+	SuggestionAlreadyDismissed         SuggestionDismissalKind = "already_dismissed"
+	SuggestionDismissalContentDeleted  SuggestionDismissalKind = "content_deleted"
+	SuggestionDismissalStatusMoved     SuggestionDismissalKind = "status_moved"
+	SuggestionDismissalVersionConflict SuggestionDismissalKind = "version_conflict"
+	SuggestionDismissalReasonTooLong   SuggestionDismissalKind = "reason_too_long"
+)
+
+// SuggestionDismissalKinds lists every kind in DecideSuggestionDismissal's
+// order. Every kind but SuggestionDismiss writes nothing.
+func SuggestionDismissalKinds() []SuggestionDismissalKind {
+	return []SuggestionDismissalKind{
+		SuggestionDismissalInvalidFacts, SuggestionDismissalActorNotAllowed, SuggestionDismissalNotFound, SuggestionDismissalStale,
+		SuggestionAlreadyDismissed, SuggestionDismissalContentDeleted, SuggestionDismissalStatusMoved,
+		SuggestionDismissalVersionConflict, SuggestionDismissalReasonTooLong, SuggestionDismiss,
+	}
+}
+
+// dismissalKinds maps each standing that refuses a dismissal to the
+// dismissal's kind; SuggestionApplies continues to the dismissal's own
+// checks.
+var dismissalKinds = map[SuggestionKind]SuggestionDismissalKind{
+	SuggestionInvalidInput:   SuggestionDismissalInvalidFacts,
+	SuggestionNotFound:       SuggestionDismissalNotFound,
+	SuggestionStale:          SuggestionDismissalStale,
+	SuggestionDismissed:      SuggestionAlreadyDismissed,
+	SuggestionContentDeleted: SuggestionDismissalContentDeleted,
+	SuggestionStatusMoved:    SuggestionDismissalStatusMoved,
+}
+
+// SuggestionDismissalDecision carries, only for SuggestionDismiss, the
+// dismissed action.
+type SuggestionDismissalDecision struct {
+	Kind   SuggestionDismissalKind
+	Reason string
+	Action Suggestion
+}
+
+// DecideSuggestionDismissal answers whether a human may dismiss one pending
+// suggestion (Martin, 7а, 2026-11-15). A dismissal binds the action to the
+// version and content hash the suggestion names: the suggestion stops being
+// pending, a confirmation refuses it, and the agent cannot suggest the same
+// action for that version again. A new version lifts it. Only a suggestion
+// that still applies can be dismissed, as only one that applies can be
+// confirmed.
+//
+// Order: no review ID, an unknown actor, no reviewer or one above
+// MaxIdentityBytes, or an expected version below 1 (invalid_facts); a non-human actor, before anything about the suggestion is
+// revealed; then DecideSuggestionStanding (invalid_facts, not_found, stale,
+// already_dismissed, content_deleted, status_moved); an expected version
+// that is not the record's (version_conflict); a reason above
+// MaxTextFieldBytes (reason_too_long; it is optional and never truncated);
+// dismiss.
+func DecideSuggestionDismissal(f SuggestionDismissalFacts) SuggestionDismissalDecision {
+	if f.ReviewID == "" || !slices.Contains(Actors(), f.Actor) || f.Reviewer == "" || len(f.Reviewer) > MaxIdentityBytes || f.ExpectedVersion < 1 {
+		return SuggestionDismissalDecision{Kind: SuggestionDismissalInvalidFacts, Reason: "dismissal needs a review id, a known actor, a reviewer within the identity bound and a positive expected version"}
+	}
+	if f.Actor != ActorHuman {
+		return SuggestionDismissalDecision{Kind: SuggestionDismissalActorNotAllowed, Reason: "only a human dismisses a suggestion"}
+	}
+	standing := DecideSuggestionStanding(f.Standing)
+	if standing.Kind != SuggestionApplies {
+		return SuggestionDismissalDecision{Kind: dismissalKinds[standing.Kind], Reason: standing.Reason}
+	}
+	if f.ExpectedVersion != f.Standing.Record.Version {
+		return SuggestionDismissalDecision{Kind: SuggestionDismissalVersionConflict, Reason: "the record changed since the version the human saw"}
+	}
+	if len(f.Reason) > MaxTextFieldBytes {
+		return SuggestionDismissalDecision{Kind: SuggestionDismissalReasonTooLong, Reason: "the reason exceeds the text field bound"}
+	}
+	return SuggestionDismissalDecision{Kind: SuggestionDismiss, Reason: "the suggestion still applies and the human dismisses it", Action: standing.Action}
 }

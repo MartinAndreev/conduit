@@ -11,7 +11,7 @@ func TestReviewEnumerations(t *testing.T) {
 	if got := Actors(); !slices.Equal(got, []Actor{ActorHuman, ActorSystem, ActorAgent}) {
 		t.Fatalf("Actors() = %v", got)
 	}
-	if got := ReviewDecisions(); !slices.Equal(got, []ReviewDecision{ReviewApprove, ReviewReject, ReviewOpinion}) {
+	if got := ReviewDecisions(); !slices.Equal(got, []ReviewDecision{ReviewApprove, ReviewReject, ReviewOpinion, ReviewDismiss}) {
 		t.Fatalf("ReviewDecisions() = %v", got)
 	}
 }

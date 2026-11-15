@@ -132,3 +132,30 @@ func TestRecordSuggestionsNeedsTheTime(t *testing.T) {
 		t.Fatalf("error %v", err)
 	}
 }
+
+// A suggestion a human dismissed for the version, content hash and action is
+// that entry's suggestion_dismissed refusal, whose reason repeats no report
+// value; the rest of the report is recorded, including the other action for
+// the same version in a later report.
+func TestRecordSuggestionsRefusesADismissedSuggestion(t *testing.T) {
+	store := newFakeStore()
+	store.addRecord(storedRecord("r1", memory.StatusActive))
+	store.addRecord(storedRecord("r2", memory.StatusActive))
+	store.dismissed["r1-v|"+hashOf("r1")+"|archive"] = true
+	got, err := auditService(store).RecordSuggestions(context.Background(), recordRequest(suggestionsOf(
+		entry("r1", "archive", "отново"),
+		entry("r2", "archive", "остаряло"),
+	)))
+	if err != nil || len(got.Recorded) != 2 || got.Recorded[0].Result.Kind != memory.OpinionSuggestionDismissed || got.Recorded[1].Result.Kind != memory.OpinionAdd {
+		t.Fatalf("result %+v, error %v", got, err)
+	}
+	if refusal := got.Recorded[0].Result.Reason; strings.Contains(refusal, "r1") || strings.Contains(refusal, "отново") || strings.Contains(refusal, hashOf("r1")) {
+		t.Fatalf("refusal reason repeats the report: %q", refusal)
+	}
+	wantWrites(t, store, "review r2-v opinion by agent suggests archive")
+
+	other, err := auditService(store).RecordSuggestions(context.Background(), recordRequest(suggestionsOf(entry("r1", "delete", "изтрий"))))
+	if err != nil || len(other.Recorded) != 1 || other.Recorded[0].Result.Kind != memory.OpinionAdd {
+		t.Fatalf("other action %+v, error %v", other, err)
+	}
+}

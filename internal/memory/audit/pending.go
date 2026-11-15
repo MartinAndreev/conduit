@@ -83,9 +83,9 @@ type Pending struct {
 // PendingSuggestions reads one page of the project's stored agent
 // suggestions and keeps those memory.DecideSuggestionStanding finds still
 // applying: the suggestion names the record's current version and content
-// hash, the content is not deleted and the status still permits the action.
-// Stale suggestions are not listed; nothing about them is stored, and no
-// dismissal exists yet.
+// hash, no human dismissed the action for them, the content is not deleted
+// and the status still permits the action. Stale and dismissed suggestions
+// are not listed; nothing is stored about a stale one.
 func (s Service) PendingSuggestions(ctx context.Context, request PendingRequest) (Pending, error) {
 	if request.ProjectID == "" || request.Limit < 1 || request.Limit > MaxPendingPageSize {
 		return Pending{}, ErrInvalidPendingRequest

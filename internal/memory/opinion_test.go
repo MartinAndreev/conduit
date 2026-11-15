@@ -33,6 +33,7 @@ func TestDecideRecordOpinion(t *testing.T) {
 		return func(f *RecordOpinionFacts) { f.Suggestion, f.Record.CurrentVersionID = suggestion, "v1" }
 	}
 	status := func(status RecordStatus) change { return func(f *RecordOpinionFacts) { f.Record.Status = status } }
+	dismissed := func(f *RecordOpinionFacts) { f.SuggestionDismissed = true }
 	tests := []struct {
 		name    string
 		changes []change
@@ -98,6 +99,12 @@ func TestDecideRecordOpinion(t *testing.T) {
 		{"archive suggestion on a proposal", []change{suggest(SuggestArchive), status(StatusProposed)}, OpinionStatusNotApplicable},
 		{"archive suggestion on a superseded record", []change{suggest(SuggestArchive), status(StatusSuperseded)}, OpinionStatusNotApplicable},
 		{"delete suggestion on an unknown status", []change{suggest(SuggestDelete), status("lost")}, OpinionStatusNotApplicable},
+
+		{"dismissed archive suggestion", []change{suggest(SuggestArchive), dismissed}, OpinionSuggestionDismissed},
+		{"dismissed delete suggestion", []change{suggest(SuggestDelete), dismissed}, OpinionSuggestionDismissed},
+		{"old version precedes the dismissal", []change{suggest(SuggestArchive), dismissed, func(f *RecordOpinionFacts) { f.Record.CurrentVersionID = "v9" }}, OpinionVersionNotCurrent},
+		{"dismissal precedes the status", []change{suggest(SuggestArchive), dismissed, status(StatusArchived)}, OpinionSuggestionDismissed},
+		{"a dismissal does not refuse a plain opinion", []change{dismissed}, OpinionAdd},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

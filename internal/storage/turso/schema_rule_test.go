@@ -89,11 +89,22 @@ func replaced(t *testing.T, statements []string, old, replacement string) []stri
 	return result
 }
 
+// withoutDismissal is the v2 draft before the dismissal (Martin, 7а,
+// 2026-11-15): memory_reviews without the dismiss decision and with the
+// suggestion CHECK of agent opinions only.
+func withoutDismissal(t *testing.T, statements []string) []string {
+	t.Helper()
+	statements = replaced(t, statements, "CHECK (decision IN ('approve', 'reject', 'opinion', 'dismiss'))", "CHECK (decision IN ('approve', 'reject', 'opinion'))")
+	return replaced(t, statements,
+		",\n\t\tCHECK (suggestion IS NULL OR (decision = 'opinion' AND actor = 'agent') OR decision = 'dismiss'),\n\t\tCHECK (decision <> 'dismiss' OR (actor = 'human' AND suggestion IS NOT NULL))",
+		",\n\t\tCHECK (suggestion IS NULL OR (decision = 'opinion' AND actor = 'agent'))")
+}
+
 // withoutSuggestion is the v2 draft before task 5.5: memory_reviews without
 // the suggestion column and its CHECK.
 func withoutSuggestion(t *testing.T, statements []string) []string {
 	t.Helper()
-	statements = replaced(t, statements, "\n\t\tsuggestion TEXT CHECK (suggestion IN ('archive', 'delete')),", "")
+	statements = replaced(t, withoutDismissal(t, statements), "\n\t\tsuggestion TEXT CHECK (suggestion IN ('archive', 'delete')),", "")
 	return replaced(t, statements, ",\n\t\tCHECK (suggestion IS NULL OR (decision = 'opinion' AND actor = 'agent'))", "")
 }
 
@@ -113,6 +124,7 @@ func TestRejectsSchemaWithDroppedConstraintWithoutMutation(t *testing.T) {
 		{"v2 without accepted result check", "2", slices.Concat(v1, replaced(t, v2, ",\n\t\tCHECK (origin <> 'attempt' OR visibility <> 'project' OR accepted_result_ref IS NOT NULL)", ""))},
 		{"v2 draft review without actor", "2", slices.Concat(v1, replaced(t, replaced(t, withoutSuggestion(t, v2), "\n\t\tactor TEXT NOT NULL CHECK (actor IN ('human', 'system', 'agent')),", ""), ",\n\t\tCHECK (actor = 'human' OR decision = 'opinion')", ""))},
 		{"v2 draft review without suggestion", "2", slices.Concat(v1, withoutSuggestion(t, v2))},
+		{"v2 draft review without dismissal", "2", slices.Concat(v1, withoutDismissal(t, v2))},
 		{"v2 draft receipt with free subject kind", "2", slices.Concat(v1, replaced(t, v2, "subject_kind TEXT NOT NULL CHECK (subject_kind IN ('memory_version', 'manifest_payload'))", "subject_kind TEXT NOT NULL CHECK (length(subject_kind) > 0)"))},
 		{"v2 draft context columns without byte bounds", "2", slices.Concat(v1, replaced(t, v2, "reason TEXT NOT NULL CHECK (length(CAST(reason AS BLOB)) BETWEEN 1 AND 4096),\n\t\ttrust", "reason TEXT NOT NULL CHECK (length(reason) > 0),\n\t\ttrust"))},
 		{"v2 without review index", "2", slices.Concat(v1, replaced(t, v2, "CREATE INDEX memory_reviews_version ON memory_reviews (version_id)", ""))},

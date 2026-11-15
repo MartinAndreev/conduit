@@ -22,17 +22,20 @@ type Service struct {
 	Material MaterialReader
 	// Suggestions reads the agent suggestions of a project.
 	Suggestions SuggestionReader
-	// Confirmations runs one confirmation's transaction.
+	// Confirmations runs one confirmation's or dismissal's transaction.
 	Confirmations ConfirmationStore
+	// NewID creates dismissal review IDs; nil means id.New.
+	NewID func(prefix string) (string, error)
 }
 
 // ErrInvalidRequest reports a request without the current time or, for a
-// confirmation, without a reviewer.
-var ErrInvalidRequest = errors.New("audit request needs the current time and, for a confirmation, a reviewer")
+// confirmation or a dismissal, without a reviewer.
+var ErrInvalidRequest = errors.New("audit request needs the current time and, for a confirmation or a dismissal, a reviewer")
 
-// policy redacts each decoded reason of the report's suggestions (spec 012
-// "Redaction"); the report as a whole is not redacted here, because nothing
-// outside those fields is stored by this path.
+// policy redacts each decoded reason of the report's suggestions and a
+// human's dismissal reason (spec 012 "Redaction"); the report as a whole is
+// not redacted here, because nothing outside those fields is stored by this
+// path.
 var policy redaction.Redactor = redaction.Policy{}
 
 // RecordRequest is one audit agent's report about a project. Reviewer is the

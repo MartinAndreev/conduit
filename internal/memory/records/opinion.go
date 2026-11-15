@@ -34,13 +34,14 @@ type OpinionResult struct {
 	Findings []redaction.Finding
 }
 
-// AddOpinion redacts the reason, reads the record and the named version,
-// decides with memory.DecideRecordOpinion and, only when allowed, writes the
-// opinion review with its suggestion, in one transaction. An opinion names
-// its exact version and content hash instead of an expected record version,
-// and does not change the record: it never changes trust, lifecycle or
-// eligibility. A suggestion is only a stored proposal; a human confirms it
-// separately.
+// AddOpinion redacts the reason, reads the record, the named version and, for
+// a suggestion, whether a human dismissed that action for the version and
+// content hash, decides with memory.DecideRecordOpinion and, only when
+// allowed, writes the opinion review with its suggestion, in one
+// transaction. An opinion names its exact version and content hash instead of
+// an expected record version, and does not change the record: it never
+// changes trust, lifecycle or eligibility. A suggestion is only a stored
+// proposal; a human confirms or dismisses it separately.
 func (s Service) AddOpinion(ctx context.Context, request OpinionRequest) (OpinionResult, error) {
 	if request.Now.IsZero() {
 		return OpinionResult{}, ErrInvalidRequest
@@ -56,20 +57,27 @@ func (s Service) AddOpinion(ctx context.Context, request OpinionRequest) (Opinio
 		if err != nil {
 			return fmt.Errorf("read memory version: %w", err)
 		}
+		dismissed := false
+		if request.Suggestion != "" {
+			if dismissed, err = tx.ReadSuggestionDismissed(ctx, request.VersionID, request.ContentHash, request.Suggestion); err != nil {
+				return fmt.Errorf("read memory suggestion dismissal: %w", err)
+			}
+		}
 		decision := memory.DecideRecordOpinion(memory.RecordOpinionFacts{
-			RequestProjectID:  request.ProjectID,
-			RequestRecordID:   request.RecordID,
-			VersionID:         request.VersionID,
-			ContentHash:       request.ContentHash,
-			Actor:             request.Actor,
-			Reviewer:          request.Reviewer,
-			Reason:            reason,
-			RecordFound:       stored.Found,
-			Record:            stored.Record,
-			VersionFound:      version.Found,
-			StoredContentHash: version.ContentHash,
-			ContentDeleted:    version.ContentDeleted,
-			Suggestion:        request.Suggestion,
+			RequestProjectID:    request.ProjectID,
+			RequestRecordID:     request.RecordID,
+			VersionID:           request.VersionID,
+			ContentHash:         request.ContentHash,
+			Actor:               request.Actor,
+			Reviewer:            request.Reviewer,
+			Reason:              reason,
+			RecordFound:         stored.Found,
+			Record:              stored.Record,
+			VersionFound:        version.Found,
+			StoredContentHash:   version.ContentHash,
+			ContentDeleted:      version.ContentDeleted,
+			Suggestion:          request.Suggestion,
+			SuggestionDismissed: dismissed,
 		})
 		result = OpinionResult{Kind: decision.Kind, Reason: decision.Reason, Findings: findings}
 		if decision.Kind != memory.OpinionAdd {

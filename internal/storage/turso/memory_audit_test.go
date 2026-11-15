@@ -66,6 +66,22 @@ func pendingReviews(t *testing.T, store *Store) []audit.PendingSuggestion {
 	return got.Suggestions
 }
 
+func dismiss(t *testing.T, store *Store, reviewID string, expectedVersion int64, change func(*audit.DismissRequest)) audit.DismissResult {
+	t.Helper()
+	request := audit.DismissRequest{
+		ProjectID: "project", ReviewID: reviewID, ExpectedVersion: expectedVersion,
+		Actor: memory.ActorHuman, Reviewer: "martin", Reason: "още е нужно", Now: recordsNow.Add(2 * time.Hour),
+	}
+	if change != nil {
+		change(&request)
+	}
+	got, err := auditService(store).DismissSuggestion(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
 func confirm(t *testing.T, store *Store, reviewID string, expectedVersion int64, change func(*audit.ConfirmRequest)) audit.ConfirmResult {
 	t.Helper()
 	request := audit.ConfirmRequest{
@@ -83,7 +99,8 @@ func confirm(t *testing.T, store *Store, reviewID string, expectedVersion int64,
 }
 
 // The suggestion CHECKs are literal DDL; this keeps their list equal to the
-// domain owner's, and only an agent opinion carries a suggestion.
+// domain owner's. Only an agent opinion and a human dismissal carry a
+// suggestion, and a dismissal always carries one.
 func TestReviewSuggestionMatchesDomain(t *testing.T) {
 	ctx := context.Background()
 	store := openMemoryStore(t)
@@ -91,13 +108,18 @@ func TestReviewSuggestionMatchesDomain(t *testing.T) {
 	mustInsertMemory(t, store.db, fixture)
 	for _, actor := range memory.Actors() {
 		for _, decision := range memory.ReviewDecisions() {
-			for _, suggestion := range memory.Suggestions() {
+			for _, suggestion := range append(memory.Suggestions(), "") {
 				review := newReview(string(actor)+"-"+string(decision)+"-"+string(suggestion), fixture.version, actor, decision)
-				review.Suggestion = optional(string(suggestion))
+				if suggestion != "" {
+					review.Suggestion = optional(string(suggestion))
+				}
 				err := insertReview(ctx, store.db, review)
-				allowed := actor == memory.ActorAgent && decision == memory.ReviewOpinion
+				agentOpinion := actor == memory.ActorAgent && decision == memory.ReviewOpinion
+				humanDismissal := actor == memory.ActorHuman && decision == memory.ReviewDismiss
+				humanOrOpinion := actor == memory.ActorHuman || decision == memory.ReviewOpinion
+				allowed := (suggestion != "" && (agentOpinion || humanDismissal)) || (suggestion == "" && humanOrOpinion && decision != memory.ReviewDismiss)
 				if allowed != (err == nil) {
-					t.Fatalf("%s %s %s: allowed=%v, err=%v", actor, decision, suggestion, allowed, err)
+					t.Fatalf("%s %s %q: allowed=%v, err=%v", actor, decision, suggestion, allowed, err)
 				}
 			}
 		}
@@ -497,12 +519,39 @@ func TestAuditReportsStatementFailures(t *testing.T) {
 	created := humanAt(t, seeded, "Решение", 1)
 	recorded := mustRecordSuggestions(t, seeded, auditReport(suggestionEntry(created, memory.SuggestArchive, "a")), recordsNow.Add(10*time.Minute))
 	reviewID := recorded.Recorded[0].Result.ReviewID
+	dismissedDelete := mustRecordSuggestions(t, seeded, auditReport(suggestionEntry(created, memory.SuggestDelete, "b")), recordsNow.Add(11*time.Minute))
+	if got := dismiss(t, seeded, dismissedDelete.Recorded[0].Result.ReviewID, 1, nil); got.Kind != memory.SuggestionDismiss {
+		t.Fatalf("dismiss = %+v", got)
+	}
 	if err := seeded.Close(); err != nil {
 		t.Fatal(err)
 	}
 	db, connector := openFaulty(t, path, 5000)
 	store := &Store{db: db}
 	reads := map[string]func() error{
+		// The agent's dismissed suggestion reads the record, the version and
+		// the dismissal, and writes nothing.
+		"dismissed recording": func() error {
+			got, err := auditService(store).RecordSuggestions(ctx, audit.RecordRequest{
+				Report: auditReport(suggestionEntry(created, memory.SuggestDelete, "c")), ProjectID: "project", Reviewer: "auditor", Now: recordsNow,
+			})
+			if err == nil && (len(got.Recorded) != 1 || got.Recorded[0].Result.Kind != memory.OpinionSuggestionDismissed) {
+				return fmt.Errorf("record = %+v", got)
+			}
+			return err
+		},
+		// A dismissal with an over-long reason reads everything and writes
+		// nothing.
+		"dismissal": func() error {
+			got, err := auditService(store).DismissSuggestion(ctx, audit.DismissRequest{
+				ProjectID: "project", ReviewID: reviewID, ExpectedVersion: 1, Actor: memory.ActorHuman, Reviewer: "martin",
+				Reason: strings.Repeat("r", memory.MaxTextFieldBytes+1), Now: recordsNow,
+			})
+			if err == nil && got.Kind != memory.SuggestionDismissalReasonTooLong {
+				return fmt.Errorf("dismiss = %+v", got)
+			}
+			return err
+		},
 		"material": func() error {
 			page, err := store.AuditMaterial().ReadAuditMaterial(ctx, audit.MaterialQuery{ProjectID: "project", Statuses: memory.AuditedStatuses(), Limit: 5, ContentBudget: 1 << 20})
 			if err == nil && (len(page.Records) != 1 || len(page.Records[0].Sources) != 1) {
@@ -512,7 +561,7 @@ func TestAuditReportsStatementFailures(t *testing.T) {
 		},
 		"suggestions": func() error {
 			page, err := store.AuditSuggestions().ReadAgentSuggestions(ctx, "project", audit.SuggestionPosition{}, 5)
-			if err == nil && len(page.Suggestions) != 1 {
+			if err == nil && (len(page.Suggestions) != 2 || !page.Suggestions[1].Standing.Dismissed) {
 				return fmt.Errorf("page = %+v", page)
 			}
 			return err
@@ -675,6 +724,166 @@ func TestConfirmRollsBackAfterItsFirstWrite(t *testing.T) {
 			retried, err := auditService(store).ConfirmSuggestion(context.Background(), request)
 			if err != nil || !retried.Applied {
 				t.Fatalf("retry = %+v, %v", retried, err)
+			}
+		})
+	}
+}
+
+// A dismissal is the human's review bound to the suggestion's version, content
+// hash and action: the suggestion is no longer pending, a confirmation and a
+// second dismissal are refused, and the agent cannot suggest the same action
+// for that version again, while the other action and a new version are
+// accepted.
+func TestDismissSuggestionEndToEnd(t *testing.T) {
+	store := openMemoryStore(t)
+	kept := humanAt(t, store, "Остава", 1)
+	other := humanAt(t, store, "Друго", 2)
+	archive := mustRecordSuggestions(t, store, auditReport(suggestionEntry(kept, memory.SuggestArchive, "остаряло")), recordsNow.Add(10*time.Minute)).Recorded[0].Result.ReviewID
+	remove := mustRecordSuggestions(t, store, auditReport(suggestionEntry(kept, memory.SuggestDelete, "грешно")), recordsNow.Add(11*time.Minute)).Recorded[0].Result.ReviewID
+
+	got := dismiss(t, store, archive, 1, func(r *audit.DismissRequest) { r.Reason = "нужно е; token=" + fakeSecretValue })
+	if got.Kind != memory.SuggestionDismiss || got.Action != memory.SuggestArchive || got.DismissalID == "" || len(got.Findings) != 1 {
+		t.Fatalf("dismiss = %+v", got)
+	}
+	rows := queryStrings(t, store, "SELECT id || '|' || version_id || '|' || content_hash || '|' || actor || '|' || decision || '|' || reviewer || '|' || suggestion || '|' || reason || '|' || reviewed_at FROM memory_reviews WHERE decision = 'dismiss'")
+	if want := got.DismissalID + "|" + kept.VersionID + "|" + kept.ContentHash + "|human|dismiss|martin|archive|нужно е; token=[REDACTED:secret_assignment]|" + formatStoredTime(recordsNow.Add(2*time.Hour)); !slices.Equal(rows, []string{want}) {
+		t.Fatalf("dismissal = %v", rows)
+	}
+	if status := queryStrings(t, store, "SELECT status || ':' || CAST(version AS TEXT) FROM memory_records WHERE id = ?", kept.RecordID); !slices.Equal(status, []string{"active:1"}) {
+		t.Fatalf("record = %v", status)
+	}
+	if pending := pendingReviews(t, store); len(pending) != 1 || pending[0].ReviewID != remove {
+		t.Fatalf("pending = %+v", pending)
+	}
+
+	before := dumpMemoryTables(t, store)
+	if again := confirm(t, store, archive, 1, nil); again.Kind != memory.SuggestionDismissed || again.Applied {
+		t.Fatalf("confirm after dismissal = %+v", again)
+	}
+	if again := dismiss(t, store, archive, 1, nil); again.Kind != memory.SuggestionAlreadyDismissed || again.DismissalID != "" {
+		t.Fatalf("second dismissal = %+v", again)
+	}
+	if dismissal := dismiss(t, store, got.DismissalID, 1, nil); dismissal.Kind != memory.SuggestionDismissalNotFound {
+		t.Fatalf("dismissing a dismissal = %+v", dismissal)
+	}
+	resuggested := mustRecordSuggestions(t, store, auditReport(suggestionEntry(kept, memory.SuggestArchive, "пак остаряло")), recordsNow.Add(3*time.Hour))
+	if len(resuggested.Recorded) != 1 || resuggested.Recorded[0].Result.Kind != memory.OpinionSuggestionDismissed || resuggested.Recorded[0].Result.ReviewID != "" {
+		t.Fatalf("re-suggestion = %+v", resuggested)
+	}
+	assertUnchanged(t, before, dumpMemoryTables(t, store))
+
+	// The rest of a report is recorded; the other action is not dismissed.
+	mixed := mustRecordSuggestions(t, store, auditReport(
+		suggestionEntry(kept, memory.SuggestArchive, "отново"),
+		suggestionEntry(other, memory.SuggestArchive, "друго"),
+	), recordsNow.Add(4*time.Hour))
+	if len(mixed.Recorded) != 2 || mixed.Recorded[0].Result.Kind != memory.OpinionSuggestionDismissed || mixed.Recorded[1].Result.Kind != memory.OpinionAdd {
+		t.Fatalf("mixed report = %+v", mixed)
+	}
+	if deleteAgain := mustRecordSuggestions(t, store, auditReport(suggestionEntry(kept, memory.SuggestDelete, "пак грешно")), recordsNow.Add(5*time.Hour)); deleteAgain.Recorded[0].Result.Kind != memory.OpinionAdd {
+		t.Fatalf("delete suggestion = %+v", deleteAgain)
+	}
+
+	// A new version lifts the dismissal.
+	replaceCurrentVersion(t, store, kept, "kept-v2")
+	renewed := kept
+	renewed.VersionID, renewed.ContentHash = "kept-v2", memory.ContentHash("нов текст")
+	lifted := mustRecordSuggestions(t, store, auditReport(suggestionEntry(renewed, memory.SuggestArchive, "и новото е остаряло")), recordsNow.Add(6*time.Hour))
+	if lifted.Recorded[0].Result.Kind != memory.OpinionAdd {
+		t.Fatalf("new version = %+v", lifted)
+	}
+	var listed []string
+	for _, suggestion := range pendingReviews(t, store) {
+		listed = append(listed, suggestion.Record.ID+":"+string(suggestion.Action)+":"+suggestion.VersionID)
+	}
+	if !slices.Equal(listed, []string{other.RecordID + ":archive:" + other.VersionID, kept.RecordID + ":archive:kept-v2"}) {
+		t.Fatalf("pending = %v", listed)
+	}
+}
+
+// A refused dismissal leaves every memory table byte-identical.
+func TestDismissRefusalsWriteNothing(t *testing.T) {
+	ctx := context.Background()
+	store := openMemoryStore(t)
+	renewed := humanAt(t, store, "Ще бъде променено", 1)
+	moved := humanAt(t, store, "Ще бъде архивирано", 2)
+	waiting := humanAt(t, store, "Чака", 3)
+	recorded := mustRecordSuggestions(t, store, auditReport(
+		suggestionEntry(renewed, memory.SuggestDelete, "a"),
+		suggestionEntry(moved, memory.SuggestArchive, "b"),
+		suggestionEntry(waiting, memory.SuggestArchive, "c"),
+	), recordsNow.Add(10*time.Minute))
+	reviewOf := func(index int) string { return recorded.Recorded[index].Result.ReviewID }
+	replaceCurrentVersion(t, store, renewed, "renewed-v2")
+	if got, err := recordService(store, nil).Archive(ctx, records.ReasonRequest{ProjectID: "project", RecordID: moved.RecordID, ExpectedVersion: 1, Actor: memory.ActorHuman, Reviewer: "martin", Reason: "x", Now: recordsNow}); err != nil || got.Kind != memory.TransitionAllowed {
+		t.Fatalf("archive = %+v, %v", got, err)
+	}
+	approval := queryStrings(t, store, "SELECT id FROM memory_reviews WHERE actor = 'human' AND decision = 'approve' AND version_id = ?", waiting.VersionID)
+	for _, tc := range []struct {
+		name     string
+		reviewID string
+		version  int64
+		change   func(*audit.DismissRequest)
+		kind     memory.SuggestionDismissalKind
+	}{
+		{"new version", reviewOf(0), 2, nil, memory.SuggestionDismissalStale},
+		{"status moved", reviewOf(1), 2, nil, memory.SuggestionDismissalStatusMoved},
+		{"stale expected version", reviewOf(2), 2, nil, memory.SuggestionDismissalVersionConflict},
+		{"reason over the bound", reviewOf(2), 1, func(r *audit.DismissRequest) { r.Reason = strings.Repeat("r", memory.MaxTextFieldBytes+1) }, memory.SuggestionDismissalReasonTooLong},
+		{"agent dismisses", reviewOf(2), 1, func(r *audit.DismissRequest) { r.Actor = memory.ActorAgent }, memory.SuggestionDismissalActorNotAllowed},
+		{"other project", reviewOf(2), 1, func(r *audit.DismissRequest) { r.ProjectID = "other" }, memory.SuggestionDismissalNotFound},
+		{"missing review", "review-missing", 1, nil, memory.SuggestionDismissalNotFound},
+		{"human approval is not a suggestion", approval[0], 1, nil, memory.SuggestionDismissalNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := dumpMemoryTables(t, store)
+			got := dismiss(t, store, tc.reviewID, tc.version, tc.change)
+			if got.Kind != tc.kind || got.DismissalID != "" {
+				t.Fatalf("dismiss = %+v", got)
+			}
+			assertUnchanged(t, before, dumpMemoryTables(t, store))
+		})
+	}
+	deleted, err := (deletion.Service{Store: store.MemoryDeletion()}).DeleteRecord(ctx, deletion.Request{ProjectID: "project", RecordID: waiting.RecordID, ExpectedVersion: 1, Actor: memory.ActorHuman, Now: recordsNow})
+	if err != nil || deleted.Kind != memory.DeletionDelete {
+		t.Fatalf("delete = %+v, %v", deleted, err)
+	}
+	before := dumpMemoryTables(t, store)
+	if got := dismiss(t, store, reviewOf(2), 2, nil); got.Kind != memory.SuggestionDismissalContentDeleted {
+		t.Fatalf("dismiss deleted = %+v", got)
+	}
+	assertUnchanged(t, before, dumpMemoryTables(t, store))
+}
+
+// A dismissal is one transaction: a failure of its review insert or of its
+// COMMIT returns the error, rolls back and leaves every memory table
+// byte-identical; a retry then dismisses once.
+func TestDismissRollsBackItsWrite(t *testing.T) {
+	for _, fails := range []string{"INSERT INTO memory_reviews", "COMMIT"} {
+		t.Run(fails, func(t *testing.T) {
+			store, connector, reviewID := openFaultyWithSuggestion(t, memory.SuggestArchive)
+			before := dumpMemoryTables(t, store)
+			injected := fmt.Errorf("%w: injected", tursogo.ErrTursoGeneric)
+			connector.inject(fails, injected, 1)
+			request := audit.DismissRequest{
+				ProjectID: "project", ReviewID: reviewID, ExpectedVersion: 1,
+				Actor: memory.ActorHuman, Reviewer: "martin", Reason: "нужно", Now: recordsNow.Add(time.Hour),
+			}
+			got, err := auditService(store).DismissSuggestion(context.Background(), request)
+			if !errors.Is(err, injected) || got.Kind != "" || got.DismissalID != "" {
+				t.Fatalf("result %+v, error %v", got, err)
+			}
+			if connector.count("INSERT INTO memory_reviews") != 1 {
+				t.Fatalf("insert ran %d times", connector.count("INSERT INTO memory_reviews"))
+			}
+			assertUnchanged(t, before, dumpMemoryTables(t, store))
+			assertPoolOutsideTransaction(t, store)
+			retried, err := auditService(store).DismissSuggestion(context.Background(), request)
+			if err != nil || retried.Kind != memory.SuggestionDismiss {
+				t.Fatalf("retry = %+v, %v", retried, err)
+			}
+			if again, err := auditService(store).DismissSuggestion(context.Background(), request); err != nil || again.Kind != memory.SuggestionAlreadyDismissed {
+				t.Fatalf("second dismissal = %+v, %v", again, err)
 			}
 		})
 	}

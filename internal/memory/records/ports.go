@@ -41,6 +41,9 @@ type Transaction interface {
 	// ReadVersion reads version versionID of record recordID. A version that
 	// does not exist or belongs to another record is Found false.
 	ReadVersion(ctx context.Context, recordID, versionID string) (VersionFacts, error)
+	// ReadSuggestionDismissed reports whether a human dismissal names the
+	// version, the content hash and the suggested action.
+	ReadSuggestionDismissed(ctx context.Context, versionID, contentHash string, suggestion memory.Suggestion) (bool, error)
 	// ReadExpiredProposals returns at most limit proposed records, in any
 	// project, created at or before cutoff and strictly after the position
 	// after in (created_at, id) order, in that order. A zero after starts at
@@ -64,7 +67,7 @@ type Transaction interface {
 	// is not the record's or its content was deleted.
 	CopyVersion(ctx context.Context, version VersionCopy) error
 	// InsertReview writes a review of an exact version and content hash,
-	// with its suggestion if any. A review with a reason fails when the
+	// with its suggestion or dismissed action if any. A review with a reason fails when the
 	// version's content was deleted.
 	InsertReview(ctx context.Context, review Review) error
 	// InsertRelation writes a relation between two records of one project.
@@ -129,7 +132,8 @@ type VersionCopy struct {
 }
 
 // Review is one memory_reviews row. An empty Reason or Suggestion is stored
-// as absent. Only an agent opinion carries a Suggestion.
+// as absent. Only an agent opinion (the suggested action) and a human
+// dismissal (the dismissed action) carry a Suggestion.
 type Review struct {
 	ID          string
 	VersionID   string

@@ -190,6 +190,12 @@ func TestDecideSuggestionStanding(t *testing.T) {
 		{"other current hash", []change{func(f *SuggestionStandingFacts) { f.CurrentContentHash = auditOther }}, SuggestionStale},
 		{"stale precedes deleted", []change{func(f *SuggestionStandingFacts) { f.Record.CurrentVersionID, f.CurrentContentDeleted = "v3", true }}, SuggestionStale},
 
+		{"dismissed", []change{func(f *SuggestionStandingFacts) { f.Dismissed = true }}, SuggestionDismissed},
+		{"dismissed delete", []change{func(f *SuggestionStandingFacts) { f.Suggestion, f.Dismissed = SuggestDelete, true }}, SuggestionDismissed},
+		{"stale precedes dismissed", []change{func(f *SuggestionStandingFacts) { f.Record.CurrentVersionID, f.Dismissed = "v3", true }}, SuggestionStale},
+		{"dismissed precedes deleted", []change{func(f *SuggestionStandingFacts) { f.Dismissed, f.CurrentContentDeleted = true, true }}, SuggestionDismissed},
+		{"dismissed precedes status", []change{func(f *SuggestionStandingFacts) { f.Dismissed, f.Record.Status = true, StatusArchived }}, SuggestionDismissed},
+
 		{"deleted content", []change{func(f *SuggestionStandingFacts) { f.CurrentContentDeleted = true }}, SuggestionContentDeleted},
 		{"deleted delete suggestion", []change{func(f *SuggestionStandingFacts) { f.Suggestion, f.CurrentContentDeleted = SuggestDelete, true }}, SuggestionContentDeleted},
 		{"deleted precedes status", []change{func(f *SuggestionStandingFacts) { f.CurrentContentDeleted, f.Record.Status = true, StatusArchived }}, SuggestionContentDeleted},
@@ -235,6 +241,7 @@ func TestDecideSuggestionConfirmation(t *testing.T) {
 		{"not found", func(f *SuggestionConfirmationFacts) { f.Standing.ReviewFound = false }, SuggestionNotFound},
 		{"stale", func(f *SuggestionConfirmationFacts) { f.Standing.Record.CurrentVersionID = "v3" }, SuggestionStale},
 		{"status moved", func(f *SuggestionConfirmationFacts) { f.Standing.Record.Status = StatusArchived }, SuggestionStatusMoved},
+		{"dismissed", func(f *SuggestionConfirmationFacts) { f.Standing.Dismissed = true }, SuggestionDismissed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -243,5 +250,174 @@ func TestDecideSuggestionConfirmation(t *testing.T) {
 				t.Fatalf("decision = %+v, want %s", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestDecideSuggestionDismissal(t *testing.T) {
+	type change = func(*SuggestionDismissalFacts)
+	dismissal := func(changes ...change) SuggestionDismissalFacts {
+		f := SuggestionDismissalFacts{ReviewID: "review-1", Actor: ActorHuman, Reviewer: "martin", ExpectedVersion: 4, Reason: "still needed", Standing: standingFacts()}
+		for _, c := range changes {
+			c(&f)
+		}
+		return f
+	}
+	tests := []struct {
+		name    string
+		changes []change
+		want    SuggestionDismissalKind
+	}{
+		{"human dismisses archive", nil, SuggestionDismiss},
+		{"human dismisses delete", []change{func(f *SuggestionDismissalFacts) { f.Standing.Suggestion = SuggestDelete }}, SuggestionDismiss},
+		{"no reason", []change{func(f *SuggestionDismissalFacts) { f.Reason = "" }}, SuggestionDismiss},
+		{"reason at the bound", []change{func(f *SuggestionDismissalFacts) { f.Reason = strings.Repeat("r", MaxTextFieldBytes) }}, SuggestionDismiss},
+
+		{"no review id", []change{func(f *SuggestionDismissalFacts) { f.ReviewID = "" }}, SuggestionDismissalInvalidFacts},
+		{"unknown actor", []change{func(f *SuggestionDismissalFacts) { f.Actor = "operator" }}, SuggestionDismissalInvalidFacts},
+		{"no reviewer", []change{func(f *SuggestionDismissalFacts) { f.Reviewer = "" }}, SuggestionDismissalInvalidFacts},
+		{"reviewer one byte over", []change{func(f *SuggestionDismissalFacts) { f.Reviewer = strings.Repeat("ж", MaxIdentityBytes/2) + "x" }}, SuggestionDismissalInvalidFacts},
+		{"reviewer at the bound", []change{func(f *SuggestionDismissalFacts) { f.Reviewer = strings.Repeat("ж", MaxIdentityBytes/2) }}, SuggestionDismiss},
+		{"no expected version", []change{func(f *SuggestionDismissalFacts) { f.ExpectedVersion = 0 }}, SuggestionDismissalInvalidFacts},
+		{"no request project", []change{func(f *SuggestionDismissalFacts) { f.Standing.RequestProjectID = "" }}, SuggestionDismissalInvalidFacts},
+
+		{"agent dismisses", []change{func(f *SuggestionDismissalFacts) { f.Actor = ActorAgent }}, SuggestionDismissalActorNotAllowed},
+		{"system dismisses", []change{func(f *SuggestionDismissalFacts) { f.Actor = ActorSystem }}, SuggestionDismissalActorNotAllowed},
+		{"actor precedes not found", []change{func(f *SuggestionDismissalFacts) { f.Actor, f.Standing.ReviewFound = ActorAgent, false }}, SuggestionDismissalActorNotAllowed},
+		{"actor precedes a project check", []change{func(f *SuggestionDismissalFacts) { f.Actor, f.Standing.RequestProjectID = ActorSystem, "" }}, SuggestionDismissalActorNotAllowed},
+
+		{"missing review", []change{func(f *SuggestionDismissalFacts) { f.Standing.ReviewFound = false }}, SuggestionDismissalNotFound},
+		{"a dismissal is not a suggestion", []change{func(f *SuggestionDismissalFacts) {
+			f.Standing.Actor, f.Standing.Decision = ActorHuman, ReviewDismiss
+		}}, SuggestionDismissalNotFound},
+		{"record of another project", []change{func(f *SuggestionDismissalFacts) { f.Standing.Record.ProjectID = "p2" }}, SuggestionDismissalNotFound},
+
+		{"newer version", []change{func(f *SuggestionDismissalFacts) { f.Standing.Record.CurrentVersionID = "v3" }}, SuggestionDismissalStale},
+		{"already dismissed", []change{func(f *SuggestionDismissalFacts) { f.Standing.Dismissed = true }}, SuggestionAlreadyDismissed},
+		{"deleted content", []change{func(f *SuggestionDismissalFacts) { f.Standing.CurrentContentDeleted = true }}, SuggestionDismissalContentDeleted},
+		{"status moved", []change{func(f *SuggestionDismissalFacts) { f.Standing.Record.Status = StatusArchived }}, SuggestionDismissalStatusMoved},
+		{"status precedes the version", []change{func(f *SuggestionDismissalFacts) { f.Standing.Record.Status, f.ExpectedVersion = StatusArchived, 3 }}, SuggestionDismissalStatusMoved},
+
+		{"other expected version", []change{func(f *SuggestionDismissalFacts) { f.ExpectedVersion = 3 }}, SuggestionDismissalVersionConflict},
+		{"version precedes a long reason", []change{func(f *SuggestionDismissalFacts) {
+			f.ExpectedVersion, f.Reason = 5, strings.Repeat("r", MaxTextFieldBytes+1)
+		}}, SuggestionDismissalVersionConflict},
+
+		{"reason one byte over", []change{func(f *SuggestionDismissalFacts) { f.Reason = strings.Repeat("r", MaxTextFieldBytes+1) }}, SuggestionDismissalReasonTooLong},
+		{"reason measured in bytes", []change{func(f *SuggestionDismissalFacts) { f.Reason = strings.Repeat("ж", MaxTextFieldBytes/2) + "r" }}, SuggestionDismissalReasonTooLong},
+	}
+	seen := map[SuggestionDismissalKind]bool{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := dismissal(tt.changes...)
+			got := DecideSuggestionDismissal(f)
+			if got.Kind != tt.want || got.Reason == "" {
+				t.Fatalf("decision = %+v, want %s", got, tt.want)
+			}
+			if (got.Kind == SuggestionDismiss) != (got.Action == f.Standing.Suggestion && got.Action != "") {
+				t.Fatalf("action = %q for %s", got.Action, got.Kind)
+			}
+		})
+		seen[tt.want] = true
+	}
+	for _, kind := range SuggestionDismissalKinds() {
+		if !seen[kind] {
+			t.Fatalf("kind %s is not tested", kind)
+		}
+	}
+	if len(seen) != len(SuggestionDismissalKinds()) {
+		t.Fatalf("tested kinds %v", seen)
+	}
+}
+
+// Every standing kind but applies maps to a dismissal kind.
+func TestDismissalKindsCoverEveryStandingRefusal(t *testing.T) {
+	for _, kind := range []SuggestionKind{SuggestionInvalidInput, SuggestionNotFound, SuggestionStale, SuggestionDismissed, SuggestionContentDeleted, SuggestionStatusMoved} {
+		if _, ok := dismissalKinds[kind]; !ok {
+			t.Fatalf("standing %s has no dismissal kind", kind)
+		}
+	}
+	if len(dismissalKinds) != 6 {
+		t.Fatalf("dismissal kinds = %d", len(dismissalKinds))
+	}
+}
+
+// standingVariants are standings that each lead the standing rule to a
+// different kind, all of the same request project.
+func standingVariants() []SuggestionStandingFacts {
+	return []SuggestionStandingFacts{
+		{RequestProjectID: "p1"},
+		standingFacts(),
+		standingFacts(func(f *SuggestionStandingFacts) { f.Record.ProjectID = "p2" }),
+		standingFacts(func(f *SuggestionStandingFacts) { f.Record.CurrentVersionID = "v3" }),
+		standingFacts(func(f *SuggestionStandingFacts) { f.Dismissed = true }),
+		standingFacts(func(f *SuggestionStandingFacts) { f.CurrentContentDeleted = true }),
+		standingFacts(func(f *SuggestionStandingFacts) { f.Record.Status = StatusArchived }),
+	}
+}
+
+// The procedures refuse invalid_facts and actor_not_allowed before reading
+// anything, deciding from the request facts and an empty standing of the
+// request project. That is sound only because those two results never depend
+// on the stored standing: for any standing they are the same decision.
+func TestConfirmationActorAndInvalidFactsIgnoreTheStanding(t *testing.T) {
+	for _, request := range []SuggestionConfirmationFacts{
+		{ReviewID: "review-1", Actor: ActorAgent},
+		{ReviewID: "review-1", Actor: ActorSystem},
+		{ReviewID: "review-1", Actor: "operator"},
+		{Actor: ActorHuman},
+		{Actor: ActorAgent},
+	} {
+		request.Standing = SuggestionStandingFacts{RequestProjectID: "p1"}
+		want := DecideSuggestionConfirmation(request)
+		if want.Kind != SuggestionInvalidInput && want.Kind != SuggestionActorNotAllowed {
+			t.Fatalf("%+v decided %s", request, want.Kind)
+		}
+		for _, standing := range standingVariants() {
+			request.Standing = standing
+			if got := DecideSuggestionConfirmation(request); got != want {
+				t.Fatalf("%+v = %+v, want %+v", request, got, want)
+			}
+		}
+	}
+	// A human's request facts never decide those kinds unless the project
+	// itself is missing, which is a request fact too.
+	for _, standing := range standingVariants() {
+		if got := DecideSuggestionConfirmation(SuggestionConfirmationFacts{ReviewID: "review-1", Actor: ActorHuman, Standing: standing}); got.Kind == SuggestionInvalidInput || got.Kind == SuggestionActorNotAllowed {
+			t.Fatalf("human with %+v = %+v", standing, got)
+		}
+	}
+}
+
+func TestDismissalActorAndInvalidFactsIgnoreTheStanding(t *testing.T) {
+	valid := SuggestionDismissalFacts{ReviewID: "review-1", Actor: ActorHuman, Reviewer: "martin", ExpectedVersion: 4}
+	for _, change := range []func(*SuggestionDismissalFacts){
+		func(f *SuggestionDismissalFacts) { f.Actor = ActorAgent },
+		func(f *SuggestionDismissalFacts) { f.Actor = ActorSystem },
+		func(f *SuggestionDismissalFacts) { f.Actor = "operator" },
+		func(f *SuggestionDismissalFacts) { f.ReviewID = "" },
+		func(f *SuggestionDismissalFacts) { f.Reviewer = "" },
+		func(f *SuggestionDismissalFacts) { f.ExpectedVersion = 0 },
+		func(f *SuggestionDismissalFacts) { f.Actor, f.ExpectedVersion = ActorAgent, 0 },
+	} {
+		request := valid
+		change(&request)
+		request.Standing = SuggestionStandingFacts{RequestProjectID: "p1"}
+		want := DecideSuggestionDismissal(request)
+		if want.Kind != SuggestionDismissalInvalidFacts && want.Kind != SuggestionDismissalActorNotAllowed {
+			t.Fatalf("%+v decided %s", request, want.Kind)
+		}
+		for _, standing := range standingVariants() {
+			request.Standing = standing
+			if got := DecideSuggestionDismissal(request); got != want {
+				t.Fatalf("%+v = %+v, want %+v", request, got, want)
+			}
+		}
+	}
+	for _, standing := range standingVariants() {
+		request := valid
+		request.Standing = standing
+		if got := DecideSuggestionDismissal(request); got.Kind == SuggestionDismissalInvalidFacts || got.Kind == SuggestionDismissalActorNotAllowed {
+			t.Fatalf("human with %+v = %+v", standing, got)
+		}
 	}
 }

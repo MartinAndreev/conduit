@@ -33,6 +33,9 @@ type RecordOpinionFacts struct {
 	// StoredContentHash and ContentDeleted describe the stored version.
 	StoredContentHash string
 	ContentDeleted    bool
+	// SuggestionDismissed is true when a human dismissal names the version,
+	// the content hash and the suggested action (Martin, 7а, 2026-11-15).
+	SuggestionDismissed bool
 }
 
 type RecordOpinionKind string
@@ -61,6 +64,10 @@ const (
 	// record's status does not permit (archive needs a status a human may
 	// archive).
 	OpinionStatusNotApplicable RecordOpinionKind = "status_not_applicable"
+	// OpinionSuggestionDismissed refuses a suggestion a human dismissed for
+	// the same version, content hash and action. A new version lifts it, and
+	// the other action is not affected.
+	OpinionSuggestionDismissed RecordOpinionKind = "suggestion_dismissed"
 )
 
 type RecordOpinionDecision struct {
@@ -78,6 +85,7 @@ type RecordOpinionDecision struct {
 // that is not the version's; a reason or a suggestion on deleted content; a
 // suggestion without a reason; a reason above MaxTextFieldBytes; a
 // suggestion about a version that is not the record's current one; a
+// suggestion a human dismissed for this version, content hash and action; a
 // suggestion whose action the record's status does not permit; add. An
 // opinion without a reason or suggestion on deleted content is added.
 func DecideRecordOpinion(f RecordOpinionFacts) RecordOpinionDecision {
@@ -109,6 +117,9 @@ func DecideRecordOpinion(f RecordOpinionFacts) RecordOpinionDecision {
 	}
 	if f.Suggestion != "" && f.VersionID != f.Record.CurrentVersionID {
 		return RecordOpinionDecision{Kind: OpinionVersionNotCurrent, Reason: "a suggestion names the record's current version"}
+	}
+	if f.Suggestion != "" && f.SuggestionDismissed {
+		return RecordOpinionDecision{Kind: OpinionSuggestionDismissed, Reason: "a human dismissed this action for this version"}
 	}
 	if f.Suggestion != "" && !suggestionApplies(f.Suggestion, f.Record.Status) {
 		return RecordOpinionDecision{Kind: OpinionStatusNotApplicable, Reason: "the record's status does not permit the suggested action"}

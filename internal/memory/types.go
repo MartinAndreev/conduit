@@ -82,19 +82,24 @@ func Actors() []Actor {
 }
 
 // ReviewDecision is what a memory_reviews row records about one exact version
-// and content hash. Only a human approves or rejects; system and agent reviews
-// are opinions, which never change trust or lifecycle.
+// and content hash. Only a human approves, rejects or dismisses; system and
+// agent reviews are opinions, which never change trust or lifecycle.
 type ReviewDecision string
 
 const (
 	ReviewApprove ReviewDecision = "approve"
 	ReviewReject  ReviewDecision = "reject"
 	ReviewOpinion ReviewDecision = "opinion"
+	// ReviewDismiss is a human's dismissal of an agent's audit suggestion
+	// (task 5.5, Martin 7а, 2026-11-15): it names the dismissed action and,
+	// like every review, the exact version and content hash. It changes
+	// neither trust nor lifecycle.
+	ReviewDismiss ReviewDecision = "dismiss"
 )
 
 // ReviewDecisions lists every review decision.
 func ReviewDecisions() []ReviewDecision {
-	return []ReviewDecision{ReviewApprove, ReviewReject, ReviewOpinion}
+	return []ReviewDecision{ReviewApprove, ReviewReject, ReviewOpinion, ReviewDismiss}
 }
 
 // Visibility is who may see a version.

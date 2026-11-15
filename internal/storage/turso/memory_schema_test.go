@@ -323,7 +323,8 @@ func TestReviewNamesExactVersionAndHash(t *testing.T) {
 }
 
 // The review CHECK lists are literal DDL; this keeps them equal to the domain
-// owner's actors and decisions, and only a human may approve or reject.
+// owner's actors and decisions, and only a human may approve, reject or
+// dismiss. A dismissal always names its action (TestReviewSuggestionMatchesDomain).
 func TestReviewActorsAndDecisionsMatchDomain(t *testing.T) {
 	ctx := context.Background()
 	store := openMemoryStore(t)
@@ -331,7 +332,11 @@ func TestReviewActorsAndDecisionsMatchDomain(t *testing.T) {
 	mustInsertMemory(t, store.db, fixture)
 	for _, actor := range memory.Actors() {
 		for _, decision := range memory.ReviewDecisions() {
-			err := insertReview(ctx, store.db, newReview(string(actor)+"-"+string(decision), fixture.version, actor, decision))
+			review := newReview(string(actor)+"-"+string(decision), fixture.version, actor, decision)
+			if decision == memory.ReviewDismiss {
+				review.Suggestion = optional(string(memory.SuggestArchive))
+			}
+			err := insertReview(ctx, store.db, review)
 			allowed := actor == memory.ActorHuman || decision == memory.ReviewOpinion
 			if allowed != (err == nil) {
 				t.Fatalf("%s %s: allowed=%v, err=%v", actor, decision, allowed, err)
