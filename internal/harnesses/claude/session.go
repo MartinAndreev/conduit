@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -101,8 +100,12 @@ type session struct {
 	closeOnce           sync.Once
 	exitDone            chan struct{}
 	exitOnce            sync.Once
-	// lossKillOnce guards the single group kill after an unexpected stop.
+	// lossKillOnce guards the single group kill after an unexpected stop;
+	// lossKilled and lossKillErr (under mu) record its outcome, which Close
+	// uses when finalization refuses its own kill.
 	lossKillOnce sync.Once
+	lossKilled   bool
+	lossKillErr  error
 	// rootExited is set (under mu) once the root's exit was observed.
 	rootExited bool
 
@@ -252,7 +255,16 @@ func (s *session) abortOpen(ctx context.Context, cause error) error {
 		s.closing = true
 		return nil
 	})
-	owner := processruntime.NewCleanupOwnerWithDrain(s.process, s.transport.readersDone)
+	// A loss path that already killed and ended signalling hands its kill
+	// outcome to the owner, whose own kill finalization then refuses.
+	var options []processruntime.CleanupOption
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		if s.lossKilled {
+			options = append(options, processruntime.WithPriorKill(s.lossKillErr))
+		}
+		return nil
+	})
+	owner := processruntime.NewCleanupOwnerWithDrain(s.process, s.transport.readersDone, options...)
 	owner.BeginCleanup()
 	waitCtx, cancel := context.WithTimeout(ctx, s.config.StopGrace)
 	defer cancel()
@@ -646,13 +658,18 @@ func (s *session) terminateOwnedProcess(interrupt bool) {
 	killAttempted := termination.Kind == rules.OwnedProcessKillRequired
 	var killErr error
 	if killAttempted {
-		killErr = s.process.KillTree()
+		killErr = s.closeKillOutcome(s.process.KillTree())
 	}
 	if !reaped {
 		reaped = s.waitExit()
 	}
+	// Close is the last signaller: Finalize runs unconditionally (it owns the
+	// eventual release even when this bounded wait ends first), and only it,
+	// not Wait, establishes the reap.
+	released := processruntime.FinalizeWithin(s.process, s.config.StopGrace) == nil
+	reaped = reaped && released
 	treeKillSupported := reaped && s.process.TreeKillSupported()
-	killConfirmed := treeKillSupported && killAttempted && (killErr == nil || errors.Is(killErr, os.ErrProcessDone))
+	killConfirmed := treeKillSupported && killAttempted && processruntime.KillConfirmed(killErr)
 	quiescence := rules.DecideQuiescence(rules.QuiescenceFacts{
 		RootReaped: reaped, TreeKillSupported: treeKillSupported,
 		KillAttempted: killAttempted, KillConfirmed: killConfirmed,
@@ -713,7 +730,7 @@ func (s *session) observeProcessExit() {
 	rootExited, rootResult := processruntime.ObserveRootExit(s.process)
 	<-rootExited
 	if closing := s.markRootExited(); !closing {
-		s.lossKillOnce.Do(func() { _ = s.process.KillTree() })
+		s.killOnLoss()
 		timer := time.NewTimer(s.config.StopGrace)
 		select {
 		case <-s.transport.routed:
@@ -721,8 +738,15 @@ func (s *session) observeProcessExit() {
 		}
 		timer.Stop()
 	}
-	s.handleUnexpectedStop(s.markLost(), "claude_process_exit",
+	loss := s.markLost()
+	s.handleUnexpectedStop(loss, "claude_process_exit",
 		adaptererror.New(provider.OperationReceiveEvent, provider.ErrorSessionLost, provider.RemoteEffectUnknown, rootResult().Err, "claude process exited"))
+	// An unexpected exit ends signalling with the loss kill: finalization is
+	// registered now, independently of Wait, which a descendant outside the
+	// group can block. Close or a failed open finalizes what it shuts down.
+	if !loss.closing {
+		processruntime.RequestFinalize(s.process)
+	}
 	s.process.Wait()
 	s.exitOnce.Do(func() { close(s.exitDone) })
 }
@@ -811,7 +835,7 @@ func (s *session) handleUnexpectedStop(loss sessionLoss, nativeStatus string, te
 		s.broker.Finish(terminal)
 	}
 	if !loss.closing {
-		s.lossKillOnce.Do(func() { _ = s.process.KillTree() })
+		s.killOnLoss()
 	}
 }
 
@@ -934,3 +958,32 @@ func (s *session) warnNativeOnce(key string, warning provider.ProtocolWarningEve
 }
 
 var _ provider.Session = (*session)(nil)
+
+// killOnLoss sends the single group kill after an unexpected stop and records
+// its outcome for Close's termination accounting.
+func (s *session) killOnLoss() {
+	s.lossKillOnce.Do(func() {
+		err := s.process.KillTree()
+		_ = lockscope.WithMutexLock(&s.mu, func() error {
+			s.lossKilled = true
+			s.lossKillErr = err
+			return nil
+		})
+	})
+}
+
+// closeKillOutcome is the termination evidence of Close's kill. When
+// finalization refused it (the loss path ended signalling first), the loss
+// kill's own outcome stands; a refusal without one confirms nothing.
+func (s *session) closeKillOutcome(killErr error) error {
+	if !errors.Is(killErr, processruntime.ErrSignalsFinalized) {
+		return killErr
+	}
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		if s.lossKilled {
+			killErr = s.lossKillErr
+		}
+		return nil
+	})
+	return killErr
+}

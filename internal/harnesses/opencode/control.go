@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"sync"
+	"time"
 
 	processruntime "github.com/MartinAndreev/conduit/internal/process"
 	"github.com/MartinAndreev/conduit/internal/sessions/provider"
@@ -306,11 +308,38 @@ func (c *cliControl) run(ctx context.Context, dir string, args ...string) (comma
 	select {
 	case <-ctx.Done():
 		_ = proc.KillTree()
+		// The kill was the last signal: finalization is registered at once,
+		// independently of the pipes; the process releases the root once it
+		// exited. The parent's pipe ends are closed independently of Wait, so
+		// the copy workers and Wait end even when a descendant outside the
+		// group keeps its ends; the closes run in their own goroutine, so a
+		// slow close cannot extend the caller's wait.
+		processruntime.RequestFinalize(proc)
+		go func() {
+			_ = proc.Stdin().Close()
+			_ = proc.Stdout().Close()
+			_ = proc.Stderr().Close()
+		}()
 		return commandOutput{}, true, ctx.Err()
 	case result := <-done:
+		// A finished command is released within the caller's context and the
+		// cleanup budget; past that the process keeps ownership of the
+		// release, and the unconfirmed release fails the command.
+		finalizeCtx, cancel := context.WithTimeout(ctx, controlCleanupBudget)
+		defer cancel()
+		if err := processruntime.Finalize(finalizeCtx, proc); err != nil {
+			return commandOutput{}, true, fmt.Errorf("%w: %w", errControlCleanup, err)
+		}
 		return commandOutput{stdout: stdout.Bytes(), succeeded: result.Err == nil && result.ExitCode == 0}, true, nil
 	}
 }
+
+// controlCleanupBudget bounds the release of a finished control command.
+const controlCleanupBudget = 2 * time.Second
+
+// errControlCleanup reports a finished control command whose release (root
+// reap) was not confirmed within the cleanup budget or failed.
+var errControlCleanup = errors.New("OpenCode control command release was not confirmed")
 
 type limitedBuffer struct{ bytes.Buffer }
 

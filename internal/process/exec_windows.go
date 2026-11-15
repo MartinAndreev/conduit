@@ -103,7 +103,7 @@ func (o *ownedResources) close() error {
 		return err
 	})
 }
-func (o *ownedResources) kill(_ int) error {
+func (o *ownedResources) kill() error {
 	return lockscope.WithMutexLock(&o.mu, func() error {
 		if o.job == 0 {
 			return os.ErrProcessDone
@@ -111,12 +111,24 @@ func (o *ownedResources) kill(_ int) error {
 		return windows.TerminateJobObject(o.job, 1)
 	})
 }
-func interruptOwnedProcess(pid int) error {
-	p, err := os.FindProcess(pid)
-	if err != nil {
-		return err
+
+// newRootOps signals through handles: the job for the tree and the process
+// handle exec.Cmd retains for the root. A reap releases the root's PID, but
+// neither handle can then reach a reused PID, so the root is reaped at exit
+// and signals are not gated on it. os.Process.Signal reports
+// os.ErrProcessDone after the reap and refuses os.Interrupt on Windows
+// otherwise.
+func newRootOps(cmd *exec.Cmd, owned *ownedResources) rootOps {
+	return rootOps{
+		awaitExit: func() (Result, bool) { return waitRoot(cmd), false },
+		interrupt: func() error { return cmd.Process.Signal(os.Interrupt) },
+		killTree:  owned.kill,
 	}
-	return p.Signal(os.Interrupt)
 }
+
 func ownedTreeKillSupported() bool          { return true }
 func processSignal(*os.ProcessState) string { return "" }
+
+// RootRetentionSupported is true: Windows signals only through handles (the
+// job and the process handle), which cannot reach a reused PID.
+func RootRetentionSupported() bool { return true }

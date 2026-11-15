@@ -23,9 +23,10 @@
 | S18 | Home path и project cwd | Конфиг само в `<user-home>/.conduit/config.yaml`; смяна на cwd не променя целта; неразрешим home дава грешка без fallback |
 | S17 | Symlink/unsupported filesystem | Няма неявно писане в чужда цел или unsafe fallback |
 | S19 | Cancel по време на lookup/неуспешен launch | Няма launch след наблюдаван cancel; cancellation и техническата причина остават различими |
-| S20 | Root exit с descendants и пренасочени потоци | Cleanup се изпълнява и при успешен/неуспешен root exit |
+| S20 | Root exit с descendants и пренасочени потоци | Cleanup се изпълнява и при успешен/неуспешен root exit; tree kill след `RootDone` още достига групата, защото root-ът се reap-ва едва във `Finalize` |
 | S21 | Kill failure и неприключващ Wait/reader | Caller връща в cleanup срока; няма ready/publish; outcome запазва observer и техническата причина |
-| S22 | Повторен cleanup и конкурентно наблюдение | Един owner/worker; копирани snapshots; eventual reap след caller timeout се наблюдава без загуба на ownership |
+| S20a | Платформа без задържане на root-а (fallback Unix) | Не се стартира probe child; harness е `found` с неизвестна версия и предупреждение `harness_probe_unsupported_platform`; startup продължава, не е `Blocked` |
+| S22 | Повторен cleanup и конкурентно наблюдение | Един owner/worker; копирани snapshots; eventual reap (чрез `Finalize`) след caller timeout се наблюдава без загуба на ownership; `RootReaped` идва от `Finalize`, не от `Wait` |
 | S23 | Stat failure, сменен файл и файл, изчезнал след Lstat | Запазена оригинална Stat причина; identity mismatch е отделен; късен ENOENT не става първоначално absent |
 | S24 | Shared lock и probe descriptors | Error/panic се запазват, mutex се освобождава; schema IDs и probe описанията са съгласувани без implicit нов harness |
 

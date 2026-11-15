@@ -22,6 +22,7 @@ type scriptedLauncher struct {
 	spec     processruntime.Spec
 	requests []map[string]any
 	starts   int
+	proc     *scriptedProcess
 }
 
 func (l *scriptedLauncher) Start(spec processruntime.Spec) (processruntime.Process, error) {
@@ -35,6 +36,9 @@ func (l *scriptedLauncher) Start(spec processruntime.Spec) (processruntime.Proce
 		stdin: clientInput, stdout: clientOutput, stderr: io.NopCloser(&emptyReader{}),
 		done: make(chan struct{}), serverInput: serverInput, serverOutput: serverOutput,
 	}
+	l.mu.Lock()
+	l.proc = proc
+	l.mu.Unlock()
 	go l.serve(proc)
 	return proc, nil
 }
@@ -106,6 +110,19 @@ type scriptedProcess struct {
 	serverOutput *io.PipeWriter
 	done         chan struct{}
 	killOnce     sync.Once
+	finalizes    atomic.Int32
+}
+
+// Finalize implements processruntime.Finalizer: the scripted root exits
+// with its pipes.
+func (p *scriptedProcess) Finalize(ctx context.Context) error {
+	select {
+	case <-p.done:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	p.finalizes.Add(1)
+	return nil
 }
 
 func (*scriptedProcess) PID() int                { return 42 }
@@ -217,6 +234,9 @@ func TestAdapterOpenStartSteerAndCloseAgainstScriptedAppServer(t *testing.T) {
 	}
 	if !closed.HandleClosed || !closed.ResourcesReleased || closed.ExecutionState != provider.ExecutionNone {
 		t.Fatalf("Close result = %#v", closed)
+	}
+	if calls := launcher.proc.finalizes.Load(); calls != 1 {
+		t.Fatalf("Close finalized %d times, want once", calls)
 	}
 	if launcher.spec.Path != "/test/codex" || len(launcher.spec.Args) != 1 || launcher.spec.Args[0] != "app-server" {
 		t.Fatalf("launch spec = %#v", launcher.spec)

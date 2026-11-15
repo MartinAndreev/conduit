@@ -144,6 +144,13 @@ type ConfigMigrator interface {
 // original. It is never overwritten, so migration stops without writing.
 var ErrMigrationBackupConflict = errors.New("existing configuration backup differs from the original")
 
+// ErrProbePlatformUnsupported means version probes are not run on this
+// platform because it cannot guarantee safe cleanup of the probe's process
+// group (see process.RootRetentionSupported). The executable was found; its
+// version stays unknown. It is an ordinary discovery outcome, not a cleanup
+// failure: no child was started.
+var ErrProbePlatformUnsupported = errors.New("version probes are unsupported on this platform")
+
 // ErrProbeCleanup means discovery could not confirm cleanup of an owned probe.
 // Adapters preserve the underlying cause; callers must stop further effects.
 var ErrProbeCleanup = errors.New("probe cleanup could not be confirmed")
