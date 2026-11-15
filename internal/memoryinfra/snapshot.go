@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/MartinAndreev/conduit/internal/memory"
 	"github.com/MartinAndreev/conduit/internal/memory/compose"
@@ -37,11 +38,20 @@ var ErrInvalidSnapshot = errors.New("snapshot ref is not an absolute clean path 
 // and hashes only the admitted ones with one git process per call; only a
 // failed batch adds at most one control run and maxPerFileRetries
 // single-path runs (see hash).
+//
+// An admitted file whose lstat fingerprint equals the one stored after an
+// earlier successful hash, within snapshotCacheTTL, takes the stored hash
+// without git (snapshotCache). The rules still run on every call, so the
+// cache never admits a path they refuse. A WorkspaceSnapshots is safe for
+// concurrent use.
 type WorkspaceSnapshots struct {
 	launcher process.Launcher
 	// maxBytes overrides memory.MaxSnapshotFileBytes in tests.
 	maxBytes int64
 	files    fileSystem
+	cache    *snapshotCache
+	// now is the clock of the racy rule and the cache's TTL; tests set it.
+	now func() time.Time
 }
 
 // fileSystem is the reader's filesystem lookups; tests wrap them.
@@ -60,6 +70,8 @@ func NewWorkspaceSnapshots(launcher process.Launcher) *WorkspaceSnapshots {
 		launcher: launcher,
 		maxBytes: memory.MaxSnapshotFileBytes,
 		files:    fileSystem{lstat: os.Lstat, evalSymlinks: filepath.EvalSymlinks},
+		cache:    newSnapshotCache(snapshotCacheEntries, snapshotCacheTTL),
+		now:      time.Now,
 	}
 }
 
@@ -67,7 +79,13 @@ var _ compose.SnapshotReader = (*WorkspaceSnapshots)(nil)
 
 // ObserveFiles observes paths in the workspace snapshot, one observation per
 // path in order. Phases: resolve the workspace root once; decide each path
-// with the memory rules from lstat facts; hash the admitted paths with git.
+// with the memory rules from lstat facts; take the hash of an admitted path
+// whose fingerprint is cached; hash the other admitted paths with git (none
+// left: git is not started); look up what git hashed again, as the rules did,
+// and publish the stable results to the cache in one step (see storable and
+// decideSnapshotCacheStore). Results served from the cache are not part of
+// the git batch, so the failure fallback of hash (per-file retries up to
+// maxPerFileRetries) counts only the misses.
 // An error means the workspace could not be used (invalid ref, git missing,
 // cancellation, git broke its output contract or failed in the workspace
 // itself); it never contains a path, the ref, file contents or git's stderr.
@@ -81,6 +99,7 @@ func (w *WorkspaceSnapshots) ObserveFiles(ctx context.Context, snapshot compose.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	callStart := w.now()
 	root, err := resolveRoot(string(snapshot))
 	if err != nil {
 		return nil, err
@@ -91,10 +110,14 @@ func (w *WorkspaceSnapshots) ObserveFiles(ctx context.Context, snapshot compose.
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		kind, clean := w.decidePath(root, declared)
+		kind, clean, leaf := w.decidePath(root, declared)
 		switch kind {
 		case memory.SnapshotFileHash:
-			admitted = append(admitted, admittedPath{index: index, clean: clean})
+			if hash, hit := w.cached(root, clean, leaf); hit {
+				observed[index] = compose.FileObservation{Observation: memory.SourcePresent, Hash: hash}
+				continue
+			}
+			admitted = append(admitted, admittedPath{index: index, clean: clean, leaf: leaf})
 		case memory.SnapshotFileMissing:
 			observed[index] = compose.FileObservation{Observation: memory.SourceMissing}
 		default:
@@ -111,6 +134,17 @@ func (w *WorkspaceSnapshots) ObserveFiles(ctx context.Context, snapshot compose.
 	if err != nil {
 		return nil, err
 	}
+	storable, err := w.storable(ctx, callStart, root, admitted, hashed)
+	if err != nil {
+		return nil, err
+	}
+	// The publish point: the entries are stored together, or not at all
+	// when the call was cancelled before the cache lock was taken. A
+	// cancellation after it still fails the call; the entries stay, as
+	// each is a stable file's hash.
+	if err := w.cache.storeAll(ctx, storable); err != nil {
+		return nil, err
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -121,10 +155,67 @@ func (w *WorkspaceSnapshots) ObserveFiles(ctx context.Context, snapshot compose.
 }
 
 // admittedPath is a path the rules admitted for hashing, with its position in
-// the request.
+// the request and its leaf as looked up for the rules.
 type admittedPath struct {
 	index int
 	clean string
+	leaf  leafFile
+}
+
+// leafFile is the leaf of an admitted path: where it was looked up (under its
+// resolved directory) and the fingerprint of that lstat, when known.
+type leafFile struct {
+	path        string
+	fingerprint fileFingerprint
+	known       bool
+}
+
+// cached returns the stored hash of an admitted file whose fingerprint is
+// known and unchanged.
+func (w *WorkspaceSnapshots) cached(root, clean string, leaf leafFile) (string, bool) {
+	if !leaf.known {
+		return "", false
+	}
+	return w.cache.lookup(snapshotCacheKey{root: root, clean: clean}, leaf.fingerprint, w.now())
+}
+
+// storable looks each file git hashed as present up again, the way the
+// rules did (directory resolution and leaf lstat), and returns the entries
+// decideSnapshotCacheStore admits: the file rule must still admit the path,
+// under the same resolved leaf, with the same fingerprint. A directory
+// symlink switched while git ran therefore keeps the file out of the cache.
+// The context is checked before each lookup; the caller publishes the
+// entries only if the call is not cancelled.
+func (w *WorkspaceSnapshots) storable(ctx context.Context, callStart time.Time, root string, admitted []admittedPath, hashed []compose.FileObservation) ([]snapshotCacheEntry, error) {
+	var entries []snapshotCacheEntry
+	for position, entry := range admitted {
+		facts := snapshotCacheStoreFacts{
+			Observation: hashed[position],
+			BeforeKnown: entry.leaf.known,
+			Before:      entry.leaf.fingerprint,
+			CallStart:   callStart,
+		}
+		// The rule refuses these anyway; skipping them saves the lookup.
+		if facts.Observation.Observation != memory.SourcePresent || !facts.BeforeKnown {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		kind, _, leaf := w.decidePath(root, entry.clean)
+		facts.SameLeaf = kind == memory.SnapshotFileHash && leaf.path == entry.leaf.path
+		facts.After, facts.AfterKnown = leaf.fingerprint, leaf.known
+		if decideSnapshotCacheStore(facts).Kind != snapshotCacheStore {
+			continue
+		}
+		entries = append(entries, snapshotCacheEntry{
+			key:         snapshotCacheKey{root: root, clean: entry.clean},
+			fingerprint: facts.Before,
+			hash:        facts.Observation.Hash,
+			stored:      w.now(),
+		})
+	}
+	return entries, nil
 }
 
 // resolveRoot validates the ref and resolves its symlinks once; every path is
@@ -148,44 +239,48 @@ func resolveRoot(ref string) (string, error) {
 }
 
 // decidePath applies the path rule, gathers lstat facts for an admitted path
-// and applies the file rule. It returns the cleaned path to hash.
-func (w *WorkspaceSnapshots) decidePath(root, declared string) (memory.SnapshotFileKind, string) {
+// and applies the file rule. It returns the cleaned path to hash and its
+// leaf.
+func (w *WorkspaceSnapshots) decidePath(root, declared string) (memory.SnapshotFileKind, string, leafFile) {
 	decision := memory.DecideSnapshotPath(declared)
 	if decision.Kind != memory.SnapshotPathAdmitted {
-		return memory.SnapshotFileUnreadable, ""
+		return memory.SnapshotFileUnreadable, "", leafFile{}
 	}
-	facts := w.files.facts(root, decision.Clean)
+	facts, leaf := w.files.facts(root, decision.Clean)
 	facts.MaxBytes = w.maxBytes
-	return memory.DecideSnapshotFile(facts).Kind, decision.Clean
+	return memory.DecideSnapshotFile(facts).Kind, decision.Clean, leaf
 }
 
 // facts resolves the directory of clean under root first and looks up
 // the leaf (lstat, not following a final symlink) only under a directory
 // that resolves inside root, so nothing is learnt about files outside it.
-func (f fileSystem) facts(root, clean string) memory.SnapshotFileFacts {
+// The leaf is returned once it was found.
+func (f fileSystem) facts(root, clean string) (memory.SnapshotFileFacts, leafFile) {
 	dir, parent, absent := f.resolveParent(root, clean)
 	facts := memory.SnapshotFileFacts{Parent: parent}
 	switch {
 	case parent != memory.SnapshotInsideRoot:
-		return facts
+		return facts, leafFile{}
 	case absent:
 		facts.Lookup = memory.SnapshotLookupMissing
-		return facts
+		return facts, leafFile{}
 	}
-	info, err := f.lstat(filepath.Join(dir, path.Base(clean)))
+	leaf := leafFile{path: filepath.Join(dir, path.Base(clean))}
+	info, err := f.lstat(leaf.path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		facts.Lookup = memory.SnapshotLookupMissing
-		return facts
+		return facts, leafFile{}
 	case err != nil:
 		facts.Lookup = memory.SnapshotLookupFailed
-		return facts
+		return facts, leafFile{}
 	}
 	facts.Lookup = memory.SnapshotLookupFound
 	facts.Symlink = info.Mode()&fs.ModeSymlink != 0
 	facts.Regular = info.Mode().IsRegular()
 	facts.Size = info.Size()
-	return facts
+	leaf.fingerprint, leaf.known = fingerprintOf(info)
+	return facts, leaf
 }
 
 // resolveParent resolves the directory of clean (a cleaned, relative,
