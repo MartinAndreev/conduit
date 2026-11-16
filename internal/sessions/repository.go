@@ -9,6 +9,11 @@ import (
 var (
 	ErrNotFound        = errors.New("session not found")
 	ErrVersionConflict = errors.New("session version conflict")
+	// ErrBindingLocked reports that the session has an open dispatch intent,
+	// so its binding (project, run, attempt, assignment, revision, adapter
+	// session) cannot change until the intent ends or recovery releases it.
+	// Nothing was written.
+	ErrBindingLocked = errors.New("session binding locked by an open dispatch intent")
 )
 
 type ID string
@@ -37,6 +42,8 @@ type Reader interface {
 
 // Writer persists a record only when expectedVersion matches. Zero creates a
 // new record; successful writes return the record with its incremented version.
+// A write that changes the binding of a session with an open dispatch intent
+// fails with ErrBindingLocked.
 type Writer interface {
 	Save(context.Context, Record, uint64) (Record, error)
 }

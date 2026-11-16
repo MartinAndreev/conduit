@@ -89,6 +89,8 @@ func TestDecidePayloadRemoval(t *testing.T) {
 		{"intent recorded, not dispatched", PayloadRemovalFacts{PayloadPresent, DispatchIntentRecorded}, PayloadRemove, PayloadRemovedBeforeDispatch, IntentInvalidate},
 		{"delivery unknown", PayloadRemovalFacts{PayloadPresent, DispatchDeliveryUnknown}, PayloadRemove, PayloadRemovedDeliveryUnknown, IntentForbidRetry},
 		{"delivered", PayloadRemovalFacts{PayloadPresent, DispatchDelivered}, PayloadRemove, PayloadRemovedAfterDelivery, IntentUnchanged},
+		{"never dispatched", PayloadRemovalFacts{PayloadPresent, DispatchNotDispatched}, PayloadRemove, PayloadRemovedBeforeDispatch, IntentUnchanged},
+		{"never dispatched, already removed", PayloadRemovalFacts{PayloadRemovedBeforeDispatch, DispatchNotDispatched}, PayloadAlreadyRemoved, "", ""},
 		{"already removed", PayloadRemovalFacts{PayloadRemovedAfterDelivery, DispatchDelivered}, PayloadAlreadyRemoved, "", ""},
 		{"removed before dispatch", PayloadRemovalFacts{PayloadRemovedBeforeDispatch, DispatchIntentRecorded}, PayloadAlreadyRemoved, "", ""},
 		{"unknown status", PayloadRemovalFacts{"gone", DispatchDelivered}, PayloadInvalidFacts, "", ""},

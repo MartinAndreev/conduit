@@ -43,6 +43,12 @@ func (c *faultConnector) Connect(ctx context.Context) (driver.Conn, error) {
 type fault struct {
 	err   error
 	times int
+	// before runs, outside the connector's lock, before the statement.
+	before func()
+	// after runs the statement first and then fails with err.
+	after bool
+	// skip reports success without running the statement.
+	skip bool
 }
 
 func (c *faultConnector) inject(prefix string, err error, times int) {
@@ -51,7 +57,26 @@ func (c *faultConnector) inject(prefix string, err error, times int) {
 	c.faults[prefix] = &fault{err: err, times: times}
 }
 
+// injectFault installs a fault with its mode; times as for inject.
+func (c *faultConnector) injectFault(prefix string, f fault) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.faults[prefix] = &f
+}
+
 func (c *faultConnector) fault(query string) error {
+	injected := c.match(query)
+	if injected.before != nil {
+		injected.before()
+	}
+	if injected.after || injected.skip {
+		return nil
+	}
+	return injected.err
+}
+
+// match records query and consumes the first matching fault.
+func (c *faultConnector) match(query string) fault {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.statements = append(c.statements, query)
@@ -62,9 +87,9 @@ func (c *faultConnector) fault(query string) error {
 		if injected.times > 0 {
 			injected.times--
 		}
-		return injected.err
+		return *injected
 	}
-	return nil
+	return fault{}
 }
 
 func (c *faultConnector) count(prefix string) int {
@@ -86,8 +111,20 @@ type faultConn struct {
 }
 
 func (c *faultConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
-	if err := c.connector.fault(query); err != nil {
-		return nil, err
+	injected := c.connector.match(query)
+	if injected.before != nil {
+		injected.before()
+	}
+	switch {
+	case injected.skip:
+		return driver.ResultNoRows, nil
+	case injected.after:
+		if _, err := c.tursoConn.ExecContext(ctx, query, args); err != nil {
+			return nil, err
+		}
+		return nil, injected.err
+	case injected.err != nil:
+		return nil, injected.err
 	}
 	return c.tursoConn.ExecContext(ctx, query, args)
 }

@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/MartinAndreev/conduit/internal/sessions"
 	"github.com/MartinAndreev/conduit/internal/storage/turso/internal/generated/table"
+	"github.com/MartinAndreev/conduit/internal/storage/turso/schema"
 	jet "github.com/go-jet/jet/v2/sqlite"
 )
 
@@ -63,6 +65,9 @@ func (r sessionRepository) Save(ctx context.Context, record sessions.Record, exp
 	statement := table.Sessions.UPDATE(table.Sessions.ProjectID, table.Sessions.RunID, table.Sessions.AttemptID, table.Sessions.AssignmentID, table.Sessions.Revision, table.Sessions.AdapterSessionID, table.Sessions.NativeBinding, table.Sessions.State, table.Sessions.Version, table.Sessions.UpdatedAt).SET(record.ProjectID, record.RunID, record.AttemptID, record.AssignmentID, record.Revision, record.AdapterSessionID, record.NativeBinding, record.State, record.Version, record.UpdatedAt.UTC().Format(time.RFC3339Nano)).WHERE(table.Sessions.ID.EQ(jet.String(string(record.ID))).AND(table.Sessions.Version.EQ(jet.Int64(int64(expectedVersion)))))
 	query, args := statement.Sql()
 	result, err := r.db.ExecContext(ctx, query, args...)
+	if isBindingLocked(err) {
+		return sessions.Record{}, fmt.Errorf("update session: %w: %w", sessions.ErrBindingLocked, err)
+	}
 	if err != nil {
 		return sessions.Record{}, fmt.Errorf("update session: %w", err)
 	}
@@ -74,4 +79,13 @@ func (r sessionRepository) Save(ctx context.Context, record sessions.Record, exp
 		return sessions.Record{}, sessions.ErrVersionConflict
 	}
 	return record, nil
+}
+
+// isBindingLocked reports whether err is the refusal of the
+// sessions_binding_locked trigger. The engine reports a RAISE(ABORT) with
+// its message and no dedicated status, so the message is matched, as for
+// engine.IsLockedByAnotherProcess. The SQL of Save does not change: the
+// database enforces the lock for every writer, a v1 process included.
+func isBindingLocked(err error) bool {
+	return err != nil && strings.Contains(err.Error(), schema.BindingLockedMessage)
 }

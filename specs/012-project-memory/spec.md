@@ -382,8 +382,30 @@ source получава `applicability_unknown`: запис с trust `human_appr
 manifest, payload и dispatch intent, след проверка на assignment revision и на
 очакваните версии на записите. Native dispatch е извън транзакцията. Този port е
 отделен договор; съществуващият session UoW не се разширява. Dispatch intent
-принадлежи на execution договора от spec 003, така че до неговото съществуване
-резултатът е библиотечна основа, не работещ flow.
+принадлежи на execution договора от spec 003.
+
+**Реализирано в задача 2.1 (2026-11-16)** като библиотечна основа, не
+работещ flow (виж spec 003 „Dispatch intent“): `internal/execution` и
+`internal/execution/dispatch`, Turso адаптер `(*turso.Store).Dispatch()`.
+Записът на intent-а, manifest-а с items и exclusions
+(`context_manifest_exclusions`) и payload-а е една транзакция (`BEGIN
+IMMEDIATE`); в нея се правят lookup на intent ID, сравнение на
+идентичността и, само за нов intent, повторната проверка
+`DecideManifestRecheck` срещу текущите записи. Повторение на вече записан
+intent не прави recheck: след промяна или изтриване на запис то връща
+записания outcome, не `recompose`. Manifest-ът носи `composition`
+(`composed` или `empty`); празната композиция (`ComposedEmpty`) има manifest
+без payload ред, с hash на празния низ и без redaction policy.
+`manifest_hash` покрива всички записвани неизменими полета, включително
+изключенията. Изпращаната memory част винаги се реконструира като
+`InputContext` от записания payload; `Part.Kind`, URI и media type на
+композицията не се изпращат.
+
+**Payload лимит (решение на Martin, 2026-11-16).** Нов самостоятелен
+продуктов лимит от 1 MiB (1 048 576 bytes) за целия composed текст, мерен
+върху крайните bytes, които се записват и изпращат. Над него композицията
+се отказва (`payload_too_large`), без рязане. Същата граница е CHECK на
+`context_manifest_payloads.content`.
 
 Manifest-ът доказва само **подготвените bytes**. Опитът за изпращане и известният
 му резултат са отделен dispatch outcome от provider (`dispatched`, `unknown` и
@@ -582,6 +604,20 @@ eligible в същото композиране (допуснат или не), 
 
 Миграцията 1 → 2 само добавя таблици и не променя съществуващите. Нов v1 процес
 върху база v2 получава съществуващия отказ `ErrIncompatibleDatabase`.
+
+Схема v2 е променена на място още веднъж за dispatch intent (Martin,
+2026-11-16, задача 2.1): таблици `dispatch_intents`, `dispatch_outcomes`,
+`context_manifest_exclusions`, нови колони в `context_manifests`
+(`composition`, `manifest_hash`, nullable policy) и граница на payload-а,
+partial unique index „най-много един отворен intent на сесия“ и trigger
+`sessions_binding_locked` върху v1 таблицата `sessions`. Trigger-ът е
+единственият v2 обект върху v1 таблица: той не променя нейния DDL, а отказва
+смяна на binding при отворен intent за всеки writer, включително v1 процес,
+отворил базата преди миграцията (проверено в един процес и между процеси с
+`MultiprocessWAL`). Такъв процес вижда обща грешка от базата; новият `Save`
+я разпознава като `sessions.ErrBindingLocked`. Гаранцията не обхваща
+смесения режим по-долу. Стара v2 база се отказва като
+`ErrIncompatibleDatabase` и се изтрива ръчно; кодът не я пресъздава.
 
 Схема v2 не е издадена и е променена на място (Martin, 2026-11-11):
 `memory_reviews` получи `actor` и фиксиран списък решения. Локална база,
@@ -1257,11 +1293,11 @@ Snapshot на workspace-а (2026-11-14):
 - Времената се пишат в UTC с фиксирана ширина на дробната част (виж
   „Търсене“).
 - Всяка свободна текстова колона в `context_*` таблиците има същите граници в
-  байтове като `memory_*` (виж „Записи“). Изключение е
-  `context_manifest_payloads.content`: целият подаден контекст няма общ лимит
-  (свързаните записи са задължителни и не се броят), затова границата му се
-  определя заедно със записа на payload-а в задача 4.3. Схема v2 не е издадена
-  и е променена на място.
+  байтове като `memory_*` (виж „Записи“). `context_manifest_payloads.content`,
+  целият подаден контекст, има самостоятелния продуктов лимит от 1 MiB
+  (решение на Martin, 2026-11-16, задача 2.1; виж „Manifest“): свързаните
+  записи нямат общ лимит, затова това е нова граница, не следствие от
+  останалите. Схема v2 не е издадена и е променена на място.
 
 Manifest-ът остава с метаданните. Статусът на payload-а следва dispatch
 outcome-а (`memory.DecidePayloadRemoval`):
@@ -1271,12 +1307,26 @@ outcome-а (`memory.DecidePayloadRemoval`):
 | intent записан, не е изпратен | intent-ът се обезсилва атомарно; при нужда нов intent с нов manifest | `removed_before_dispatch` |
 | изпращане опитано, изходът е `unknown` | payload-ът се трие, повторен опит със същия intent е забранен | `removed_delivery_unknown` |
 | доставен | payload-ът се трие | `removed_after_delivery` |
+| intent-ът приключи без изпращане (`rejected`, `invalidated`) | payload-ът се трие; intent-ът не се променя | `removed_before_dispatch` |
 
 Вече премахнат payload е `already_removed`; непознат статус или dispatch
 състояние е `invalid_facts`. Засега е реализирано само правилото. Триенето на
 payload-ите, съдържали изтрития запис, и обезсилването на intent-а се свързват
-в задача 4.3, защото изискват dispatch intent от spec 003; изтриването на запис
-(4.5) не пипа payload-ите.
+в задача 4.3; изтриването на запис (4.5) не пипа payload-ите.
+
+Съпоставянето с dispatch intent-а (задача 2.1, `execution.IntentDispatchState`)
+е пълно: `recorded` → `intent_recorded`; `dispatching` и `unknown` →
+`delivery_unknown`; `accepted` и `diverged` → `delivered`; `rejected` и
+`invalidated` → новото `not_dispatched`. Празен manifest (`ComposedEmpty`)
+няма payload ред и 4.3 не го пипа.
+
+**Около claim-а.** Записът, claim-ът и изтриването се подреждат от общия
+write lock. Изтриване преди claim-а обезсилва intent-а и премахва payload-а
+атомарно (4.3); claim-ът вижда `invalidated` и нищо не се изпраща. След
+claim-а изпращането продължава от вече прочетения envelope в паметта на
+процедурата: изтриването тогава **не гарантира** спиране и payload-ът става
+`removed_delivery_unknown`. Outcome-ът, записан след това, не връща текста;
+payload-ът остава премахнат.
 
 - Индексът потвърждава премахване поотделно. `unknown` не е успех.
 

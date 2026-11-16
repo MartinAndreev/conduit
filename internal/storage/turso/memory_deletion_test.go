@@ -130,7 +130,7 @@ func memoryTables(t *testing.T, store *Store) []string {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"context_deletion_receipts", "context_manifest_items", "context_manifest_payloads", "context_manifests", "memory_record_versions", "memory_records", "memory_relations", "memory_reviews", "memory_sources"}
+	want := []string{"context_deletion_receipts", "context_manifest_exclusions", "context_manifest_items", "context_manifest_payloads", "context_manifests", "memory_record_versions", "memory_records", "memory_relations", "memory_reviews", "memory_sources"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("memory tables = %v", names)
 	}

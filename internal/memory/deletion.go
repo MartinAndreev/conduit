@@ -170,11 +170,15 @@ const (
 	DispatchDeliveryUnknown DispatchState = "delivery_unknown"
 	// DispatchDelivered: the provider reported delivery.
 	DispatchDelivered DispatchState = "delivered"
+	// DispatchNotDispatched: the intent ended without a send (rejected as not
+	// sent or refused, or invalidated); nothing reached the harness and the
+	// intent does not change.
+	DispatchNotDispatched DispatchState = "not_dispatched"
 )
 
 // DispatchStates lists every dispatch state the payload rule knows.
 func DispatchStates() []DispatchState {
-	return []DispatchState{DispatchIntentRecorded, DispatchDeliveryUnknown, DispatchDelivered}
+	return []DispatchState{DispatchIntentRecorded, DispatchDeliveryUnknown, DispatchDelivered, DispatchNotDispatched}
 }
 
 // IntentEffect is what removing a payload requires of its dispatch intent.
@@ -230,6 +234,8 @@ func DecidePayloadRemoval(f PayloadRemovalFacts) PayloadRemovalDecision {
 		return PayloadRemovalDecision{Kind: PayloadRemove, Reason: "not dispatched: the intent is invalidated with the removal", Status: PayloadRemovedBeforeDispatch, Intent: IntentInvalidate}
 	case DispatchDeliveryUnknown:
 		return PayloadRemovalDecision{Kind: PayloadRemove, Reason: "delivery unknown: retrying the same intent is forbidden", Status: PayloadRemovedDeliveryUnknown, Intent: IntentForbidRetry}
+	case DispatchNotDispatched:
+		return PayloadRemovalDecision{Kind: PayloadRemove, Reason: "never dispatched: the intent already ended without a send", Status: PayloadRemovedBeforeDispatch, Intent: IntentUnchanged}
 	default:
 		return PayloadRemovalDecision{Kind: PayloadRemove, Reason: "delivered: only the stored copy is removed", Status: PayloadRemovedAfterDelivery, Intent: IntentUnchanged}
 	}

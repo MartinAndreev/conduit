@@ -382,22 +382,60 @@ func TestRelationsStayWithinOneProject(t *testing.T) {
 	}
 }
 
+// insertDispatchParent inserts a session and a recorded dispatch intent
+// named intent, which a manifest references.
+func insertDispatchParent(ctx context.Context, db database, intent string) error {
+	if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO sessions (id, project_id, run_id, attempt_id, assignment_id, revision, adapter_session_id, state, version, created_at, updated_at)
+		VALUES ('session', 'project', 'run', 'attempt', 'assignment', 1, 'adapter', 'open', 1, ?, ?)`, memoryTime, memoryTime); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, `INSERT INTO dispatch_intents (id, kind, session_id, session_sequence, adapter_session_id, project_id, run_id, attempt_id, assignment_id,
+		expected_revision, target_revision, request_hash, memory, state, version, created_at, invalidated_at)
+		VALUES (?, 'start_turn', 'session', (SELECT count(*) + 1 FROM dispatch_intents), 'adapter', 'project', 'run', 'attempt', 'assignment', 1, 1, ?, 'with_manifest', 'invalidated', 1, ?, ?)`,
+		intent, strings.Repeat("a", 64), memoryTime, memoryTime)
+	return err
+}
+
 func TestContextManifestConstraints(t *testing.T) {
 	ctx := context.Background()
 	store := openMemoryStore(t)
-	manifest := func(id, intent, status string) error {
-		_, err := store.db.ExecContext(ctx, `INSERT INTO context_manifests (id, project_id, run_id, attempt_id, assignment_id, revision, intent_id, payload_hash, redaction_policy_version, search_status, created_at)
-			VALUES (?, 'project', 'run', 'attempt', 'assignment', 3, ?, 'sha256:payload', '1', ?, ?)`, id, intent, status, memoryTime)
+	for _, intent := range []string{"intent", "other-intent", "empty-intent"} {
+		if err := insertDispatchParent(ctx, store.db, intent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hash := strings.Repeat("b", 64)
+	manifest := func(id, intent, status, composition string, payloadHash, policy any) error {
+		_, err := store.db.ExecContext(ctx, `INSERT INTO context_manifests (id, project_id, run_id, attempt_id, assignment_id, revision, intent_id, composition, payload_hash, manifest_hash, redaction_policy_version, search_status, created_at)
+			VALUES (?, 'project', 'run', 'attempt', 'assignment', 3, ?, ?, ?, ?, ?, ?, ?)`, id, intent, composition, payloadHash, hash, policy, status, memoryTime)
 		return err
 	}
-	if err := manifest("manifest", "intent", "ok"); err != nil {
+	if err := manifest("manifest", "intent", "ok", "composed", hash, "1"); err != nil {
 		t.Fatal(err)
 	}
-	if manifest("duplicate", "intent", "ok") == nil {
-		t.Fatal("second manifest accepted for the same dispatch request")
+	if manifest("duplicate", "intent", "ok", "composed", hash, "1") == nil {
+		t.Fatal("second manifest accepted for the same dispatch intent")
 	}
-	if manifest("bad-status", "other-intent", "unknown") == nil {
+	if manifest("orphan", "missing-intent", "ok", "composed", hash, "1") == nil {
+		t.Fatal("manifest accepted without its intent")
+	}
+	if manifest("bad-status", "other-intent", "unknown", "composed", hash, "1") == nil {
 		t.Fatal("unknown search status accepted")
+	}
+	if manifest("bad-composition", "other-intent", "ok", "partial", hash, "1") == nil {
+		t.Fatal("unknown composition accepted")
+	}
+	if manifest("composed-without-policy", "other-intent", "ok", "composed", hash, nil) == nil {
+		t.Fatal("composed manifest without a policy accepted")
+	}
+	if manifest("empty-with-policy", "empty-intent", "disabled", "empty", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "1") == nil {
+		t.Fatal("empty manifest with a policy accepted")
+	}
+	if manifest("empty-other-hash", "empty-intent", "disabled", "empty", hash, nil) == nil {
+		t.Fatal("empty manifest with another payload hash accepted")
+	}
+	if err := manifest("empty", "empty-intent", "disabled", "empty", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", nil); err != nil {
+		t.Fatalf("empty manifest: %v", err)
 	}
 	item := func(ordinal int, mode string, trust any) error {
 		_, err := store.db.ExecContext(ctx, "INSERT INTO context_manifest_items (manifest_id, ordinal, source_identity, source_version, mode, reason, trust) VALUES ('manifest', ?, 'record', 'record-v1', ?, 'eligible', ?)", ordinal, mode, trust)
@@ -411,6 +449,32 @@ func TestContextManifestConstraints(t *testing.T) {
 	}
 	if item(2, "summarized", nil) == nil || item(3, "referenced", "score") == nil {
 		t.Fatal("unknown item mode or trust accepted")
+	}
+	exclusion := func(ordinal any, record, version any, withheld, mandatory int, stage string) error {
+		_, err := store.db.ExecContext(ctx, "INSERT INTO context_manifest_exclusions (manifest_id, ordinal, record_id, version_id, identity_withheld, mandatory, stage, kind, reason) VALUES ('manifest', ?, ?, ?, ?, ?, ?, 'not_found', 'missing')", ordinal, record, version, withheld, mandatory, stage)
+		return err
+	}
+	if err := exclusion(0, "record", "record-v1", 0, 1, "gather"); err != nil {
+		t.Fatal(err)
+	}
+	if err := exclusion(1, "record", nil, 0, 0, "size"); err != nil {
+		t.Fatalf("exclusion without version: %v", err)
+	}
+	if err := exclusion(2, nil, nil, 1, 0, "redaction"); err != nil {
+		t.Fatalf("withheld exclusion: %v", err)
+	}
+	for name, err := range map[string]error{
+		"withheld with ids":   exclusion(3, "record", nil, 1, 0, "gather"),
+		"no record, not held": exclusion(4, nil, nil, 0, 0, "gather"),
+		"unknown stage":       exclusion(5, "record", nil, 0, 0, "ranking"),
+		"real ordinal":        exclusion(1.5, "record", nil, 0, 0, "gather"),
+		"negative ordinal":    exclusion(-1, "record", nil, 0, 0, "gather"),
+		"withheld flag 2":     exclusion(6, nil, nil, 2, 0, "gather"),
+		"duplicate ordinal":   exclusion(0, "record", nil, 0, 0, "gather"),
+	} {
+		if err == nil {
+			t.Fatalf("%s exclusion accepted", name)
+		}
 	}
 	if _, err := store.db.ExecContext(ctx, "INSERT INTO context_manifest_payloads (manifest_id, content, status) VALUES ('manifest', 'text', 'present')"); err != nil {
 		t.Fatal(err)
@@ -666,12 +730,17 @@ func contextRows() map[string]map[string]any {
 	return map[string]map[string]any{
 		"context_manifests": {
 			"id": "manifest", "project_id": "project", "run_id": "run", "attempt_id": "attempt", "assignment_id": "assignment",
-			"revision": 1, "intent_id": "intent", "payload_hash": "sha256:payload", "redaction_policy_version": "1",
+			"revision": 1, "intent_id": "intent", "composition": "composed", "payload_hash": strings.Repeat("a", 64),
+			"manifest_hash": strings.Repeat("b", 64), "redaction_policy_version": "1",
 			"search_status": "ok", "created_at": memoryTime,
 		},
 		"context_manifest_items": {
 			"manifest_id": "manifest", "ordinal": 0, "source_identity": "record", "source_version": "record-v1",
 			"mode": "included_text", "reason": "eligible", "trust": string(memory.TrustHumanApproved),
+		},
+		"context_manifest_exclusions": {
+			"manifest_id": "manifest", "ordinal": 0, "record_id": "record", "version_id": "record-v1", "identity_withheld": 0,
+			"mandatory": 0, "stage": "eligibility", "kind": "not_retrievable", "reason": "archived",
 		},
 		"context_manifest_payloads": {
 			"manifest_id": "manifest", "content": nil, "status": string(memory.PayloadRemovedAfterDelivery), "removed_at": memoryTime,
@@ -684,13 +753,17 @@ func contextRows() map[string]map[string]any {
 }
 
 // insertContextRow inserts row into table inside a transaction that is always
-// rolled back, after inserting the manifest the other tables reference.
+// rolled back, after inserting the session, intent and manifest the other
+// tables reference.
 func insertContextRow(ctx context.Context, store *Store, name string, row map[string]any) error {
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if err := insertDispatchParent(ctx, tx, "intent"); err != nil {
+		return fmt.Errorf("intent: %w", err)
+	}
 	insert := func(name string, row map[string]any) error {
 		columns := make([]string, 0, len(row))
 		for column := range row {
@@ -714,8 +787,8 @@ func insertContextRow(ctx context.Context, store *Store, name string, row map[st
 }
 
 // Every free-text context_* column accepts a value at its byte bound and
-// refuses one byte more. The payload's content has no bound yet: composition
-// has no total limit, and task 4.3 sets it with the payload write.
+// refuses one byte more; the hashes have exactly 64 bytes. The payload's
+// content is bounded by the manifest payload limit.
 func TestContextColumnsHaveByteBounds(t *testing.T) {
 	ctx := context.Background()
 	store := openMemoryStore(t)
@@ -727,11 +800,15 @@ func TestContextColumnsHaveByteBounds(t *testing.T) {
 	bounds := map[string]map[string]int{
 		"context_manifests": {
 			"id": schema.MaxIdentityBytes, "project_id": schema.MaxIdentityBytes, "run_id": schema.MaxIdentityBytes,
-			"attempt_id": schema.MaxIdentityBytes, "assignment_id": schema.MaxIdentityBytes, "intent_id": schema.MaxIdentityBytes,
-			"payload_hash": schema.MaxIdentityBytes, "redaction_policy_version": schema.MaxIdentityBytes, "created_at": schema.MaxTimestampBytes,
+			"attempt_id": schema.MaxIdentityBytes, "assignment_id": schema.MaxIdentityBytes,
+			"redaction_policy_version": schema.MaxIdentityBytes, "created_at": schema.MaxTimestampBytes,
 		},
 		"context_manifest_items": {
 			"source_identity": schema.MaxIdentityBytes, "source_version": schema.MaxIdentityBytes, "reason": schema.MaxTextFieldBytes,
+		},
+		"context_manifest_exclusions": {
+			"record_id": schema.MaxIdentityBytes, "version_id": schema.MaxIdentityBytes, "kind": schema.MaxIdentityBytes,
+			"reason": schema.MaxTextFieldBytes,
 		},
 		"context_manifest_payloads": {"removed_at": schema.MaxTimestampBytes},
 		"context_deletion_receipts": {
@@ -755,10 +832,21 @@ func TestContextColumnsHaveByteBounds(t *testing.T) {
 			}
 		}
 	}
-	payload := contextRows()["context_manifest_payloads"]
-	payload["status"], payload["content"], payload["removed_at"] = string(memory.PayloadPresent), fill("p", schema.MaxStoredContentBytes+1), nil
-	if err := insertContextRow(ctx, store, "context_manifest_payloads", payload); err != nil {
-		t.Fatalf("payload content above the stored content cap: %v", err)
+	for _, column := range []string{"payload_hash", "manifest_hash"} {
+		for _, size := range []int{63, 64, 65} {
+			row := contextRows()["context_manifests"]
+			row[column] = fill("x", size)
+			if err := insertContextRow(ctx, store, "context_manifests", row); (err == nil) != (size == 64) {
+				t.Fatalf("context_manifests.%s with %d bytes: %v", column, size, err)
+			}
+		}
+	}
+	for _, size := range []int{schema.MaxManifestPayloadBytes, schema.MaxManifestPayloadBytes + 1} {
+		payload := contextRows()["context_manifest_payloads"]
+		payload["status"], payload["content"], payload["removed_at"] = string(memory.PayloadPresent), fill("щ", size), nil
+		if err := insertContextRow(ctx, store, "context_manifest_payloads", payload); (err == nil) != (size == schema.MaxManifestPayloadBytes) {
+			t.Fatalf("payload content with %d bytes: %v", size, err)
+		}
 	}
 }
 

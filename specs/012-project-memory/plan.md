@@ -1,7 +1,7 @@
 # 012 — План за имплементация
 
 Дата: 2026-11-08, ревизиран след Astra преглед. Статус (2026-11-16): **в изпълнение**; готовото е отбелязано с ✅ по задачи.
-Не е вградено в dispatch (чака spec 003). Основа: [spec.md](spec.md). Клон:
+Dispatch intent-ът е библиотечен slice (2.1, 2026-11-16); паметта още не е вградена в реален dispatch flow (4.3). Основа: [spec.md](spec.md). Клон:
 `feature/project-memory`, от `feature/go-migration`.
 
 Планът приема препоръките по шестте отворени решения от спека. Друг отговор
@@ -19,8 +19,10 @@
    пред Go командите; с него целият `go test ./...` минава. Постоянна поправка:
    Xcode 27 (Martin).
 2. ~~Схемата няма миграции~~: решено със 3.1 (адитивна миграция 1 → 2).
-3. **Няма dispatch процедура и intent запис.** В production код `StartTurn` е
-   само в договора и адаптерите. Без тях етап 1 завършва като библиотечна основа.
+3. ~~Няма dispatch процедура и intent запис~~: решено като библиотечен slice в
+   2.1 (2026-11-16): `DispatchStartTurn`, `DispatchSteer` и атомарният port.
+   Остава вграждането в реален flow (CLI, lifecycle, recovery по spec 003); до
+   него етап 1 остава библиотечна основа.
 4. ~~FTS в `tursogo v0.7.2`~~: проверено на 2026-11-10, няма FTS; виж „Търсене“ в спека.
 
 ## Задачи
@@ -47,7 +49,7 @@
 
 | # | Задача | Зависи от |
 | --- | --- | --- |
-| 2.1 | Договор за dispatch intent със собственика му (spec 003) и port за атомарен запис на manifest, payload, intent | решение по обхвата |
+| 2.1 | ✅ (2026-11-16) Договор за dispatch intent със собственика му (spec 003) и port за атомарен запис на manifest, payload, intent. Решения на Martin (2026-11-16), всички по препоръките: `internal/execution` + `internal/execution/dispatch`; v2 на място (старите v2 бази се отказват); payload лимит 1 MiB, без рязане; trigger `sessions_binding_locked` + partial unique index, `Save` → `sessions.ErrBindingLocked`, без гаранция за смесения WAL режим; Claude Steer → `unknown/transport_only` и блокира; target turn — последният `accepted` start; блокиране от отворен intent като временна граница; `sessions.revision` временно като assignment revision; settlement с 10 s бюджет и до 3 опита само за busy провал на DB транзакцията; отделно състояние `diverged`; финализирането (COMMIT/ROLLBACK/close) без доказана граница. Виж spec 003 „Dispatch intent“ и „Manifest“ в спека. Остава: вграждане в реален flow | решение по обхвата |
 | 2.2 | ✅ Типове и правила в `internal/memory`: transition, eligibility, admission, приложимост, дедупликация, с table тестове без база | — |
 
 Ако intent не влезе в този пакет, 2.1 се отбелязва като отложен, а задачи 3.3,
@@ -59,7 +61,7 @@
 | --- | --- |
 | 3.1 | ✅ Адитивна миграция 1 → 2 с `DecideSchemaMigration`; тестове за отворена v1 връзка и двама migrators |
 | 3.2 | ✅ Таблиците от спека без outbox; регенериране на `internal/generated` |
-| 3.3 | Repository ports и специализираният атомарен port; session UoW остава непроменен; optimistic concurrency. Първо пътят за запис на записи (създаване, преходи, становища, архивиране) без атомарния port за intent, който чака 2.1 (Martin, 2026-11-12). ✅ Пътят за запис на записи (2026-11-12): `DecideRecordCreation`, `DecideRecordOpinion`, `EffectiveTrust`, `internal/memory/records`, Turso адаптер. Остава атомарният port за manifest, payload и intent |
+| 3.3 | Repository ports и специализираният атомарен port; session UoW остава непроменен; optimistic concurrency. Първо пътят за запис на записи (създаване, преходи, становища, архивиране) без атомарния port за intent, който чака 2.1 (Martin, 2026-11-12). ✅ Пътят за запис на записи (2026-11-12): `DecideRecordCreation`, `DecideRecordOpinion`, `EffectiveTrust`, `internal/memory/records`, Turso адаптер. Атомарният port за manifest, payload и intent ✅ (2026-11-16, задача 2.1): `dispatch.Store`, Turso `(*Store).Dispatch()` |
 
 ### 4. Вертикален flow
 
@@ -67,7 +69,7 @@
 | --- | --- |
 | 4.1 | ✅ Redaction на входа: отчети, записи, рендериране; политика с версия (`redaction.PolicyVersion` 1) |
 | 4.2 | ✅ `ComposeContext` с explicit sources, локално търсене и проверка за остаряване, с повторна проверка при commit. Налага максималния размер на входа преди redaction и пренася находките от оригиналния материал: повторна redaction на маскиран текст не дава находки. Правилото за повторната проверка (`DecideManifestRecheck`) е готово; извикването му при commit е част от 4.3 |
-| 4.3 | Вграждане в dispatch, с тест за срив между manifest и intent; изисква 3.3, 4.1, 4.2, 4.4 и етап 0. Включва и премахването на payload-ите при изтриване (`memory.DecidePayloadRemoval`, обезсилване на intent-а) и границата на `context_manifest_payloads.content`, преместени от 4.5 |
+| 4.3 | Вграждане в dispatch, с тест за срив между manifest и intent; изисква 3.3, 4.1, 4.2, 4.4 и етап 0. Включва и премахването на payload-ите при изтриване (`memory.DecidePayloadRemoval`, обезсилване на intent-а), преместено от 4.5. Готово в 2.1 (2026-11-16): manifest, payload и intent се записват атомарно (manifest и intent в една транзакция, затова срив между тях няма); повторната проверка при commit; границата на `context_manifest_payloads.content` (1 MiB); пълното съпоставяне `execution.IntentDispatchState` и `not_dispatched`. Остава: вграждането на `ComposeContext` и workspace reader-а в реален flow и триенето на payload-ите с обезсилването на intent-а при изтриване на запис |
 | 4.4 | ✅ Рендериране в `InputPart` с еднократен маркер |
 | 4.5 | ✅ Изтриване: tombstone, receipts (2026-11-11). `DecideRecordDeletion`, `DecidePayloadRemoval`, `internal/memory/deletion`, Turso адаптер; граници на `context_*` колоните. Премахването на payload-ите е преместено в 4.3 |
 
@@ -95,7 +97,7 @@
 
 ```
 0.1 → 0.2 → 2.2 → 3.1, 3.2 → 4.1, 4.2, 4.4, 4.5 → 5.1–5.3
-2.1 (spec 003) → 3.3
+2.1 (spec 003) ✅ → 3.3 ✅
 3.3, 4.1, 4.2, 4.4, етап 0 (1) → 4.3 → 5.4, 6 → 7
 ```
 

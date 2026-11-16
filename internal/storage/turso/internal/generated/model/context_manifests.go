@@ -15,8 +15,10 @@ type ContextManifests struct {
 	AssignmentID           string
 	Revision               int64
 	IntentID               string
+	Composition            string
 	PayloadHash            string
-	RedactionPolicyVersion string
+	ManifestHash           string
+	RedactionPolicyVersion *string
 	SearchStatus           string
 	CreatedAt              string
 }

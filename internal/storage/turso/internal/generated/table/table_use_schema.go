@@ -12,9 +12,12 @@ package table
 func UseSchema(schema string) {
 	ConduitMetadata = ConduitMetadata.FromSchema(schema)
 	ContextDeletionReceipts = ContextDeletionReceipts.FromSchema(schema)
+	ContextManifestExclusions = ContextManifestExclusions.FromSchema(schema)
 	ContextManifestItems = ContextManifestItems.FromSchema(schema)
 	ContextManifestPayloads = ContextManifestPayloads.FromSchema(schema)
 	ContextManifests = ContextManifests.FromSchema(schema)
+	DispatchIntents = DispatchIntents.FromSchema(schema)
+	DispatchOutcomes = DispatchOutcomes.FromSchema(schema)
 	EventJournal = EventJournal.FromSchema(schema)
 	MemoryRecordVersions = MemoryRecordVersions.FromSchema(schema)
 	MemoryRecords = MemoryRecords.FromSchema(schema)

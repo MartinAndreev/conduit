@@ -24,7 +24,9 @@ type contextManifestsTable struct {
 	AssignmentID           sqlite.ColumnString
 	Revision               sqlite.ColumnInteger
 	IntentID               sqlite.ColumnString
+	Composition            sqlite.ColumnString
 	PayloadHash            sqlite.ColumnString
+	ManifestHash           sqlite.ColumnString
 	RedactionPolicyVersion sqlite.ColumnString
 	SearchStatus           sqlite.ColumnString
 	CreatedAt              sqlite.ColumnString
@@ -76,12 +78,14 @@ func newContextManifestsTableImpl(schemaName, tableName, alias string) contextMa
 		AssignmentIDColumn           = sqlite.StringColumn("assignment_id")
 		RevisionColumn               = sqlite.IntegerColumn("revision")
 		IntentIDColumn               = sqlite.StringColumn("intent_id")
+		CompositionColumn            = sqlite.StringColumn("composition")
 		PayloadHashColumn            = sqlite.StringColumn("payload_hash")
+		ManifestHashColumn           = sqlite.StringColumn("manifest_hash")
 		RedactionPolicyVersionColumn = sqlite.StringColumn("redaction_policy_version")
 		SearchStatusColumn           = sqlite.StringColumn("search_status")
 		CreatedAtColumn              = sqlite.StringColumn("created_at")
-		allColumns                   = sqlite.ColumnList{IDColumn, ProjectIDColumn, RunIDColumn, AttemptIDColumn, AssignmentIDColumn, RevisionColumn, IntentIDColumn, PayloadHashColumn, RedactionPolicyVersionColumn, SearchStatusColumn, CreatedAtColumn}
-		mutableColumns               = sqlite.ColumnList{ProjectIDColumn, RunIDColumn, AttemptIDColumn, AssignmentIDColumn, RevisionColumn, IntentIDColumn, PayloadHashColumn, RedactionPolicyVersionColumn, SearchStatusColumn, CreatedAtColumn}
+		allColumns                   = sqlite.ColumnList{IDColumn, ProjectIDColumn, RunIDColumn, AttemptIDColumn, AssignmentIDColumn, RevisionColumn, IntentIDColumn, CompositionColumn, PayloadHashColumn, ManifestHashColumn, RedactionPolicyVersionColumn, SearchStatusColumn, CreatedAtColumn}
+		mutableColumns               = sqlite.ColumnList{ProjectIDColumn, RunIDColumn, AttemptIDColumn, AssignmentIDColumn, RevisionColumn, IntentIDColumn, CompositionColumn, PayloadHashColumn, ManifestHashColumn, RedactionPolicyVersionColumn, SearchStatusColumn, CreatedAtColumn}
 		defaultColumns               = sqlite.ColumnList{}
 	)
 
@@ -96,7 +100,9 @@ func newContextManifestsTableImpl(schemaName, tableName, alias string) contextMa
 		AssignmentID:           AssignmentIDColumn,
 		Revision:               RevisionColumn,
 		IntentID:               IntentIDColumn,
+		Composition:            CompositionColumn,
 		PayloadHash:            PayloadHashColumn,
+		ManifestHash:           ManifestHashColumn,
 		RedactionPolicyVersion: RedactionPolicyVersionColumn,
 		SearchStatus:           SearchStatusColumn,
 		CreatedAt:              CreatedAtColumn,
