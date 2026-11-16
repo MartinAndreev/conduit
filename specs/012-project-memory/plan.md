@@ -1,7 +1,7 @@
 # 012 — План за имплементация
 
-Дата: 2026-11-08, ревизиран след Astra преглед. Статус: **чернова за преглед;
-кодът не е започнат**. Основа: [spec.md](spec.md). Клон:
+Дата: 2026-11-08, ревизиран след Astra преглед. Статус (2026-11-16): **в изпълнение**; готовото е отбелязано с ✅ по задачи.
+Не е вградено в dispatch (чака spec 003). Основа: [spec.md](spec.md). Клон:
 `feature/project-memory`, от `feature/go-migration`.
 
 Планът приема препоръките по шестте отворени решения от спека. Друг отговор
@@ -18,7 +18,7 @@
    Command Line Tools. Заобикаляне: `DEVELOPER_DIR=/Library/Developer/CommandLineTools`
    пред Go командите; с него целият `go test ./...` минава. Постоянна поправка:
    Xcode 27 (Martin).
-2. **Схемата няма миграции.** `Store.Open` приема само `schema_version = 1`.
+2. ~~Схемата няма миграции~~: решено със 3.1 (адитивна миграция 1 → 2).
 3. **Няма dispatch процедура и intent запис.** В production код `StartTurn` е
    само в договора и адаптерите. Без тях етап 1 завършва като библиотечна основа.
 4. ~~FTS в `tursogo v0.7.2`~~: проверено на 2026-11-10, няма FTS; виж „Търсене“ в спека.
@@ -29,8 +29,8 @@
 
 | # | Задача | Проверка |
 | --- | --- | --- |
-| 0.1 | Поправка на toolchain-а, извън репото (Martin) | `go test ./internal/storage/turso/` линква и минава |
-| 0.2 | Проба: FTS, `LIKE`, `lower()` върху кирилица в Turso | резултатът е записан в спека |
+| 0.1 | Поправка на toolchain-а, извън репото (Martin). Заобикаляне с `DEVELOPER_DIR` (блокер 1); постоянната поправка е Xcode 27 | `go test ./internal/storage/turso/` линква и минава |
+| 0.2 | ✅ Проба: FTS, `LIKE`, `lower()` върху кирилица в Turso (2026-11-10) | резултатът е записан в спека |
 
 ### 1. Етап 0 — native контекст и защитени директории
 
@@ -38,17 +38,17 @@
 
 | # | Задача | Файлове |
 | --- | --- | --- |
-| 1.1 | Live запис с положителна контрола и реален опит за запис в `~/.conduit`; без лични данни | `specs/012-project-memory/evidence.md` |
-| 1.2 | Състояния по източник и `protected_paths` в capabilities; `DecideNativeContextPolicy` | `internal/sessions/provider`, `internal/harnesses/*/rules` |
-| 1.3 | Claude флагове, след потвърждение на login и sandbox | `internal/harnesses/claude/launch.go` |
-| 1.4 | Codex, OpenCode, ACP, където 1.1 доказа механизъм | адаптерите |
+| 1.1 | Live запис с положителна контрола и реален опит за запис в `~/.conduit`; без лични данни. ✅ Claude, Codex (непълно, `codex exec` и проба през `app-server`), OpenCode (2026-11-08/09). Codex през точния launch на адаптера (2026-11-16). Остава: ACP агентите не са инсталирани; нов запис за OpenCode след вграждането на sandbox-а | `specs/012-project-memory/evidence.md` |
+| 1.2 | ✅ Състояния по източник и `protected_paths` в capabilities; `DecideNativeContextPolicy` и `DecideProtectedPathsPolicy` във всеки адаптер | `internal/sessions/provider`, `internal/harnesses/*/rules` |
+| 1.3 | ✅ Claude флагове, след потвърждение на login и sandbox; evidence е вързан с hash-а на launch конфигурацията | `internal/harnesses/claude/launch.go` |
+| 1.4 | Codex, OpenCode, ACP, където 1.1 доказа механизъм. В изпълнение (2026-11-16). Codex: `app-server` с permission profile-а (`DecidePermissionProfile`, `read-only` → проектните директории само за четене, мрежата изрично изключена), `thread/start` без `sandbox`, версия от `initialize` (`userAgent` с продукт `conduit`), launch hash; evidence за `protected_paths` е обвързан и с платформата. ✅ Codex е `enforced` за 0.155.1, `workspace-write` и macOS (live запис 2026-11-16). Готови за OpenCode: правилото `DecideSandbox` и Seatbelt profile-ът. Остава: решение на Martin кой OpenCode процес върви под `sandbox-exec` (адаптерът не стартира сървър), вграждане и live запис; дотогава OpenCode е `unknown`. ACP: агентите не са инсталирани | адаптерите |
 
 ### 2. Договори (преди схемата)
 
 | # | Задача | Зависи от |
 | --- | --- | --- |
 | 2.1 | Договор за dispatch intent със собственика му (spec 003) и port за атомарен запис на manifest, payload, intent | решение по обхвата |
-| 2.2 | Типове и правила в `internal/memory`: transition, eligibility, admission, приложимост, дедупликация, с table тестове без база | — |
+| 2.2 | ✅ Типове и правила в `internal/memory`: transition, eligibility, admission, приложимост, дедупликация, с table тестове без база | — |
 
 Ако intent не влезе в този пакет, 2.1 се отбелязва като отложен, а задачи 3.3,
 4.3 и 6 се местят след него. Repository ports остават, атомарният port не.
@@ -57,18 +57,18 @@
 
 | # | Задача |
 | --- | --- |
-| 3.1 | Адитивна миграция 1 → 2 с `DecideSchemaMigration`; тестове за отворена v1 връзка и двама migrators |
-| 3.2 | Таблиците от спека без outbox; регенериране на `internal/generated` |
+| 3.1 | ✅ Адитивна миграция 1 → 2 с `DecideSchemaMigration`; тестове за отворена v1 връзка и двама migrators |
+| 3.2 | ✅ Таблиците от спека без outbox; регенериране на `internal/generated` |
 | 3.3 | Repository ports и специализираният атомарен port; session UoW остава непроменен; optimistic concurrency. Първо пътят за запис на записи (създаване, преходи, становища, архивиране) без атомарния port за intent, който чака 2.1 (Martin, 2026-11-12). ✅ Пътят за запис на записи (2026-11-12): `DecideRecordCreation`, `DecideRecordOpinion`, `EffectiveTrust`, `internal/memory/records`, Turso адаптер. Остава атомарният port за manifest, payload и intent |
 
 ### 4. Вертикален flow
 
 | # | Задача |
 | --- | --- |
-| 4.1 | Redaction на входа: отчети, записи, рендериране; политика с версия |
-| 4.2 | `ComposeContext` с explicit sources, локално търсене и проверка за остаряване, с повторна проверка при commit. Налага максималния размер на входа преди redaction и пренася находките от оригиналния материал: повторна redaction на маскиран текст не дава находки |
+| 4.1 | ✅ Redaction на входа: отчети, записи, рендериране; политика с версия (`redaction.PolicyVersion` 1) |
+| 4.2 | ✅ `ComposeContext` с explicit sources, локално търсене и проверка за остаряване, с повторна проверка при commit. Налага максималния размер на входа преди redaction и пренася находките от оригиналния материал: повторна redaction на маскиран текст не дава находки. Правилото за повторната проверка (`DecideManifestRecheck`) е готово; извикването му при commit е част от 4.3 |
 | 4.3 | Вграждане в dispatch, с тест за срив между manifest и intent; изисква 3.3, 4.1, 4.2, 4.4 и етап 0. Включва и премахването на payload-ите при изтриване (`memory.DecidePayloadRemoval`, обезсилване на intent-а) и границата на `context_manifest_payloads.content`, преместени от 4.5 |
-| 4.4 | Рендериране в `InputPart` с еднократен маркер |
+| 4.4 | ✅ Рендериране в `InputPart` с еднократен маркер |
 | 4.5 | ✅ Изтриване: tombstone, receipts (2026-11-11). `DecideRecordDeletion`, `DecidePayloadRemoval`, `internal/memory/deletion`, Turso адаптер; граници на `context_*` колоните. Премахването на payload-ите е преместено в 4.3 |
 
 ### 5. Етап 2 — предложения и преглед
