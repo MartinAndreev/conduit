@@ -36,7 +36,7 @@ func TestDecideNativeContextPolicy(t *testing.T) {
 }
 
 func TestDecideProtectedPathsPolicy(t *testing.T) {
-	evidence := []provider.ProtectedPathsEvidence{{ReadDenied: true, WriteDenied: true, HarnessVersion: "1.0.0", LaunchConfigHash: "hash"}}
+	evidence := []provider.ProtectedPathsEvidence{{ReadDenied: true, WriteDenied: true, HarnessVersion: "1.0.0", LaunchConfigHash: "hash", Platform: "darwin"}}
 	tests := []struct {
 		name     string
 		version  string
@@ -49,9 +49,11 @@ func TestDecideProtectedPathsPolicy(t *testing.T) {
 		{"different config hash", "1.0.0", "other", evidence, provider.ProtectedPathsUnknown},
 		{"no evidence", "1.0.0", "hash", nil, provider.ProtectedPathsUnknown},
 	}
+	// Every case runs on the recorded platform; another platform is covered by
+	// provider.DecideProtectedPaths.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := DecideProtectedPathsPolicy(provider.ProtectedPathsFacts{HarnessVersion: tt.version, LaunchConfigHash: tt.hash, Evidence: tt.evidence})
+			got := DecideProtectedPathsPolicy(provider.ProtectedPathsFacts{HarnessVersion: tt.version, LaunchConfigHash: tt.hash, Platform: "darwin", Evidence: tt.evidence})
 			if got.Kind != tt.want || got.Reason == "" {
 				t.Fatalf("decision = %+v, want %s", got, tt.want)
 			}

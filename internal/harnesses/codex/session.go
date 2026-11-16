@@ -7,6 +7,7 @@ import (
 	"github.com/MartinAndreev/conduit/internal/harnesses/codex/rules"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +31,8 @@ type session struct {
 	process      processruntime.Process
 	rpc          *rpcClient
 	broker       *eventstream.Broker
+	// launchHash is the launch configuration hash of this session's App Server.
+	launchHash string
 
 	mu           sync.Mutex
 	nativeThread string
@@ -68,7 +71,7 @@ func (s *session) Ref() provider.SessionRef { return s.ref }
 func (s *session) Capabilities() provider.CapabilitySnapshot { return s.capabilities }
 
 func (s *session) initialize(ctx context.Context, request provider.OpenSessionRequest) error {
-	_, sent, err := s.rpc.call(ctx, "initialize", struct {
+	initialized, sent, err := s.rpc.call(ctx, "initialize", struct {
 		ClientInfo struct {
 			Name    string `json:"name"`
 			Version string `json:"version"`
@@ -80,7 +83,7 @@ func (s *session) initialize(ctx context.Context, request provider.OpenSessionRe
 		ClientInfo: struct {
 			Name    string `json:"name"`
 			Version string `json:"version"`
-		}{Name: "conduit", Version: adapterVersion},
+		}{Name: initializeClientName, Version: adapterVersion},
 		Capabilities: struct {
 			ExperimentalAPI bool `json:"experimentalApi"`
 		}{ExperimentalAPI: true},
@@ -88,19 +91,19 @@ func (s *session) initialize(ctx context.Context, request provider.OpenSessionRe
 	if err != nil {
 		return adaptererror.Delivery(provider.OperationOpenSession, request.RequestID, sent, err)
 	}
+	s.recordInitializeEvidence(request.Model, initialized)
 	if sent, err := s.rpc.notify(ctx, "initialized", struct{}{}); err != nil {
 		return adaptererror.Delivery(provider.OperationOpenSession, request.RequestID, sent, err)
 	}
+	// No sandbox parameter: it would override the launch permission profile.
 	params := struct {
 		CWD                   string   `json:"cwd"`
 		Model                 string   `json:"model,omitempty"`
-		Sandbox               string   `json:"sandbox"`
 		ApprovalPolicy        string   `json:"approvalPolicy"`
 		Ephemeral             bool     `json:"ephemeral"`
 		RuntimeWorkspaceRoots []string `json:"runtimeWorkspaceRoots"`
 	}{
 		CWD: request.Workspace.Path, Model: request.Model.ModelID,
-		Sandbox:        string(s.config.Sandbox),
 		ApprovalPolicy: string(s.config.Approval), Ephemeral: s.config.Ephemeral,
 		RuntimeWorkspaceRoots: []string{request.Workspace.Path},
 	}
@@ -125,6 +128,46 @@ func (s *session) initialize(ctx context.Context, request provider.OpenSessionRe
 	})
 	s.emit(provider.SessionStateEvent{Previous: previous, Current: provider.SessionOpen, NativeStatus: "thread_started"})
 	return nil
+}
+
+// recordInitializeEvidence rebuilds the capability snapshot with the Codex
+// version from the initialize reply, as the Claude adapter does with
+// claude_code_version. An unreadable reply leaves the version empty, which
+// keeps every evidence-backed state unclaimed rather than failing the open.
+func (s *session) recordInitializeEvidence(model provider.ModelSelection, raw json.RawMessage) {
+	var response struct {
+		UserAgent string `json:"userAgent"`
+	}
+	_ = json.Unmarshal(raw, &response)
+	s.capabilities = codexCapabilities(model, harnessVersionFromUserAgent(response.UserAgent), s.launchHash, s.config.Now())
+}
+
+// initializeClientName is the clientInfo.name sent in initialize. Codex
+// 0.155.1 uses it as the product of the userAgent it returns.
+const initializeClientName = "conduit"
+
+// harnessVersionFromUserAgent extracts the bare Codex version from the
+// initialize userAgent. Codex 0.155.1 sends "<client name>/<version> (<os>;
+// <arch>) <terminal> (<client name>; <client version>)", e.g.
+// "conduit/0.155.1 (Mac OS ...)". The product must be exactly this adapter's
+// client name. Only the version is kept, matching the format the evidence
+// tables use ("0.155.1"), like the Claude adapter's claude_code_version.
+// Anything else yields "", which matches no evidence.
+func harnessVersionFromUserAgent(userAgent string) string {
+	product, _, _ := strings.Cut(userAgent, " ")
+	version, ok := strings.CutPrefix(product, initializeClientName+"/")
+	if !ok {
+		return ""
+	}
+	if version == "" || version[0] < '0' || version[0] > '9' {
+		return ""
+	}
+	for _, r := range version {
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r == '.' || r == '-' || r == '+') {
+			return ""
+		}
+	}
+	return version
 }
 
 func (s *session) Events(_ context.Context, cursor provider.EventCursor) (provider.EventStream, error) {

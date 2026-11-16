@@ -16,7 +16,7 @@ func NativeContextEvidence() provider.NativeContextEvidenceSet {
 	return provider.NativeContextEvidenceSet{
 		ProtectedPaths: []provider.ProtectedPathsEvidence{{
 			ReadDenied: true, WriteDenied: true,
-			HarnessVersion: "2.1.316", LaunchConfigHash: recordedLaunchConfigHash,
+			HarnessVersion: "2.1.316", LaunchConfigHash: recordedLaunchConfigHash, Platform: "darwin",
 		}},
 	}
 }

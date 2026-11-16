@@ -1,6 +1,8 @@
 package codex
 
 import (
+	"runtime"
+
 	"context"
 	"encoding/json"
 	"github.com/MartinAndreev/conduit/internal/harnesses/codex/rules"
@@ -29,7 +31,7 @@ func (a *Adapter) Inspect(_ context.Context, request provider.InspectRequest) (p
 		AdapterVersion:  adapterVersion,
 		HarnessVersion:  "unknown (archived fixture baseline 0.155.1)",
 		ProtocolVersion: "app-server-jsonrpc-v2",
-		Capabilities:    codexCapabilities(request.Model, a.config.Now()),
+		Capabilities:    codexCapabilities(request.Model, "", configuredLaunchConfigHash(a.config.Sandbox), a.config.Now()),
 	}, nil
 }
 
@@ -43,8 +45,9 @@ func (a *Adapter) OpenSession(ctx context.Context, request provider.OpenSessionR
 	if request.PermissionMode != provider.PermissionDeny || a.config.Approval != ApprovalNever {
 		return provider.OpenSessionResult{}, adaptererror.New(provider.OperationOpenSession, provider.ErrorCapabilityUnsupported, provider.RemoteEffectNotSent, nil, "this adapter slice supports deny/never permissions only")
 	}
-	if !request.Workspace.Writable && a.config.Sandbox == SandboxWorkspaceWrite {
-		return provider.OpenSessionResult{}, adaptererror.New(provider.OperationOpenSession, provider.ErrorProtocolViolation, provider.RemoteEffectNotSent, nil, "workspace-write sandbox conflicts with a read-only workspace binding")
+	access, profile, ok := permissionProfileFor(a.config.Sandbox, request.Workspace.Writable)
+	if !ok {
+		return provider.OpenSessionResult{}, permissionProfileError(profile)
 	}
 	actual, err := negotiateResultContract(request.ResultContract)
 	if err != nil {
@@ -56,7 +59,7 @@ func (a *Adapter) OpenSession(ctx context.Context, request provider.OpenSessionR
 	}
 	proc, err := a.config.Launcher.Start(processruntime.Spec{
 		Path: a.config.ExecutablePath,
-		Args: []string{"app-server"},
+		Args: launchArguments(access),
 		Dir:  request.Workspace.Path,
 	})
 	if err != nil {
@@ -72,7 +75,8 @@ func (a *Adapter) OpenSession(ctx context.Context, request provider.OpenSessionR
 		assignment:   request.Assignment,
 		model:        request.Model,
 		contract:     provider.ResultContractNegotiation{Contract: request.ResultContract, Actual: actual},
-		capabilities: codexCapabilities(request.Model, a.config.Now()),
+		launchHash:   launchConfigHash(access),
+		capabilities: codexCapabilities(request.Model, "", launchConfigHash(access), a.config.Now()),
 		process:      proc,
 		broker:       eventstream.New(a.config.EventBuffer),
 		state:        provider.SessionOpening,
@@ -93,6 +97,16 @@ func (a *Adapter) OpenSession(ctx context.Context, request provider.OpenSessionR
 		return provider.OpenSessionResult{}, s.abortOpen(ctx, err)
 	}
 	return provider.OpenSessionResult{Session: s, Contract: s.contract}, nil
+}
+
+// permissionProfileError maps a refused permission profile decision to the
+// public open error. Nothing was launched.
+func permissionProfileError(decision rules.PermissionProfileDecision) error {
+	code := provider.ErrorCapabilityUnsupported
+	if decision.Kind == rules.PermissionProfileConflict {
+		code = provider.ErrorProtocolViolation
+	}
+	return adaptererror.New(provider.OperationOpenSession, code, provider.RemoteEffectNotSent, nil, decision.Reason)
 }
 
 func negotiateResultContract(contract provider.ResultContractRef) (provider.SchemaEnforcement, error) {
@@ -126,7 +140,9 @@ func negotiateResultContract(contract provider.ResultContractRef) (provider.Sche
 	}
 }
 
-func codexCapabilities(model provider.ModelSelection, observedAt time.Time) provider.CapabilitySnapshot {
+// codexCapabilities builds the snapshot. harnessVersion is the bare Codex
+// version read from initialize ("0.155.1"), or empty before initialize.
+func codexCapabilities(model provider.ModelSelection, harnessVersion, launchHash string, observedAt time.Time) provider.CapabilitySnapshot {
 	fixture := "archived live fixture: Codex CLI 0.155.1 with gpt-5.6-luna; configured executable/model not inspected"
 	items := []provider.CapabilityObservation{
 		{Capability: provider.CapabilityEventText, Support: provider.SupportSupported, Evidence: provider.EvidenceLiveObserved, Detail: fixture},
@@ -145,19 +161,24 @@ func codexCapabilities(model provider.ModelSelection, observedAt time.Time) prov
 		{Capability: provider.CapabilityEventsNativeReplay, Support: provider.SupportUnsupported, Evidence: provider.EvidenceDeclared},
 	}
 	return provider.CapabilitySnapshot{
-		ProviderName: "codex", AdapterVersion: adapterVersion,
+		ProviderName: "codex", AdapterVersion: adapterVersion, HarnessVersion: harnessVersion,
 		ProtocolVersion: "app-server-jsonrpc-v2", Model: model,
 		ObservedAt: observedAt, Items: items,
-		NativeContext: nativeContextReport(""),
+		NativeContext: nativeContextReport(harnessVersion, launchHash, runtime.GOOS),
 	}
 }
 
 // nativeContextReport derives the snapshot's native context state from the
-// adapter's evidence. Launch flags are not hashed before tasks 1.3/1.4 define
-// them, and an empty hash matches no evidence, so isolation stays unclaimed.
-func nativeContextReport(harnessVersion string) provider.NativeContextReport {
-	const launchConfigHash = ""
-	evidence := rules.NativeContextEvidence()
+// adapter's evidence for this harness version and launch hash. An empty
+// version (Inspect, or before initialize) matches no evidence. platform is the
+// host GOOS; protected paths evidence binds to it.
+func nativeContextReport(harnessVersion, launchConfigHash, platform string) provider.NativeContextReport {
+	return nativeContextReportFrom(rules.NativeContextEvidence(), harnessVersion, launchConfigHash, platform)
+}
+
+// nativeContextReportFrom evaluates the rules against the given evidence, so
+// tests can exercise the binding without a recorded entry.
+func nativeContextReportFrom(evidence provider.NativeContextEvidenceSet, harnessVersion, launchConfigHash, platform string) provider.NativeContextReport {
 	return provider.NewNativeContextReport(
 		func(source provider.NativeContextSource) provider.NativeContextDecision {
 			return rules.DecideNativeContextPolicy(provider.NativeContextFacts{
@@ -165,7 +186,7 @@ func nativeContextReport(harnessVersion string) provider.NativeContextReport {
 			})
 		},
 		rules.DecideProtectedPathsPolicy(provider.ProtectedPathsFacts{
-			HarnessVersion: harnessVersion, LaunchConfigHash: launchConfigHash, Evidence: evidence.ProtectedPaths,
+			HarnessVersion: harnessVersion, LaunchConfigHash: launchConfigHash, Platform: platform, Evidence: evidence.ProtectedPaths,
 		}),
 	)
 }

@@ -1,6 +1,8 @@
 package acp
 
 import (
+	"runtime"
+
 	"encoding/json"
 	"time"
 
@@ -195,7 +197,7 @@ func (a *Adapter) nativeContextReport(harnessVersion string) provider.NativeCont
 			})
 		},
 		rules.DecideProtectedPathsPolicy(provider.ProtectedPathsFacts{
-			HarnessVersion: harnessVersion, LaunchConfigHash: launchConfigHash, Evidence: evidence.ProtectedPaths,
+			HarnessVersion: harnessVersion, LaunchConfigHash: launchConfigHash, Platform: runtime.GOOS, Evidence: evidence.ProtectedPaths,
 		}),
 	)
 }

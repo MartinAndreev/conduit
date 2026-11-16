@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -29,7 +30,7 @@ func TestSnapshotNativeContextByVersion(t *testing.T) {
 		version string
 		want    provider.ProtectedPathsState
 	}{
-		{"recorded version", "2.1.316", provider.ProtectedPathsEnforced},
+		{"recorded version", "2.1.316", enforcedOnDarwin()},
 		{"other version", "2.1.317", provider.ProtectedPathsUnknown},
 		{"no version", "", provider.ProtectedPathsUnknown},
 	}
@@ -50,7 +51,7 @@ func TestOpenSessionNativeContextUsesInitializeVersion(t *testing.T) {
 		version string
 		want    provider.ProtectedPathsState
 	}{
-		{"recorded version", "2.1.316", provider.ProtectedPathsEnforced},
+		{"recorded version", "2.1.316", enforcedOnDarwin()},
 		{"other version", "2.1.317", provider.ProtectedPathsUnknown},
 	}
 	for _, tt := range tests {
@@ -74,6 +75,32 @@ func TestOpenSessionNativeContextUsesInitializeVersion(t *testing.T) {
 	}
 }
 
+// enforcedOnDarwin is the expected state for recorded evidence on this host:
+// the recording ran on macOS, so another host stays unknown.
+func enforcedOnDarwin() provider.ProtectedPathsState {
+	if runtime.GOOS == "darwin" {
+		return provider.ProtectedPathsEnforced
+	}
+	return provider.ProtectedPathsUnknown
+}
+
+func TestProtectedPathsBindToRecordedPlatform(t *testing.T) {
+	tests := []struct {
+		platform string
+		want     provider.ProtectedPathsState
+	}{
+		{"darwin", provider.ProtectedPathsEnforced},
+		{"linux", provider.ProtectedPathsUnknown},
+		{"windows", provider.ProtectedPathsUnknown},
+		{"", provider.ProtectedPathsUnknown},
+	}
+	for _, tt := range tests {
+		if got := nativeContextReport("2.1.316", tt.platform).ProtectedPaths; got != tt.want {
+			t.Fatalf("platform %q: protected paths = %s, want %s", tt.platform, got, tt.want)
+		}
+	}
+}
+
 func TestInspectNativeContextStaysUnknown(t *testing.T) {
 	descriptor, err := New(testConfig(newFakeClaude(t))).Inspect(context.Background(), provider.InspectRequest{Model: testModel})
 	if err != nil {
@@ -93,7 +120,7 @@ func TestEvidenceIsBoundToCurrentLaunch(t *testing.T) {
 		t.Fatalf("evidence = %+v, want exactly one protected paths entry", evidence)
 	}
 	entry := evidence.ProtectedPaths[0]
-	if !entry.ReadDenied || !entry.WriteDenied || entry.HarnessVersion != "2.1.316" {
+	if !entry.ReadDenied || !entry.WriteDenied || entry.HarnessVersion != "2.1.316" || entry.Platform != "darwin" {
 		t.Fatalf("entry = %+v", entry)
 	}
 	if got := launchConfigHash(); entry.LaunchConfigHash != got {

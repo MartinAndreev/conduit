@@ -99,6 +99,33 @@ profile-а и четенето на `~/.conduit` успява, виж `evidence.
 profile се отлага, защото губи записваемия `/tmp` за всички Codex сесии. То трябва
 да стане заедно с OS sandbox за OpenCode, преди етап 1 да запише канонични данни.
 
+Решение (Martin, 2026-11-16): Codex минава на permission profile. `thread/start`
+вече не подава `sandbox`, а `codex app-server` се стартира с `-c
+default_permissions="conduit"` и profile, в който `:root` е за четене, проектните
+директории са за запис (при `read-only` само за четене), `/tmp` и `$TMPDIR` са за
+запис, а `~/.conduit` е `none`; мрежата е изрично изключена (`network.enabled=false`), както
+беше при `workspace-write`. Причината за отлагането от 2026-11-09 отпада:
+записваемият `/tmp` е част от profile-а, виж `evidence.md`. OpenCode се стартира
+под `sandbox-exec` с Seatbelt profile, който забранява четене и запис в
+абсолютния път на `~/.conduit`, само на macOS. Ако `sandbox-exec` липсва или home
+не може да се определи, сесията не се проваля, а тръгва без sandbox с
+`protected_paths: unknown` и причина. Linux, Windows и ACP харнесите остават
+`unknown`. И за двата адаптера `protected_paths` става `enforced` само след live
+запис през точния launch на адаптера, обвързан с hash-а на launch конфигурацията.
+
+Отворено (2026-11-16): OpenCode адаптерът не стартира сървър. `opencode api` и
+`opencode run` се свързват с общия background service на потребителя, където се
+изпълняват tools. Кой процес да върви под `sandbox-exec` (собствен `opencode
+serve` на Conduit, `--standalone` клиенти или друго) е решение за Martin. Дотогава
+правилото и Seatbelt profile-ът са готови, но не са вградени в launch-а.
+
+Състояние (2026-11-16): live записът през точния launch на Codex адаптера доказа
+отказ на четене и запис в `~/.conduit` от OS, поотделно, виж `evidence.md`.
+Записът е за launch-а с изрично изключената мрежа. Codex е `enforced` само за
+версия 0.155.1, режим `workspace-write` и macOS; режим `read-only`, други версии и други платформи остават `unknown`.
+Evidence за `protected_paths` вече е обвързан и с платформата (`darwin` за Claude
+и Codex). OpenCode остава `unknown` до решението за процеса.
+
 ## Етап 1 — canonical данни
 
 ### Записи

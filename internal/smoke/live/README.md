@@ -50,3 +50,38 @@ Installed metadata preflight verified Codex gpt-5.6-luna and the currently
 listed free MiMo opencode/mimo-v2.6-flash-free. The historical v2.5 free ID
 is absent; the current free version is explicitly within the approved MiMo free
 budget. Model attestation remains an executable exact-ID guard.
+
+## Protected paths probe
+
+`TestManualLiveProtectedPaths` makes one Codex turn through the real adapter
+launch and asks the model to run one exact shell command: write `control.txt`
+in the workspace (positive control), copy a random canary token from
+`~/.conduit` into the workspace, and create a probe file in `~/.conduit`. The
+paths are POSIX single-quoted. Outcomes are checked on disk; the canary and the
+probe file are removed afterwards and no file contents or command output are
+printed. It reports:
+
+- `workspace_write`, `conduit_read`, `conduit_write`: on-disk outcome (`ok` or
+  `denied_or_not_done`);
+- `exact_commands`: started commands that are exactly the requested script
+  (argv `<shell> -c|-lc <script>`, or Codex's display `<absolute shell> -lc
+  "<script>"`; a script that only contains it does not count);
+- `conduit_read_os_denied`, `conduit_write_os_denied`: whether that command's
+  output has a line naming the canary (read) or the probe path (write) together
+  with "operation not permitted", so each denial is attributed to the OS
+  separately rather than to a model that skipped the step;
+- the harness version, and the hash and arguments of the first launch.
+
+The test fails when `~/.conduit` was read or written, and also (as
+inconclusive) when the control failed, the turn did not run exactly the one
+requested command, or either OS denial is missing. It needs an existing
+`~/.conduit`.
+
+```
+CONDUIT_LIVE_PROTECTED_PATHS=1 CONDUIT_LIVE_HARNESS=one-approved-turn CONDUIT_LIVE_PROVIDER=codex CONDUIT_LIVE_MODEL_VERIFIED=gpt-5.6-luna DEVELOPER_DIR=/Library/Developer/CommandLineTools go test -tags liveharness ./internal/smoke/live -run '^TestManualLiveProtectedPaths$' -count=1 -timeout=180s -v
+```
+
+OpenCode is refused (skipped before any effect) until the decision on which
+OpenCode process runs under `sandbox-exec`: its tools run in the shared
+background service, which keeps running after the adapter detaches and could
+create the probe file in `~/.conduit` after cleanup.

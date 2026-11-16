@@ -1,6 +1,8 @@
 package opencode
 
 import (
+	"runtime"
+
 	"context"
 	"encoding/json"
 	"github.com/MartinAndreev/conduit/internal/harnesses/opencode/rules"
@@ -99,7 +101,7 @@ func nativeContextReport(harnessVersion string) provider.NativeContextReport {
 			})
 		},
 		rules.DecideProtectedPathsPolicy(provider.ProtectedPathsFacts{
-			HarnessVersion: harnessVersion, LaunchConfigHash: launchConfigHash, Evidence: evidence.ProtectedPaths,
+			HarnessVersion: harnessVersion, LaunchConfigHash: launchConfigHash, Platform: runtime.GOOS, Evidence: evidence.ProtectedPaths,
 		}),
 	)
 }

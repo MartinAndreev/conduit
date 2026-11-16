@@ -1,6 +1,8 @@
 package claude
 
 import (
+	"runtime"
+
 	"context"
 	"encoding/json"
 	"time"
@@ -141,14 +143,15 @@ func claudeCapabilities(model provider.ModelSelection, harnessVersion string, ob
 	return provider.CapabilitySnapshot{
 		ProviderName: providerName, AdapterVersion: adapterVersion, HarnessVersion: harnessVersion,
 		ProtocolVersion: protocolVersion, Model: model, ObservedAt: observedAt, Items: items,
-		NativeContext: nativeContextReport(harnessVersion),
+		NativeContext: nativeContextReport(harnessVersion, runtime.GOOS),
 	}
 }
 
 // nativeContextReport derives the snapshot's native context state from the
 // adapter's evidence for the real harness version and launch configuration. An
 // empty version, as in Inspect or before initialize, matches no evidence.
-func nativeContextReport(harnessVersion string) provider.NativeContextReport {
+// platform is the host GOOS; protected paths evidence binds to it.
+func nativeContextReport(harnessVersion, platform string) provider.NativeContextReport {
 	configHash := launchConfigHash()
 	evidence := rules.NativeContextEvidence()
 	return provider.NewNativeContextReport(
@@ -158,7 +161,7 @@ func nativeContextReport(harnessVersion string) provider.NativeContextReport {
 			})
 		},
 		rules.DecideProtectedPathsPolicy(provider.ProtectedPathsFacts{
-			HarnessVersion: harnessVersion, LaunchConfigHash: configHash, Evidence: evidence.ProtectedPaths,
+			HarnessVersion: harnessVersion, LaunchConfigHash: configHash, Platform: platform, Evidence: evidence.ProtectedPaths,
 		}),
 	)
 }

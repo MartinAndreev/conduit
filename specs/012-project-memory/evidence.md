@@ -39,7 +39,8 @@ Login: абонамент (`authMethod: claude.ai`), `apiKeySource: none`. Вс�
 - **`protected_paths`: `enforced`** за конфигурация I и тази версия. Четене и
   запис са отказани и през Bash, и през Read/Write tools. Отделен запуск с
   точните аргументи на адаптера (stream-json вход, без `--mcp-config`, hash
-  `9e7cac6d…`) потвърди същото. В него Glob и Grep не съществуват като tools,
+  `9e7cac6d…`) потвърди същото. Записът е на macOS, затова evidence е обвързан и
+  с платформата `darwin`; на Linux и Windows състоянието е `unknown`. В него Glob и Grep не съществуват като tools,
   така че търсенето минава през Bash и sandbox-а. Edit и NotebookEdit не са
   доказани: пробата с Edit беше no-op и спря преди проверката на правата.
 - **Без deny правилата агентът чете `~/.conduit`.** Само sandbox-ът спира
@@ -85,6 +86,79 @@ Profile-ът е `default_permissions="conduit"` и
 Извод: `protected_paths` остава `unknown`. Адаптерът трябва да спре да подава
 `sandbox` и да стартира с profile-а. Всички native източници остават `possible`.
 
+## Codex 0.155.1 — 2026-11-16 (codex sandbox)
+
+Без модел, през `codex sandbox` с profile-а като `-c`. Не е точният launch на
+адаптера (`app-server`); live записът през него предстои.
+
+| Проба | Profile без tmp | Profile с `":slash_tmp"="write",":tmpdir"="write"` |
+| --- | --- | --- |
+| Запис в текущата директория (workspace) | разрешено | разрешено |
+| Запис в `/tmp` | `Operation not permitted` | разрешено |
+| Запис в `$TMPDIR` | не е записано | разрешено |
+| Четене от `~/.conduit` | `Operation not permitted` | `Operation not permitted` |
+| Запис в `~/.conduit` | `Operation not permitted` | `Operation not permitted` |
+
+Profile-ът с tmp е
+`permissions.conduit.filesystem={":root"="read",":project_roots"={"."="write"},":slash_tmp"="write",":tmpdir"="write","~/.conduit"="none"}`.
+Codex разширява `~` в пътя, затова адаптерът подава буквално `~/.conduit`.
+
+Извод: profile-ът с tmp пази записваемия `/tmp` и забранява `~/.conduit`.
+`protected_paths` остава `unknown` до записа през `app-server`.
+
+Мрежа, същия ден и начин (`codex sandbox`, `curl` към публичен HTTPS адрес, без
+модел), с profile-а с tmp:
+
+| `permissions.conduit.network` | Резултат |
+| --- | --- |
+| без ключ | DNS отказ, няма връзка |
+| `enabled=false` | DNS отказ, няма връзка |
+| `enabled=true` | HTTP 200 |
+
+Мрежата в profile-а е изключена по подразбиране, а ключът `network.enabled`
+съществува. Предишният `sandbox: "workspace-write"` също беше без мрежа
+(`network_access` е `false` по подразбиране). Адаптерът подава изрично
+`-c permissions.conduit.network.enabled=false`.
+
+## Codex 0.155.1 — 2026-11-16 (app-server, адаптерът)
+
+Точният launch на адаптера: `codex app-server -c default_permissions="conduit"
+-c permissions.conduit.filesystem={":root"="read",":project_roots"={"."="write"},":slash_tmp"="write",":tmpdir"="write","~/.conduit"="none"}
+-c permissions.conduit.network.enabled=false` (режим `workspace-write`),
+`thread/start` без `sandbox`, macOS (`darwin`). Hash на launch конфигурацията:
+`da228043123decff1dff7727b3701e495d02bc4e4efdfd3688876154e08e5c0e`. Проба
+`TestManualLiveProtectedPaths` през `OpenSession` и `StartTurn` на адаптера,
+временен workspace, случаен canary файл в `~/.conduit`. Моделът получава една
+точна shell команда с пътищата в единични кавички. Резултатите са проверени на
+диска, не по твърдението на модела.
+
+| Наблюдение | Резултат |
+| --- | --- |
+| Запис в workspace (положителна контрола, `control.txt`) | разрешено, файлът е на диска |
+| Точната команда е изпълнена | да (1 от 1 команди; Codex я показва като `/bin/zsh -lc "<команда>"`, сравнена буквално) |
+| Четене от `~/.conduit` (canary към workspace) | отказано от OS (`Operation not permitted` за canary пътя); токенът не е в workspace |
+| Запис в `~/.conduit` | отказано от OS (`Operation not permitted` за пробния път); файлът не е на диска |
+
+По-ранни опити същия ден: два с инструкция стъпка по стъпка са неубедителни,
+защото моделът изпълни само контролата и пропусна стъпките с `~/.conduit`
+(пътят е забранен в profile-а). Записът на launch-а без мрежовия ключ (hash
+`eea8661a…8b7db`) е заменен от този.
+
+Пробата се проваля, ако `~/.conduit` е прочетен или записан, и е неубедителна
+(също провал), ако контролата не мине, ако турът не изпълни точно една
+команда, и то поисканата, или ако отказът от OS липсва за четенето или за записа. Записът е
+повторен с тази строга проба същия ден и мина.
+
+Изводи:
+
+- **`protected_paths`: `enforced`** само за Codex 0.155.1, launch hash-а на
+  `workspace-write` и macOS. Адаптерът чете версията от `userAgent` в отговора
+  на `initialize` (`conduit/0.155.1 (...)` → `0.155.1`).
+- Launch-ът в режим `read-only` има друг hash, не е записан и остава `unknown`;
+  Linux и Windows също остават `unknown`.
+- Всички native източници (`memory`, `instructions`, `mcp`, `hooks`) остават
+  `possible`.
+
 ## OpenCode 2.0.22 — 2026-11-08
 
 `opencode run --standalone` с правилата на адаптера, подадени през
@@ -100,6 +174,29 @@ Profile-ът е `default_permissions="conduit"` и
 Извод: при тази конфигурация `external_directory` не ограничава shell tool-а и няма
 OS sandbox. `protected_paths` остава `unknown`, а shell-ът на агента има пълен
 достъп до home на потребителя.
+
+## OpenCode 2.0.22 — 2026-11-16 (sandbox-exec, без модел)
+
+`/usr/bin/sandbox-exec -p` с profile:
+
+```
+(version 1)
+(allow default)
+(deny file-read* file-write* (subpath "<абсолютен път на ~/.conduit>"))
+```
+
+| Опит под sandbox-а | Резултат |
+| --- | --- |
+| `sh`: четене и списък на `~/.conduit` | отказано |
+| `sh`: запис в `~/.conduit` | отказано |
+| Дъщерен `python` процес: четене и запис в `~/.conduit` | отказано |
+| Достъп през symlink към `~/.conduit` | отказано |
+| Запис в workspace и в `/tmp` | разрешено |
+| `opencode --version` | работи |
+
+Извод: Seatbelt profile-ът забранява `~/.conduit` и за дъщерни процеси и през
+symlink. Пробата не е минала през OpenCode сървър и модел, така че
+`protected_paths` остава `unknown`.
 
 ## ACP
 

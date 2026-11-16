@@ -7,6 +7,10 @@ import (
 	processruntime "github.com/MartinAndreev/conduit/internal/process"
 )
 
+// SandboxMode selects the project-root access of the Conduit permission
+// profile the App Server is launched with (see launch.go): workspace-write
+// writes the project roots, read-only only reads them. It is never sent as the
+// thread/start sandbox parameter, which would override the profile.
 type SandboxMode string
 
 const (

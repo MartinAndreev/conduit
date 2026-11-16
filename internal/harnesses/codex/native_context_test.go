@@ -8,7 +8,7 @@ import (
 )
 
 func TestSnapshotReportsNativeContextDefaults(t *testing.T) {
-	report := codexCapabilities(provider.ModelSelection{}, time.Now()).NativeContext
+	report := codexCapabilities(provider.ModelSelection{}, "", launchConfigHash(projectRootsWrite), time.Now()).NativeContext
 	for _, source := range provider.NativeContextSources() {
 		if got := report.SourceState(source); got != provider.NativeContextPossible {
 			t.Fatalf("%s = %s, want possible", source, got)

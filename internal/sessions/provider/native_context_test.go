@@ -50,25 +50,31 @@ func TestDecideNativeContext(t *testing.T) {
 
 func TestDecideProtectedPaths(t *testing.T) {
 	const version, hash = "1.0.0", "hash"
-	refused := provider.ProtectedPathsEvidence{ReadDenied: true, WriteDenied: true, HarnessVersion: version, LaunchConfigHash: hash}
+	const platform = "darwin"
+	refused := provider.ProtectedPathsEvidence{ReadDenied: true, WriteDenied: true, HarnessVersion: version, LaunchConfigHash: hash, Platform: platform}
 	tests := []struct {
 		name     string
 		version  string
 		hash     string
+		platform string
 		evidence []provider.ProtectedPathsEvidence
 		want     provider.ProtectedPathsState
 	}{
-		{"read and write refused", version, hash, []provider.ProtectedPathsEvidence{refused}, provider.ProtectedPathsEnforced},
-		{"different version", "1.0.1", hash, []provider.ProtectedPathsEvidence{refused}, provider.ProtectedPathsUnknown},
-		{"different config hash", version, "other", []provider.ProtectedPathsEvidence{refused}, provider.ProtectedPathsUnknown},
-		{"no evidence", version, hash, nil, provider.ProtectedPathsUnknown},
-		{"only read refused", version, hash, []provider.ProtectedPathsEvidence{{ReadDenied: true, HarnessVersion: version, LaunchConfigHash: hash}}, provider.ProtectedPathsUnknown},
-		{"only write refused", version, hash, []provider.ProtectedPathsEvidence{{WriteDenied: true, HarnessVersion: version, LaunchConfigHash: hash}}, provider.ProtectedPathsUnknown},
-		{"empty binding", "", "", []provider.ProtectedPathsEvidence{{ReadDenied: true, WriteDenied: true}}, provider.ProtectedPathsUnknown},
+		{"read and write refused", version, hash, platform, []provider.ProtectedPathsEvidence{refused}, provider.ProtectedPathsEnforced},
+		{"different version", "1.0.1", hash, platform, []provider.ProtectedPathsEvidence{refused}, provider.ProtectedPathsUnknown},
+		{"different config hash", version, "other", platform, []provider.ProtectedPathsEvidence{refused}, provider.ProtectedPathsUnknown},
+		{"linux", version, hash, "linux", []provider.ProtectedPathsEvidence{refused}, provider.ProtectedPathsUnknown},
+		{"windows", version, hash, "windows", []provider.ProtectedPathsEvidence{refused}, provider.ProtectedPathsUnknown},
+		{"empty platform", version, hash, "", []provider.ProtectedPathsEvidence{refused}, provider.ProtectedPathsUnknown},
+		{"evidence without platform", version, hash, platform, []provider.ProtectedPathsEvidence{{ReadDenied: true, WriteDenied: true, HarnessVersion: version, LaunchConfigHash: hash}}, provider.ProtectedPathsUnknown},
+		{"no evidence", version, hash, platform, nil, provider.ProtectedPathsUnknown},
+		{"only read refused", version, hash, platform, []provider.ProtectedPathsEvidence{{ReadDenied: true, HarnessVersion: version, LaunchConfigHash: hash, Platform: platform}}, provider.ProtectedPathsUnknown},
+		{"only write refused", version, hash, platform, []provider.ProtectedPathsEvidence{{WriteDenied: true, HarnessVersion: version, LaunchConfigHash: hash, Platform: platform}}, provider.ProtectedPathsUnknown},
+		{"empty binding", "", "", "", []provider.ProtectedPathsEvidence{{ReadDenied: true, WriteDenied: true}}, provider.ProtectedPathsUnknown},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := provider.DecideProtectedPaths(provider.ProtectedPathsFacts{HarnessVersion: tt.version, LaunchConfigHash: tt.hash, Evidence: tt.evidence})
+			got := provider.DecideProtectedPaths(provider.ProtectedPathsFacts{HarnessVersion: tt.version, LaunchConfigHash: tt.hash, Platform: tt.platform, Evidence: tt.evidence})
 			if got.Kind != tt.want || got.Reason == "" {
 				t.Fatalf("decision = %+v, want %s", got, tt.want)
 			}

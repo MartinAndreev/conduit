@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,10 +19,12 @@ import (
 )
 
 type scriptedLauncher struct {
-	mu       sync.Mutex
-	spec     processruntime.Spec
-	requests []map[string]any
-	starts   int
+	// userAgent, when set before Start, is returned by initialize.
+	userAgent string
+	mu        sync.Mutex
+	spec      processruntime.Spec
+	requests  []map[string]any
+	starts    int
 }
 
 func (l *scriptedLauncher) Start(spec processruntime.Spec) (processruntime.Process, error) {
@@ -69,6 +72,10 @@ func (l *scriptedLauncher) serve(proc *scriptedProcess) {
 		}
 		var result any = map[string]any{}
 		switch request["method"] {
+		case "initialize":
+			if l.userAgent != "" {
+				result = map[string]any{"userAgent": l.userAgent}
+			}
 		case "thread/start":
 			result = map[string]any{"thread": map[string]any{"id": "native-thread-1"}}
 		case "turn/start":
@@ -218,7 +225,7 @@ func TestAdapterOpenStartSteerAndCloseAgainstScriptedAppServer(t *testing.T) {
 	if !closed.HandleClosed || !closed.ResourcesReleased || closed.ExecutionState != provider.ExecutionNone {
 		t.Fatalf("Close result = %#v", closed)
 	}
-	if launcher.spec.Path != "/test/codex" || len(launcher.spec.Args) != 1 || launcher.spec.Args[0] != "app-server" {
+	if launcher.spec.Path != "/test/codex" || !slices.Equal(launcher.spec.Args, launchArguments(projectRootsWrite)) {
 		t.Fatalf("launch spec = %#v", launcher.spec)
 	}
 }

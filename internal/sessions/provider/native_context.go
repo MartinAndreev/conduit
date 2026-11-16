@@ -71,11 +71,14 @@ type NativeContextEvidence struct {
 
 // ProtectedPathsEvidence records real attempts by the harness to use a
 // protected directory. Both a read and a write must have been refused.
+// Platform is the GOOS the recording ran on: the refusal comes from an OS
+// sandbox, so it proves nothing for another operating system.
 type ProtectedPathsEvidence struct {
 	ReadDenied       bool
 	WriteDenied      bool
 	HarnessVersion   string
 	LaunchConfigHash string
+	Platform         string
 }
 
 type NativeContextFacts struct {
@@ -94,7 +97,9 @@ type NativeContextDecision struct {
 type ProtectedPathsFacts struct {
 	HarnessVersion   string
 	LaunchConfigHash string
-	Evidence         []ProtectedPathsEvidence
+	// Platform is the GOOS the harness runs on (runtime.GOOS).
+	Platform string
+	Evidence []ProtectedPathsEvidence
 }
 
 // ProtectedPathsDecision's Kind is the state to report for protected paths.
@@ -152,16 +157,18 @@ func proofAdmissible(evidence NativeContextEvidence) bool {
 }
 
 // DecideProtectedPaths is the semantics shared by every adapter's
-// DecideProtectedPathsPolicy.
+// DecideProtectedPathsPolicy. Only evidence for this exact version, launch
+// configuration and platform counts; an empty platform matches nothing.
 func DecideProtectedPaths(f ProtectedPathsFacts) ProtectedPathsDecision {
-	enforced := bindingKnown(f.HarnessVersion, f.LaunchConfigHash) && slices.ContainsFunc(f.Evidence, func(evidence ProtectedPathsEvidence) bool {
+	enforced := bindingKnown(f.HarnessVersion, f.LaunchConfigHash) && f.Platform != "" && slices.ContainsFunc(f.Evidence, func(evidence ProtectedPathsEvidence) bool {
 		return evidence.ReadDenied && evidence.WriteDenied &&
-			evidence.HarnessVersion == f.HarnessVersion && evidence.LaunchConfigHash == f.LaunchConfigHash
+			evidence.HarnessVersion == f.HarnessVersion && evidence.LaunchConfigHash == f.LaunchConfigHash &&
+			evidence.Platform == f.Platform
 	})
 	if enforced {
-		return ProtectedPathsDecision{Kind: ProtectedPathsEnforced, Reason: "harness read and write attempts were refused for this version and launch configuration"}
+		return ProtectedPathsDecision{Kind: ProtectedPathsEnforced, Reason: "harness read and write attempts were refused for this version, launch configuration and platform"}
 	}
-	return ProtectedPathsDecision{Kind: ProtectedPathsUnknown, Reason: "no refused read and write recorded for this harness version and launch configuration"}
+	return ProtectedPathsDecision{Kind: ProtectedPathsUnknown, Reason: "no refused read and write recorded for this harness version, launch configuration and platform"}
 }
 
 // bindingKnown refuses an empty version or hash, which identify no launch.
