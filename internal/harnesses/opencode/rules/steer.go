@@ -7,6 +7,12 @@ type SteerEligibilityKind string
 const (
 	SteerEligible     SteerEligibilityKind = "eligible"
 	SteerBindingStale SteerEligibilityKind = "binding_stale"
+	// SteerSessionClosed: the session handle is closed (Close may still be
+	// stopping its client and server), so no correction is sent.
+	SteerSessionClosed SteerEligibilityKind = "session_closed"
+	// SteerSessionLost: the session is lost (its server or run observation
+	// failed), so no correction can be delivered.
+	SteerSessionLost SteerEligibilityKind = "session_lost"
 )
 
 type SteerEligibilityFacts struct {
@@ -15,6 +21,8 @@ type SteerEligibilityFacts struct {
 	TurnMatches     bool
 	SteerPending    bool
 	DeliveryUnknown bool
+	SessionLost     bool
+	Closed          bool
 }
 type SteerEligibilityDecision struct {
 	Kind   SteerEligibilityKind
@@ -22,7 +30,18 @@ type SteerEligibilityDecision struct {
 }
 
 // DecideSteerEligibility checks the native lease before the business correction rule.
+// A stale binding takes precedence over a closed session, which takes
+// precedence over a lost one.
 func DecideSteerEligibility(f SteerEligibilityFacts) SteerEligibilityDecision {
+	if !f.SessionMatches {
+		return SteerEligibilityDecision{SteerBindingStale, StaleBindingReason}
+	}
+	if f.Closed {
+		return SteerEligibilityDecision{SteerSessionClosed, "the OpenCode session is closed; a correction cannot be sent"}
+	}
+	if f.SessionLost {
+		return SteerEligibilityDecision{SteerSessionLost, "the OpenCode session is lost; a correction cannot be delivered"}
+	}
 	if !f.SessionMatches || !f.ActiveTurn || !f.TurnMatches || f.SteerPending || f.DeliveryUnknown {
 		return SteerEligibilityDecision{SteerBindingStale, StaleBindingReason}
 	}

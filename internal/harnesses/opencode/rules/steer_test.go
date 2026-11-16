@@ -15,6 +15,12 @@ func TestSteerTechnicalRules(t *testing.T) {
 		{"wrong turn", SteerEligibilityFacts{SessionMatches: true, ActiveTurn: true}, SteerBindingStale},
 		{"pending", SteerEligibilityFacts{SessionMatches: true, ActiveTurn: true, TurnMatches: true, SteerPending: true}, SteerBindingStale},
 		{"uncertain", SteerEligibilityFacts{SessionMatches: true, ActiveTurn: true, TurnMatches: true, DeliveryUnknown: true}, SteerBindingStale},
+		{"lost", SteerEligibilityFacts{SessionMatches: true, ActiveTurn: true, TurnMatches: true, SessionLost: true}, SteerSessionLost},
+		{"lost without turn", SteerEligibilityFacts{SessionMatches: true, SessionLost: true}, SteerSessionLost},
+		{"closed", SteerEligibilityFacts{SessionMatches: true, ActiveTurn: true, TurnMatches: true, Closed: true}, SteerSessionClosed},
+		{"closed precedes lost", SteerEligibilityFacts{SessionMatches: true, ActiveTurn: true, TurnMatches: true, Closed: true, SessionLost: true}, SteerSessionClosed},
+		{"stale precedes closed", SteerEligibilityFacts{ActiveTurn: true, TurnMatches: true, Closed: true}, SteerBindingStale},
+		{"stale precedes lost", SteerEligibilityFacts{ActiveTurn: true, TurnMatches: true, SessionLost: true}, SteerBindingStale},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

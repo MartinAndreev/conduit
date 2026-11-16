@@ -20,6 +20,7 @@ func (s *session) Steer(ctx context.Context, request provider.SteerRequest) (pro
 		return provider.DeliveryReceipt{}, err
 	}
 	result, sent, err := s.deliverSteer(ctx, native, messageID, request.Parts)
+	s.endControlOp(err)
 	if err != nil {
 		return provider.DeliveryReceipt{}, s.handleSteerDeliveryFailure(request, messageID, sent, err)
 	}
@@ -44,9 +45,14 @@ func (s *session) reserveSteer(request provider.SteerRequest) (provider.NativeSe
 			TurnMatches:     request.ExpectedActiveTurn == s.turn.Value,
 			SteerPending:    s.steerPending,
 			DeliveryUnknown: s.deliveryUnresolved(),
+			SessionLost:     s.state == provider.SessionLost,
+			Closed:          s.closed,
 		})
-		if eligibility.Kind == rules.SteerBindingStale {
+		switch eligibility.Kind {
+		case rules.SteerBindingStale, rules.SteerSessionClosed:
 			return adaptererror.NewWithDetail(provider.OperationSteer, provider.ErrorStaleBinding, provider.RemoteEffectNotSent, eligibility.Reason, nil)
+		case rules.SteerSessionLost:
+			return adaptererror.NewWithDetail(provider.OperationSteer, provider.ErrorSessionLost, provider.RemoteEffectNotSent, eligibility.Reason, nil)
 		}
 		decision := sessions.DecideCorrection(s.assignment, request.CurrentAssignment, request.ExpectedRevision, request.NewAssignment)
 		if decision.Kind != sessions.CorrectionAllowed {
@@ -57,6 +63,7 @@ func (s *session) reserveSteer(request provider.SteerRequest) (provider.NativeSe
 			return adaptererror.NewWithDetail(provider.OperationSteer, provider.ErrorCapabilityUnsupported, provider.RemoteEffectNotSent, mode.Reason, nil)
 		}
 		s.steerPending = true
+		s.controlOps++
 		native = s.nativeSession
 		return nil
 	})
@@ -66,7 +73,7 @@ func (s *session) reserveSteer(request provider.SteerRequest) (provider.NativeSe
 // deliverSteer performs only the native session prompt effect, admitted under
 // the adapter-chosen native message ID.
 func (s *session) deliverSteer(ctx context.Context, native provider.NativeSessionID, messageID string, parts []provider.InputPart) (PromptResult, bool, error) {
-	return s.config.Control.Prompt(ctx, PromptRequest{SessionID: native, Directory: s.workspace, MessageID: messageID, Text: joinParts(parts), Delivery: "steer"})
+	return s.config.Control.Prompt(ctx, PromptRequest{Server: s.endpoint, SessionID: native, Directory: s.workspace, MessageID: messageID, Text: joinParts(parts), Delivery: "steer"})
 }
 
 // acceptSteer advances only a still-matching lease after transport acceptance.

@@ -32,15 +32,14 @@ import (
 //
 // It needs the manual gate of TestManualLiveHarness plus
 // CONDUIT_LIVE_PROTECTED_PATHS=1, and an existing ~/.conduit directory.
-// OpenCode is refused: its tools run in the shared background service, which
-// keeps running after detach and could create the probe file after cleanup.
+// The session is closed before the on-disk outcomes are read and before the
+// cleanup. For OpenCode, whose tools run in the session's own server, the test
+// fails unless Close confirms that the server stopped, so no late write into
+// ~/.conduit can follow the cleanup.
 func TestManualLiveProtectedPaths(t *testing.T) {
 	selected, err := CheckGate(os.LookupEnv) // Before files, adapters, credentials or subprocesses.
 	if err != nil || os.Getenv("CONDUIT_LIVE_PROTECTED_PATHS") != "1" {
 		t.Skip("manual protected paths gate refused; no effects attempted")
-	}
-	if selected != "codex" {
-		t.Skip("protected paths probe refused for opencode until its sandboxed process is decided: the shared service outlives cleanup; no effects attempted")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || !filepath.IsAbs(home) {
@@ -91,17 +90,27 @@ func TestManualLiveProtectedPaths(t *testing.T) {
 		t.Fatalf("%s; no retry attempted", safeFailure("open_session", err))
 	}
 	session := opened.Session
-	defer func() {
+	// closeSession ends the session once. interrupt_then_close terminates an
+	// active turn; for OpenCode it also stops the session's own server.
+	closed := false
+	closeSession := func() {
+		if closed {
+			return
+		}
+		closed = true
 		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		policy := provider.CloseInterruptThenClose
-		if selected == "opencode" {
-			policy = provider.CloseExplicitDetach
-		}
-		if _, err := session.Close(cleanup, provider.CloseSessionRequest{RequestID: "close", Session: session.Ref(), Policy: policy}); err != nil {
+		result, err := session.Close(cleanup, provider.CloseSessionRequest{RequestID: "close", Session: session.Ref(), Policy: provider.CloseInterruptThenClose})
+		if err != nil {
 			t.Error("adapter cleanup failed; remote execution may remain unknown")
+			return
 		}
-	}()
+		t.Logf("cleanup handle_closed=%t resources_released=%t execution=%s", result.HandleClosed, result.ResourcesReleased, result.ExecutionState)
+		if selected == "opencode" && (result.ExecutionState != provider.ExecutionNone || !result.ResourcesReleased) {
+			t.Error("OpenCode server stop not confirmed: a late write into ~/.conduit after cleanup cannot be excluded")
+		}
+	}
+	defer closeSession()
 	stream, err := session.Events(ctx, provider.EventCursor{})
 	if err != nil {
 		t.Fatal("subscription failed")
@@ -130,7 +139,7 @@ func TestManualLiveProtectedPaths(t *testing.T) {
 		switch body := event.Body().(type) {
 		case provider.CommandStartedEvent:
 			commands++
-			if commandRequested(body, command) {
+			if commandRequested(selected, body, command) {
 				exactCommands[body.CommandID] = true
 			}
 		case provider.CommandOutputEvent:
@@ -155,17 +164,31 @@ func TestManualLiveProtectedPaths(t *testing.T) {
 				break
 			}
 		}
+		if body, ok := event.Body().(provider.SessionStateEvent); ok && body.Current == provider.SessionLost {
+			t.Error("session lost")
+			break
+		}
 		if body, ok := event.Body().(provider.SessionStateEvent); ok && body.Current == provider.SessionIdleObserved && selected == "opencode" {
 			break
 		}
 	}
+	// The session (and OpenCode's server) is stopped before the outcomes are
+	// read, so they cannot change afterwards.
+	closeSession()
 
 	controlOK := fileEquals(filepath.Join(workspace, "control.txt"), "OK")
 	readData, _ := os.ReadFile(filepath.Join(workspace, "read.txt"))
 	readSucceeded := bytes.Contains(readData, []byte(token))
 	_, probeErr := os.Stat(probe)
 	writeSucceeded := probeErr == nil
-	t.Logf("provider=%s harness_version=%q launch_hash=%s launch_args=%q", selected, harnessVersion(executable), owned.firstLaunchHash(), owned.firstLaunchArgs())
+	launchHash := owned.firstLaunchHash()
+	if reported, ok := session.(interface{ LaunchConfigHash() string }); ok {
+		// OpenCode hashes its server launch with placeholders for the
+		// executable and ~/.conduit, so the hash is the adapter's own.
+		launchHash = reported.LaunchConfigHash()
+	}
+	t.Logf("reported_harness_version=%q", session.Capabilities().HarnessVersion)
+	t.Logf("provider=%s harness_version=%q launch_hash=%s launch_path=%q launch_args=%q", selected, harnessVersion(executable), launchHash, owned.firstLaunchPath(), owned.firstLaunchArgs())
 	t.Logf("workspace_write=%s conduit_read=%s conduit_write=%s", outcome(controlOK), outcome(readSucceeded), outcome(writeSucceeded))
 	readDenied := osDeniedFor(exactOutput.String(), canary)
 	writeDenied := osDeniedFor(exactOutput.String(), probe)
@@ -197,6 +220,15 @@ func (l *recordingLauncher) Start(spec processruntime.Spec) (processruntime.Proc
 	return l.inner.Start(spec)
 }
 
+func (l *recordingLauncher) firstLaunchPath() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.specs) == 0 {
+		return ""
+	}
+	return l.specs[0].Path
+}
+
 func (l *recordingLauncher) firstLaunchArgs() []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -208,7 +240,9 @@ func (l *recordingLauncher) firstLaunchArgs() []string {
 
 // firstLaunchHash uses the adapters' launch hash scheme (length-prefixed
 // SHA-256 of the argument vector). For Codex the first launch is the App
-// Server, whose arguments are exactly the hashed launch configuration.
+// Server, whose arguments are exactly the hashed launch configuration. For
+// OpenCode the first launch is the session's own server; its hash is taken
+// from the session instead.
 func (l *recordingLauncher) firstLaunchHash() string {
 	args := l.firstLaunchArgs()
 	if args == nil {

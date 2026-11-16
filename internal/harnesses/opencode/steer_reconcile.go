@@ -28,6 +28,7 @@ func (s *session) reconcileUnresolvedSteer() {
 	ctx, cancel := context.WithTimeout(context.Background(), steerQueryTimeout)
 	observation, queryErr := s.config.Control.QuerySteerDelivery(ctx, query)
 	cancel()
+	s.endControlOp(queryErr)
 	decision := s.applySteerReconcile(steer, observation, queryErr != nil)
 	s.reportSteerReconcile(steer, decision)
 	if s.steerReconcileApplied != nil {
@@ -46,6 +47,7 @@ func (s *session) settleReleasedSteers() {
 		ctx, cancel := context.WithTimeout(context.Background(), steerQueryTimeout)
 		observation, queryErr := s.config.Control.QueryReleasedSteer(ctx, pending.query)
 		cancel()
+		s.endControlOp(queryErr)
 		s.applyReleasedSteerSettlement(pending.released, observation, queryErr != nil)
 	}
 }
@@ -71,9 +73,10 @@ func (s *session) beginReleasedSteerQueries() []releasedSteerQuery {
 				continue
 			}
 			released.querying = true
+			s.controlOps++
 			queries = append(queries, releasedSteerQuery{
 				released: released,
-				query:    SteerDeliveryQuery{SessionID: s.nativeSession, Directory: s.workspace, MessageID: released.nativeMessageID},
+				query:    SteerDeliveryQuery{Server: s.endpoint, SessionID: s.nativeSession, Directory: s.workspace, MessageID: released.nativeMessageID},
 			})
 		}
 		return nil
@@ -128,7 +131,8 @@ func (s *session) beginSteerReconcile() (*unresolvedSteer, SteerDeliveryQuery, b
 		}
 		steer = s.unresolvedSteer
 		steer.reconciling = true
-		query = SteerDeliveryQuery{SessionID: s.nativeSession, Directory: s.workspace, MessageID: steer.nativeMessageID}
+		s.controlOps++
+		query = SteerDeliveryQuery{Server: s.endpoint, SessionID: s.nativeSession, Directory: s.workspace, MessageID: steer.nativeMessageID}
 		return nil
 	})
 	return steer, query, steer != nil

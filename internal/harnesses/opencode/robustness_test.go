@@ -55,7 +55,7 @@ func (l *killableLauncher) Start(processruntime.Spec) (processruntime.Process, e
 
 func openActiveSession(t *testing.T, launcher processruntime.Launcher) provider.Session {
 	t.Helper()
-	adapter := New(Config{Control: &fakeControl{}, Launcher: launcher, StopGrace: time.Second})
+	adapter := New(withFakeServer(Config{Control: &fakeControl{}, Launcher: launcher, StopGrace: time.Second}))
 	a := provider.AssignmentRef{AssignmentID: "x", Revision: 1}
 	c := provider.ResultContractRef{Requested: provider.SchemaNone}
 	opened, err := adapter.OpenSession(context.Background(), provider.OpenSessionRequest{Assignment: a, Workspace: provider.WorkspaceBinding{Path: "/work", Writable: true}, Model: provider.ModelSelection{ProviderID: "opencode", ModelID: "model"}, ResultContract: c, PermissionMode: provider.PermissionDeny})
@@ -80,8 +80,8 @@ func TestInterruptThenCloseStopsOwnedRunClient(t *testing.T) {
 	default:
 		t.Fatal("owned run client was not terminated")
 	}
-	if !result.HandleClosed || !result.ResourcesReleased || result.ExecutionState != provider.ExecutionUnknown {
-		t.Fatalf("close result = %#v; native execution must stay unknown", result)
+	if !result.HandleClosed || !result.ResourcesReleased || result.ExecutionState != provider.ExecutionNone {
+		t.Fatalf("close result = %#v; the stopped own server ends native execution", result)
 	}
 	snapshot, _ := session.ObserveState(context.Background(), provider.ObserveStateRequest{Session: session.Ref()})
 	if snapshot.SessionState != provider.SessionClosed || snapshot.ActiveTurn.Present {
@@ -105,10 +105,10 @@ func TestRequireQuiescentStillRefusesActiveTurn(t *testing.T) {
 
 func TestCloseStopRule(t *testing.T) {
 	d := rules.DecideClose(rules.CloseFacts{SessionMatches: true, ActiveTurn: true, InterruptThenClose: true})
-	if d.Kind != rules.CloseStopOwnedClient || d.Reason == "" {
+	if d.Kind != rules.CloseStopClientAndServer || d.Reason == "" {
 		t.Fatalf("decision = %#v", d)
 	}
-	if d := rules.DecideClose(rules.CloseFacts{SessionMatches: true, InterruptThenClose: true}); d.Kind != rules.CloseAllowed {
+	if d := rules.DecideClose(rules.CloseFacts{SessionMatches: true, InterruptThenClose: true}); d.Kind != rules.CloseStopServer {
 		t.Fatalf("idle interrupt_then_close = %#v", d)
 	}
 }

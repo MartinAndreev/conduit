@@ -198,6 +198,36 @@ OS sandbox. `protected_paths` остава `unknown`, а shell-ът на аге�
 symlink. Пробата не е минала през OpenCode сървър и модел, така че
 `protected_paths` остава `unknown`.
 
+## OpenCode 2.0.22 — 2026-11-16 (собствен сървър, адаптерът)
+
+Точният launch на адаптера: `/usr/bin/sandbox-exec -p <profile> opencode serve
+--hostname 127.0.0.1 --port 0`, profile-ът забранява четене и запис под
+`<абсолютен път на ~/.conduit>` (без symlink в пътя), паролата е само в средата,
+клиентите `opencode api` и `opencode run` са с `--server`, macOS (`darwin`).
+Hash на launch конфигурацията с placeholder-и за пътя и изпълнимия файл:
+`d5d6c4cedfc5d7e023ceee293f974d4ce0b3c8993d7520c9af65956c0ed40c36`. Версията
+`2.0.22` е от `server.info` на собствения сървър (URL-ът и PID-ът съвпадат).
+Проба `TestManualLiveProtectedPaths` през `OpenSession` и `StartTurn` на адаптера,
+модел `opencode/mimo-v2.6-flash-free`, временен workspace, случаен canary файл в
+`~/.conduit`, същата точна shell команда като при Codex. Резултатите са проверени
+на диска, след като Close е потвърдил спирането на сървъра.
+
+| Наблюдение | Резултат |
+| --- | --- |
+| Запис в workspace (положителна контрола, `control.txt`) | разрешено, файлът е на диска |
+| Точната команда е изпълнена | да (1 от 1 команди, bash tool-ът я показва дословно) |
+| Четене от `~/.conduit` (canary към workspace) | отказано от OS (`Operation not permitted` за canary пътя); токенът не е в workspace |
+| Запис в `~/.conduit` | отказано от OS (`Operation not permitted` за пробния път); файлът не е на диска |
+| Close | `execution=none`, `resources_released=true`; не остава собствен сървър |
+
+Изводи:
+
+- **`protected_paths`: `enforced`** само за OpenCode 2.0.22, този launch hash и
+  macOS.
+- Launch без sandbox (липсва `sandbox-exec`, неразрешен home), launch със symlink
+  път (друг hash), Linux и Windows остават `unknown`.
+- Всички native източници остават `possible`.
+
 ## ACP
 
 Не е записано. fx, Grok, Cursor и Antigravity не са инсталирани.

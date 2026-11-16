@@ -35,6 +35,32 @@ type fakeControl struct {
 	// without an answer gets a query error.
 	released      map[string]releasedOutcome
 	releasedCalls []string
+
+	// info answers ServerInfo when set; otherwise the fake server's identity.
+	info        *ServerInfoObservation
+	infoErr     error
+	infoRequest ServerInfoRequest
+	// onInfo runs when ServerInfo is called.
+	onInfo func()
+}
+
+// fakeServerInfo is what the fake server's server.info reports.
+func fakeServerInfo() ServerInfoObservation {
+	return ServerInfoObservation{Version: "2.0.22", PID: fakeServerPID, URLs: []string{testServerURL}}
+}
+
+func (f *fakeControl) ServerInfo(_ context.Context, request ServerInfoRequest) (ServerInfoObservation, error) {
+	f.infoRequest = request
+	if f.onInfo != nil {
+		f.onInfo()
+	}
+	if f.infoErr != nil {
+		return ServerInfoObservation{}, f.infoErr
+	}
+	if f.info != nil {
+		return *f.info, nil
+	}
+	return fakeServerInfo(), nil
 }
 
 type releasedOutcome struct {
@@ -171,6 +197,9 @@ func (b *blockingControl) Prompt(context.Context, PromptRequest) (PromptResult, 
 func (b *blockingControl) QuerySteerDelivery(context.Context, SteerDeliveryQuery) (SteerDeliveryObservation, error) {
 	return SteerDeliveryObservation{}, errors.New("not queried in this test")
 }
+func (b *blockingControl) ServerInfo(context.Context, ServerInfoRequest) (ServerInfoObservation, error) {
+	return fakeServerInfo(), nil
+}
 func (b *blockingControl) QueryReleasedSteer(context.Context, SteerDeliveryQuery) (ReleasedSteerObservation, error) {
 	return ReleasedSteerObservation{}, errors.New("not queried in this test")
 }
@@ -178,7 +207,7 @@ func (b *blockingControl) QueryReleasedSteer(context.Context, SteerDeliveryQuery
 func TestOpenStartAndSteerPreserveBindings(t *testing.T) {
 	control := &fakeControl{}
 	launcher := &fakeLauncher{output: `{"type":"text","sessionID":"native-session","part":{"id":"text-1","text":"hello"}}` + "\n"}
-	adapter := New(Config{Control: control, Launcher: launcher, Now: func() time.Time { return time.Unix(1, 0) }, NewID: func(prefix string) (string, error) { return prefix + "-id", nil }})
+	adapter := New(withFakeServer(Config{Control: control, Launcher: launcher, Now: func() time.Time { return time.Unix(1, 0) }, NewID: func(prefix string) (string, error) { return prefix + "-id", nil }}))
 	assignment := provider.AssignmentRef{ProjectID: "p", RunID: "r", AttemptID: "a", AssignmentID: "x", Revision: 2}
 	model := provider.ModelSelection{ProviderID: "opencode", ModelID: "mimo-v2.5-free", Variant: "default"}
 	contract := provider.ResultContractRef{Requested: provider.SchemaNone}
@@ -210,7 +239,7 @@ func TestOpenStartAndSteerPreserveBindings(t *testing.T) {
 func TestSteerCancellationAfterDispatchIsUncertainAndDoesNotAdvanceRevision(t *testing.T) {
 	control := &fakeControl{promptSent: true, promptErr: context.Canceled}
 	launcher := &fakeLauncher{output: ""}
-	adapter := New(Config{Control: control, Launcher: launcher})
+	adapter := New(withFakeServer(Config{Control: control, Launcher: launcher}))
 	a := provider.AssignmentRef{AssignmentID: "x", Revision: 1}
 	m := provider.ModelSelection{ProviderID: "opencode", ModelID: "model"}
 	c := provider.ResultContractRef{Requested: provider.SchemaNone}
@@ -231,7 +260,7 @@ func TestSteerCancellationAfterDispatchIsUncertainAndDoesNotAdvanceRevision(t *t
 
 func TestStartTurnPreCancelledDoesNotLaunch(t *testing.T) {
 	control, launcher := &fakeControl{}, &fakeLauncher{}
-	adapter := New(Config{Control: control, Launcher: launcher})
+	adapter := New(withFakeServer(Config{Control: control, Launcher: launcher}))
 	a := provider.AssignmentRef{AssignmentID: "x", Revision: 1}
 	m := provider.ModelSelection{ProviderID: "opencode", ModelID: "model"}
 	c := provider.ResultContractRef{Requested: provider.SchemaNone}
@@ -250,7 +279,7 @@ func TestStartTurnPreCancelledDoesNotLaunch(t *testing.T) {
 func TestConcurrentSteerOnlyDispatchesOnce(t *testing.T) {
 	control := &blockingControl{entered: make(chan struct{}), release: make(chan struct{})}
 	launcher := &fakeLauncher{delay: time.Second}
-	adapter := New(Config{Control: control, Launcher: launcher})
+	adapter := New(withFakeServer(Config{Control: control, Launcher: launcher}))
 	a := provider.AssignmentRef{AssignmentID: "x", Revision: 1}
 	next := a
 	next.Revision = 2
@@ -276,7 +305,7 @@ func TestConcurrentSteerOnlyDispatchesOnce(t *testing.T) {
 
 func TestNonzeroExitKeepsSessionLostAndBlocksNewTurn(t *testing.T) {
 	control, launcher := &fakeControl{}, &fakeLauncher{result: processruntime.Result{ExitCode: 7, Err: errors.New("exit status 7")}}
-	adapter := New(Config{Control: control, Launcher: launcher})
+	adapter := New(withFakeServer(Config{Control: control, Launcher: launcher}))
 	a := provider.AssignmentRef{AssignmentID: "x", Revision: 1}
 	m := provider.ModelSelection{ProviderID: "opencode", ModelID: "model"}
 	c := provider.ResultContractRef{Requested: provider.SchemaNone}
@@ -301,7 +330,7 @@ func TestNonzeroExitKeepsSessionLostAndBlocksNewTurn(t *testing.T) {
 
 func TestOversizedJSONLMarksSessionLost(t *testing.T) {
 	control, launcher := &fakeControl{}, &fakeLauncher{output: strings.Repeat("x", 128) + "\n"}
-	adapter := New(Config{Control: control, Launcher: launcher, MaxEventLineBytes: 32})
+	adapter := New(withFakeServer(Config{Control: control, Launcher: launcher, MaxEventLineBytes: 32}))
 	a := provider.AssignmentRef{AssignmentID: "x", Revision: 1}
 	m := provider.ModelSelection{ProviderID: "opencode", ModelID: "model"}
 	c := provider.ResultContractRef{Requested: provider.SchemaNone}
@@ -316,7 +345,7 @@ func TestOversizedJSONLMarksSessionLost(t *testing.T) {
 
 func TestDetachRemainsClosedAfterRunEOF(t *testing.T) {
 	control, launcher := &fakeControl{}, &fakeLauncher{delay: 100 * time.Millisecond}
-	adapter := New(Config{Control: control, Launcher: launcher})
+	adapter := New(withFakeServer(Config{Control: control, Launcher: launcher}))
 	a := provider.AssignmentRef{AssignmentID: "x", Revision: 1}
 	m := provider.ModelSelection{ProviderID: "opencode", ModelID: "model"}
 	c := provider.ResultContractRef{Requested: provider.SchemaNone}
@@ -353,7 +382,7 @@ func TestNormalizeWithholdsFinalPhaseAndReasoningText(t *testing.T) {
 func TestCLIControlPromptUsesLowercasePayloadAndWorkspace(t *testing.T) {
 	launcher := &fakeLauncher{output: `{"data":{"id":"message-1","sessionID":"native-session"}}`}
 	control := &cliControl{executable: "opencode", launcher: launcher}
-	result, sent, err := control.Prompt(context.Background(), PromptRequest{SessionID: "native-session", Directory: "/work", Text: "fix", Delivery: "steer"})
+	result, sent, err := control.Prompt(context.Background(), PromptRequest{Server: testEndpoint, SessionID: "native-session", Directory: "/work", Text: "fix", Delivery: "steer"})
 	if err != nil || !sent || !result.Accepted {
 		t.Fatalf("prompt failed: %#v %v", result, err)
 	}
@@ -373,7 +402,7 @@ func TestCLIControlPromptUsesLowercasePayloadAndWorkspace(t *testing.T) {
 
 func TestSessionIDFailurePreventsNativeCreate(t *testing.T) {
 	control, launcher := &fakeControl{}, &fakeLauncher{}
-	adapter := New(Config{Control: control, Launcher: launcher, NewID: func(string) (string, error) { return "", errors.New("entropy unavailable") }})
+	adapter := New(withFakeServer(Config{Control: control, Launcher: launcher, NewID: func(string) (string, error) { return "", errors.New("entropy unavailable") }}))
 	_, err := adapter.OpenSession(context.Background(), provider.OpenSessionRequest{Assignment: provider.AssignmentRef{AssignmentID: "x"}, Workspace: provider.WorkspaceBinding{Path: "/work", Writable: true}, Model: provider.ModelSelection{ProviderID: "opencode", ModelID: "model"}, ResultContract: provider.ResultContractRef{Requested: provider.SchemaNone}, PermissionMode: provider.PermissionDeny})
 	if err == nil || control.create.Directory != "" || launcher.starts != 0 {
 		t.Fatalf("ID failure reached native side effect: create=%#v starts=%d err=%v", control.create, launcher.starts, err)

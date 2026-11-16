@@ -8,6 +8,7 @@ import (
 	"io"
 	"strconv"
 	"sync"
+	"time"
 
 	processruntime "github.com/MartinAndreev/conduit/internal/process"
 	"github.com/MartinAndreev/conduit/internal/sessions/provider"
@@ -30,7 +31,12 @@ var workspacePermissionRules = []struct{ action, effect string }{
 type cliControl struct {
 	executable string
 	launcher   processruntime.Launcher
+	// stopGrace bounds the cleanup wait of a cancelled command; zero uses
+	// defaultControlStopGrace.
+	stopGrace time.Duration
 }
+
+const defaultControlStopGrace = 2 * time.Second
 
 func (c *cliControl) CreateSession(ctx context.Context, request CreateSessionRequest) (CreateSessionResult, bool, error) {
 	payload := struct {
@@ -59,7 +65,7 @@ func (c *cliControl) CreateSession(ctx context.Context, request CreateSessionReq
 		}{Action: rule.action, Resource: "*", Effect: rule.effect})
 	}
 	raw, _ := json.Marshal(payload)
-	out, sent, err := c.call(ctx, request.Directory, "api", "session.create", "--data", string(raw))
+	out, sent, err := c.call(ctx, request.Server, request.Directory, "api", "session.create", "--data", string(raw))
 	if err != nil {
 		return CreateSessionResult{}, sent, err
 	}
@@ -76,6 +82,9 @@ func (c *cliControl) CreateSession(ctx context.Context, request CreateSessionReq
 	if json.Unmarshal(out, &response) != nil || response.Data.ID == "" {
 		return CreateSessionResult{}, true, errors.New("invalid session.create response")
 	}
+	if request.Server.carriesSecret(string(response.Data.ID)) {
+		return CreateSessionResult{}, true, errSecretInNativeID
+	}
 	observed := provider.ModelSelection{ProviderID: response.Data.Model.ProviderID, ModelID: response.Data.Model.ID, Variant: response.Data.Model.Variant}
 	return CreateSessionResult{SessionID: response.Data.ID, Model: observed, ModelVerified: observed.ProviderID != "" && observed.ModelID != ""}, true, nil
 }
@@ -86,7 +95,7 @@ func (c *cliControl) Prompt(ctx context.Context, request PromptRequest) (PromptR
 		Text     string `json:"text"`
 		Delivery string `json:"delivery"`
 	}{request.MessageID, request.Text, request.Delivery})
-	out, sent, err := c.call(ctx, request.Directory, "api", "session.prompt", "--param", "sessionID="+string(request.SessionID), "--data", string(raw))
+	out, sent, err := c.call(ctx, request.Server, request.Directory, "api", "session.prompt", "--param", "sessionID="+string(request.SessionID), "--data", string(raw))
 	if err != nil {
 		return PromptResult{}, sent, err
 	}
@@ -99,7 +108,28 @@ func (c *cliControl) Prompt(ctx context.Context, request PromptRequest) (PromptR
 	if json.Unmarshal(out, &response) != nil || response.Data == nil || response.Data.ID == "" || (response.Data.SessionID != "" && response.Data.SessionID != request.SessionID) {
 		return PromptResult{}, true, errors.New("invalid session.prompt response")
 	}
+	if request.Server.carriesSecret(string(response.Data.ID)) {
+		return PromptResult{}, true, errSecretInNativeID
+	}
 	return PromptResult{Accepted: true, ReceiptID: response.Data.ID}, true, nil
+}
+
+// ServerInfo is the read-only query step for the session's own server's
+// server.info. Only version, pid and urls are decoded.
+func (c *cliControl) ServerInfo(ctx context.Context, request ServerInfoRequest) (ServerInfoObservation, error) {
+	out, err := c.read(ctx, request.Server, request.Directory, "api", "server.info")
+	if err != nil {
+		return ServerInfoObservation{}, err
+	}
+	var response struct {
+		Version string   `json:"version"`
+		PID     int      `json:"pid"`
+		URLs    []string `json:"urls"`
+	}
+	if !out.succeeded || json.Unmarshal(out.stdout, &response) != nil {
+		return ServerInfoObservation{}, errors.New("OpenCode server.info failed")
+	}
+	return ServerInfoObservation{Version: response.Version, PID: response.PID, URLs: response.URLs}, nil
 }
 
 // QuerySteerDelivery is the named native query step for an unresolved steer.
@@ -182,7 +212,7 @@ func (c *cliControl) scanHistoryForMessage(ctx context.Context, query SteerDeliv
 		} else {
 			args = append(args, "--param", "cursor="+cursor)
 		}
-		out, err := c.read(ctx, query.Directory, args...)
+		out, err := c.read(ctx, query.Server, query.Directory, args...)
 		if err != nil {
 			return false, false, err
 		}
@@ -215,7 +245,7 @@ func (c *cliControl) scanHistoryForMessage(ctx context.Context, query SteerDeliv
 }
 
 func (c *cliControl) queryMessageInHistory(ctx context.Context, query SteerDeliveryQuery) (bool, error) {
-	out, err := c.read(ctx, query.Directory, "api", "session.message.get", "--param", "sessionID="+string(query.SessionID), "--param", "messageID="+query.MessageID)
+	out, err := c.read(ctx, query.Server, query.Directory, "api", "session.message.get", "--param", "sessionID="+string(query.SessionID), "--param", "messageID="+query.MessageID)
 	if err != nil {
 		return false, err
 	}
@@ -241,7 +271,7 @@ func (c *cliControl) queryMessageInHistory(ctx context.Context, query SteerDeliv
 }
 
 func (c *cliControl) queryMessageInInbox(ctx context.Context, query SteerDeliveryQuery) (bool, error) {
-	out, err := c.read(ctx, query.Directory, "api", "session.inbox.list", "--param", "sessionID="+string(query.SessionID))
+	out, err := c.read(ctx, query.Server, query.Directory, "api", "session.inbox.list", "--param", "sessionID="+string(query.SessionID))
 	if err != nil {
 		return false, err
 	}
@@ -270,13 +300,13 @@ type commandOutput struct {
 
 // read runs a read-only control command. It fails only when the command
 // could not run to completion; a nonzero exit is reported in the output.
-func (c *cliControl) read(ctx context.Context, dir string, args ...string) (commandOutput, error) {
-	out, _, err := c.run(ctx, dir, args...)
+func (c *cliControl) read(ctx context.Context, server ServerEndpoint, dir string, args ...string) (commandOutput, error) {
+	out, _, err := c.run(ctx, server, dir, args...)
 	return out, err
 }
 
-func (c *cliControl) call(ctx context.Context, dir string, args ...string) ([]byte, bool, error) {
-	out, sent, err := c.run(ctx, dir, args...)
+func (c *cliControl) call(ctx context.Context, server ServerEndpoint, dir string, args ...string) ([]byte, bool, error) {
+	out, sent, err := c.run(ctx, server, dir, args...)
 	if err != nil {
 		return nil, sent, err
 	}
@@ -286,13 +316,17 @@ func (c *cliControl) call(ctx context.Context, dir string, args ...string) ([]by
 	return out.stdout, true, nil
 }
 
-// run starts one owned control command, drains both pipes and waits for it.
-// sent is false only when the command never started.
-func (c *cliControl) run(ctx context.Context, dir string, args ...string) (commandOutput, bool, error) {
+// run starts one owned control command against the session's own server,
+// drains both pipes and waits for it. args starts with the subcommand; the
+// server flags follow it. sent is false only when the command never started.
+func (c *cliControl) run(ctx context.Context, server ServerEndpoint, dir string, args ...string) (commandOutput, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return commandOutput{}, false, err
 	}
-	proc, err := c.launcher.Start(processruntime.Spec{Path: c.executable, Args: args, Dir: dir})
+	if !server.usable() {
+		return commandOutput{}, false, errNoServer
+	}
+	proc, err := c.launcher.Start(clientSpec(c.executable, server, dir, args[0], args[1:]...))
 	if err != nil {
 		return commandOutput{}, false, err
 	}
@@ -301,15 +335,46 @@ func (c *cliControl) run(ctx context.Context, dir string, args ...string) (comma
 	wg.Add(2)
 	go func() { defer wg.Done(); _, _ = io.Copy(&stdout, proc.Stdout()) }()
 	go func() { defer wg.Done(); _, _ = io.Copy(&stderr, proc.Stderr()) }()
+	drained := make(chan struct{})
+	go func() { wg.Wait(); close(drained) }()
+	// One cleanup owner per command; it is used only when the caller stops
+	// waiting, and then stays observable if the cleanup does not finish.
+	owner := processruntime.NewCleanupOwnerWithDrain(proc, drained)
 	done := make(chan processruntime.Result, 1)
-	go func() { result := proc.Wait(); wg.Wait(); done <- result }()
+	go func() { result := proc.Wait(); <-drained; done <- result }()
 	select {
 	case <-ctx.Done():
-		_ = proc.KillTree()
-		return commandOutput{}, true, ctx.Err()
+		return commandOutput{}, true, errors.Join(ctx.Err(), c.abandon(owner))
 	case result := <-done:
 		return commandOutput{stdout: stdout.Bytes(), succeeded: result.Err == nil && result.ExitCode == 0}, true, nil
 	}
+}
+
+// abandon terminates a command the caller stopped waiting for and waits for
+// its cleanup within the stop grace. An unfinished cleanup is returned as a
+// *CleanupPendingError whose Owner keeps it observable; a finished one
+// returns only a refused termination.
+func (c *cliControl) abandon(owner *processruntime.CleanupOwner) error {
+	owner.BeginCleanup()
+	grace := c.stopGrace
+	if grace <= 0 {
+		grace = defaultControlStopGrace
+	}
+	waitCtx, cancel := context.WithTimeout(context.Background(), grace)
+	defer cancel()
+	state, err := owner.Await(waitCtx)
+	if err != nil {
+		return &CleanupPendingError{Owner: owner, Cause: errors.New("cancelled OpenCode control command was not confirmed stopped")}
+	}
+	return state.TreeTerminationErr
+}
+
+// clientSpec is one client command of the session's own server: the
+// subcommand, the server flags, then the command's arguments, with the
+// password appended to the inherited environment.
+func clientSpec(executable string, server ServerEndpoint, dir, subcommand string, args ...string) processruntime.Spec {
+	full := append(append([]string{subcommand}, server.clientArgs()...), args...)
+	return processruntime.Spec{Path: executable, Args: full, Dir: dir, Env: server.clientEnv()}
 }
 
 type limitedBuffer struct{ bytes.Buffer }

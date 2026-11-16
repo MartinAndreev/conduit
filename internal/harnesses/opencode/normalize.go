@@ -35,14 +35,21 @@ type nativeEvent struct {
 	} `json:"part"`
 }
 
+// normalizeLine turns one native JSONL line into events. Each line is a
+// complete snapshot, so the password cannot be split across events. It is
+// redacted from the raw line (it is hex, so JSON never escapes it) and again
+// from every decoded field (redactEvent), which also covers a JSON-escaped
+// spelling in any field, including IDs and the tool input.
 func (s *session) normalizeLine(line []byte, turn provider.TurnRef) {
+	line = []byte(s.redact(string(line)))
 	var event nativeEvent
 	if err := json.Unmarshal(line, &event); err != nil {
 		s.emit(provider.ProtocolWarningEvent{Code: "invalid_jsonl", Detail: boundedtext.String("OpenCode emitted a non-JSON event", s.config.MaxTextBytes)})
 		return
 	}
+	s.redactEvent(&event)
 	if event.SessionID != "" && provider.NativeSessionID(event.SessionID) != s.nativeSession {
-		s.emit(provider.ProtocolWarningEvent{Code: "session_mismatch", Detail: boundedtext.String("OpenCode event referenced a different session", s.config.MaxTextBytes), OffendingNativeKind: event.Type})
+		s.emit(provider.ProtocolWarningEvent{Code: "session_mismatch", Detail: boundedtext.String("OpenCode event referenced a different session", s.config.MaxTextBytes), OffendingNativeKind: s.redact(event.Type)})
 		return
 	}
 	switch event.Type {
@@ -56,7 +63,7 @@ func (s *session) normalizeLine(line []byte, turn provider.TurnRef) {
 				return
 			}
 		}
-		value := boundedtext.String(event.Part.Text, s.config.MaxTextBytes)
+		value := boundedtext.String(s.redact(event.Part.Text), s.config.MaxTextBytes)
 		s.emit(provider.AssistantTextEvent{Phase: provider.AssistantPhaseUnknown, Update: provider.TextSegmentUpdate{ItemID: provider.ItemID(id), SegmentID: provider.SegmentID(id), Text: value.Text, Mode: provider.UpdateSnapshot, Version: 1, Truncated: value.Truncated, OriginalBytes: value.OriginalBytes}})
 	case "reasoning":
 		// OpenCode exposes reasoning text, but experiments did not establish that it
@@ -76,7 +83,7 @@ func (s *session) normalizeLine(line []byte, turn provider.TurnRef) {
 	case "step_start", "step_finish":
 		return
 	default:
-		s.emit(provider.ProtocolWarningEvent{Code: "unsupported_native_event", Detail: boundedtext.String("unsupported OpenCode event was not normalized", s.config.MaxTextBytes), OffendingNativeKind: event.Type})
+		s.emit(provider.ProtocolWarningEvent{Code: "unsupported_native_event", Detail: boundedtext.String("unsupported OpenCode event was not normalized", s.config.MaxTextBytes), OffendingNativeKind: s.redact(event.Type)})
 	}
 	_ = turn
 }
@@ -92,8 +99,8 @@ func (s *session) normalizeTool(event nativeEvent) {
 		}
 	}
 	callID := provider.NativeToolCallID(id)
-	args := boundedtext.String(string(event.Part.State.Input), s.config.MaxTextBytes)
-	s.emit(provider.ToolStartedEvent{ToolCallID: callID, ToolName: event.Part.Tool, Arguments: args})
+	args := boundedtext.String(s.redact(string(event.Part.State.Input)), s.config.MaxTextBytes)
+	s.emit(provider.ToolStartedEvent{ToolCallID: callID, ToolName: s.redact(event.Part.Tool), Arguments: args})
 	state := event.Part.State
 	commandTool := event.Part.Tool == "shell" || event.Part.Tool == "bash"
 	errorText := nativeToolError(state.Error)
@@ -102,7 +109,7 @@ func (s *session) normalizeTool(event nativeEvent) {
 		facts.ExitKnown, facts.ExitCode = true, *state.Metadata.Exit
 	}
 	decision := rules.DecideToolOutcome(facts)
-	outputText := toolOutputText(state.Output, errorText)
+	outputText := s.redact(toolOutputText(state.Output, errorText))
 	output := boundedtext.String(outputText, s.config.MaxTextBytes)
 	s.emit(provider.ToolCompletedEvent{ToolCallID: callID, Outcome: toolOutcome(decision.Kind), Output: output})
 	var input map[string]json.RawMessage
@@ -111,7 +118,7 @@ func (s *session) normalizeTool(event nativeEvent) {
 		var command string
 		_ = json.Unmarshal(input["command"], &command)
 		commandID := provider.NativeCommandID(id)
-		s.emit(provider.CommandStartedEvent{CommandID: commandID, Display: boundedtext.String(command, s.config.MaxTextBytes), CWD: s.workspace})
+		s.emit(provider.CommandStartedEvent{CommandID: commandID, Display: boundedtext.String(s.redact(command), s.config.MaxTextBytes), CWD: s.workspace})
 		if outputText != "" {
 			s.emit(provider.CommandOutputEvent{CommandID: commandID, Stream: provider.CommandStreamUnknown, Output: output, Mode: provider.UpdateSnapshot})
 		}
@@ -122,7 +129,7 @@ func (s *session) normalizeTool(event nativeEvent) {
 		s.emit(provider.CommandCompletedEvent{CommandID: commandID, ExitCode: exit, Output: output})
 	}
 	if event.Part.Tool == "write" || event.Part.Tool == "edit" || event.Part.Tool == "read" {
-		path := toolFilePath(input)
+		path := s.redact(toolFilePath(input))
 		op := provider.FileUnknown
 		switch event.Part.Tool {
 		case "write":

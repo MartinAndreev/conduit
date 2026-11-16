@@ -60,3 +60,29 @@ func TestDecideProtectedPathsPolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestDecideLaunchProtectedPaths(t *testing.T) {
+	evidence := []provider.ProtectedPathsEvidence{{ReadDenied: true, WriteDenied: true, HarnessVersion: "1.0.0", LaunchConfigHash: "hash", Platform: "darwin"}}
+	facts := provider.ProtectedPathsFacts{HarnessVersion: "1.0.0", LaunchConfigHash: "hash", Platform: "darwin", Evidence: evidence}
+	applied := SandboxDecision{Kind: SandboxApply, Reason: "applied"}
+	accepted := ServerInfoDecision{Kind: ServerInfoAccepted, Reason: "accepted", Version: "1.0.0"}
+	if got := DecideLaunchProtectedPaths(applied, accepted, facts); got.Kind != provider.ProtectedPathsEnforced {
+		t.Fatalf("sandboxed matching launch = %+v", got)
+	}
+	refused := DecideSandbox(SandboxFacts{Darwin: true})
+	got := DecideLaunchProtectedPaths(refused, accepted, facts)
+	if got.Kind != provider.ProtectedPathsUnknown || got.Reason != refused.Reason {
+		t.Fatalf("unsandboxed launch = %+v, want unknown with %q", got, refused.Reason)
+	}
+	unidentified := DecideServerInfo(ServerInfoFacts{QueryFailed: true})
+	if got := DecideLaunchProtectedPaths(applied, unidentified, facts); got.Kind != provider.ProtectedPathsUnknown || got.Reason != unidentified.Reason {
+		t.Fatalf("unidentified server = %+v, want unknown with %q", got, unidentified.Reason)
+	}
+	if got := DecideLaunchProtectedPaths(refused, unidentified, facts); got.Reason != refused.Reason {
+		t.Fatalf("sandbox refusal must take precedence: %+v", got)
+	}
+	facts.LaunchConfigHash = "other"
+	if got := DecideLaunchProtectedPaths(applied, accepted, facts); got.Kind != provider.ProtectedPathsUnknown {
+		t.Fatalf("other launch = %+v", got)
+	}
+}

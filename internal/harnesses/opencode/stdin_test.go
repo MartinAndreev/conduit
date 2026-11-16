@@ -89,7 +89,7 @@ func openEOFSession(t *testing.T, launcher processruntime.Launcher) (provider.Se
 	t.Helper()
 	assignment := provider.AssignmentRef{AssignmentID: "fixture", Revision: 1}
 	contract := provider.ResultContractRef{Requested: provider.SchemaNone}
-	opened, err := New(Config{Control: &fakeControl{}, Launcher: launcher}).OpenSession(context.Background(), provider.OpenSessionRequest{Assignment: assignment, Workspace: provider.WorkspaceBinding{Path: t.TempDir(), Writable: true}, Model: provider.ModelSelection{ProviderID: "fixture", ModelID: "fixture"}, ResultContract: contract, PermissionMode: provider.PermissionDeny})
+	opened, err := New(withFakeServer(Config{Control: &fakeControl{}, Launcher: launcher})).OpenSession(context.Background(), provider.OpenSessionRequest{Assignment: assignment, Workspace: provider.WorkspaceBinding{Path: t.TempDir(), Writable: true}, Model: provider.ModelSelection{ProviderID: "fixture", ModelID: "fixture"}, ResultContract: contract, PermissionMode: provider.PermissionDeny})
 	if err != nil {
 		t.Fatal(err)
 	}

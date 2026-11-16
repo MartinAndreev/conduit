@@ -80,18 +80,18 @@ func TestCLIControlQuerySteerDelivery(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			launcher := &scriptedLauncher{responses: tt.responses}
 			control := &cliControl{executable: "opencode", launcher: launcher}
-			got, err := control.QuerySteerDelivery(context.Background(), SteerDeliveryQuery{SessionID: "ses_1", Directory: "/work", MessageID: steerQueryMessage})
+			got, err := control.QuerySteerDelivery(context.Background(), SteerDeliveryQuery{Server: testEndpoint, SessionID: "ses_1", Directory: "/work", MessageID: steerQueryMessage})
 			if (err != nil) != tt.wantErr || got != tt.want {
 				t.Fatalf("observation = %#v err = %v", got, err)
 			}
 			if len(launcher.specs) != tt.commands {
 				t.Fatalf("commands = %d, want %d", len(launcher.specs), tt.commands)
 			}
-			wantGet := []string{"api", "session.message.get", "--param", "sessionID=ses_1", "--param", "messageID=" + steerQueryMessage}
+			wantGet := []string{"api", "--server", testServerURL, "session.message.get", "--param", "sessionID=ses_1", "--param", "messageID=" + steerQueryMessage}
 			if !slices.Equal(launcher.specs[0].Args, wantGet) || launcher.specs[0].Dir != "/work" {
 				t.Fatalf("message query = %q in %q", launcher.specs[0].Args, launcher.specs[0].Dir)
 			}
-			if len(launcher.specs) > 1 && !slices.Equal(launcher.specs[1].Args, []string{"api", "session.inbox.list", "--param", "sessionID=ses_1"}) {
+			if len(launcher.specs) > 1 && !slices.Equal(launcher.specs[1].Args, []string{"api", "--server", testServerURL, "session.inbox.list", "--param", "sessionID=ses_1"}) {
 				t.Fatalf("inbox query = %q", launcher.specs[1].Args)
 			}
 			if len(launcher.specs) > 2 && !slices.Equal(launcher.specs[2].Args, wantGet) {
@@ -136,15 +136,15 @@ func TestCLIControlQueryReleasedSteer(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			launcher := &scriptedLauncher{responses: tt.responses}
 			control := &cliControl{executable: "opencode", launcher: launcher}
-			got, err := control.QueryReleasedSteer(context.Background(), SteerDeliveryQuery{SessionID: "ses_1", Directory: "/work", MessageID: steerQueryMessage})
+			got, err := control.QueryReleasedSteer(context.Background(), SteerDeliveryQuery{Server: testEndpoint, SessionID: "ses_1", Directory: "/work", MessageID: steerQueryMessage})
 			if (err != nil) != tt.wantErr || got != tt.want {
 				t.Fatalf("observation = %#v err = %v", got, err)
 			}
-			first := []string{"api", "session.message.list", "--param", "sessionID=ses_1", "--param", "limit=100", "--param", "order=desc"}
+			first := []string{"api", "--server", testServerURL, "session.message.list", "--param", "sessionID=ses_1", "--param", "limit=100", "--param", "order=desc"}
 			if !slices.Equal(launcher.specs[0].Args, first) {
 				t.Fatalf("first page args = %q", launcher.specs[0].Args)
 			}
-			if tt.name == "message on a later page" && !slices.Equal(launcher.specs[1].Args, []string{"api", "session.message.list", "--param", "sessionID=ses_1", "--param", "limit=100", "--param", "cursor=c1"}) {
+			if tt.name == "message on a later page" && !slices.Equal(launcher.specs[1].Args, []string{"api", "--server", testServerURL, "session.message.list", "--param", "sessionID=ses_1", "--param", "limit=100", "--param", "cursor=c1"}) {
 				t.Fatalf("second page args = %q", launcher.specs[1].Args)
 			}
 		})
@@ -154,7 +154,7 @@ func TestCLIControlQueryReleasedSteer(t *testing.T) {
 func TestCLIControlPromptSendsNativeMessageID(t *testing.T) {
 	launcher := &fakeLauncher{output: `{"data":{"id":"` + steerQueryMessage + `","sessionID":"native-session"}}`}
 	control := &cliControl{executable: "opencode", launcher: launcher}
-	if _, _, err := control.Prompt(context.Background(), PromptRequest{SessionID: "native-session", Directory: "/work", MessageID: steerQueryMessage, Text: "fix", Delivery: "steer"}); err != nil {
+	if _, _, err := control.Prompt(context.Background(), PromptRequest{Server: testEndpoint, SessionID: "native-session", Directory: "/work", MessageID: steerQueryMessage, Text: "fix", Delivery: "steer"}); err != nil {
 		t.Fatal(err)
 	}
 	if !containsPair(launcher.spec.Args, "--data", `{"id":"`+steerQueryMessage+`","text":"fix","delivery":"steer"}`) {
@@ -176,7 +176,7 @@ func newReconcileFixture(t *testing.T, control Control, runFor time.Duration, co
 	launcher := &fakeLauncher{output: `{"type":"text","sessionID":"native-session","part":{"id":"text-1","text":"hello"}}` + "\n", delay: runFor}
 	var ids sync.Mutex
 	next := 0
-	adapter := New(Config{Control: control, Launcher: launcher, Now: func() time.Time { return time.UnixMilli(1_700_000_000_000) }, NewID: func(prefix string) (string, error) {
+	adapter := New(withFakeServer(Config{Control: control, Launcher: launcher, Now: func() time.Time { return time.UnixMilli(1_700_000_000_000) }, NewID: func(prefix string) (string, error) {
 		var id string
 		_ = lockscope.WithMutexLock(&ids, func() error {
 			next++
@@ -184,7 +184,7 @@ func newReconcileFixture(t *testing.T, control Control, runFor time.Duration, co
 			return nil
 		})
 		return id, nil
-	}})
+	}}))
 	assignment := provider.AssignmentRef{ProjectID: "p", RunID: "r", AttemptID: "a", AssignmentID: "x", Revision: 1}
 	contract := provider.ResultContractRef{Requested: provider.SchemaNone}
 	opened, err := adapter.OpenSession(context.Background(), provider.OpenSessionRequest{Assignment: assignment, Workspace: provider.WorkspaceBinding{Path: "/work", Writable: true}, Model: provider.ModelSelection{ProviderID: "opencode", ModelID: "m"}, ResultContract: contract, PermissionMode: provider.PermissionDeny})

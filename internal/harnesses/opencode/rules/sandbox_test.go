@@ -28,6 +28,15 @@ func TestDecideSandbox(t *testing.T) {
 		{"DEL", with(func(f *SandboxFacts) { f.ProtectedPath = "/Users/a\x7fb/.conduit" }), SandboxPathInadmissible},
 		{"relative", with(func(f *SandboxFacts) { f.ProtectedPath = "Users/u/.conduit" }), SandboxPathInadmissible},
 		{"empty path", with(func(f *SandboxFacts) { f.ProtectedPath = "" }), SandboxPathInadmissible},
+		{"symlink resolved", with(func(f *SandboxFacts) { f.ResolvedProtectedPath = "/Volumes/home/u/.conduit" }), SandboxApply},
+		{"resolved path with quote", with(func(f *SandboxFacts) { f.ResolvedProtectedPath = `/Volumes/a"b/.conduit` }), SandboxPathInadmissible},
+		{"resolved path relative", with(func(f *SandboxFacts) { f.ResolvedProtectedPath = "Volumes/u/.conduit" }), SandboxPathInadmissible},
+		{"inadmissible literal with good resolved", with(func(f *SandboxFacts) {
+			f.ProtectedPath, f.ResolvedProtectedPath = `/Users/a\b/.conduit`, "/Volumes/u/.conduit"
+		}), SandboxPathInadmissible},
+		{"resolution failed", with(func(f *SandboxFacts) { f.SymlinkResolutionFailed = true }), SandboxPathUnresolved},
+		{"resolution failed before inadmissible", with(func(f *SandboxFacts) { f.SymlinkResolutionFailed, f.ProtectedPath = true, "rel" }), SandboxPathUnresolved},
+		{"home unresolved before resolution failure", with(func(f *SandboxFacts) { f.HomeResolved, f.SymlinkResolutionFailed = false, true }), SandboxHomeUnresolved},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

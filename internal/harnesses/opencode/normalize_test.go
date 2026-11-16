@@ -134,7 +134,7 @@ func TestAbortedToolIsCancelled(t *testing.T) {
 
 func TestStartTurnSeparatesPromptFromFlags(t *testing.T) {
 	control, launcher := &fakeControl{}, &fakeLauncher{}
-	adapter := New(Config{Control: control, Launcher: launcher})
+	adapter := New(withFakeServer(Config{Control: control, Launcher: launcher}))
 	a := provider.AssignmentRef{AssignmentID: "x", Revision: 1}
 	m := provider.ModelSelection{ProviderID: "opencode", ModelID: "model"}
 	c := provider.ResultContractRef{Requested: provider.SchemaNone}
@@ -146,7 +146,7 @@ func TestStartTurnSeparatesPromptFromFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"run", "--session", "native-session", "--format", "json", "--model", "opencode/model", "--", "--help me"}
+	want := []string{"run", "--server", testServerURL, "--session", "native-session", "--format", "json", "--model", "opencode/model", "--", "--help me"}
 	if !slices.Equal(launcher.spec.Args, want) {
 		t.Fatalf("run args = %q, want %q", launcher.spec.Args, want)
 	}
@@ -155,7 +155,7 @@ func TestStartTurnSeparatesPromptFromFlags(t *testing.T) {
 func TestCLIControlCreateSessionSendsWorkspacePermissionRules(t *testing.T) {
 	launcher := &fakeLauncher{output: `{"data":{"id":"native-session","model":{"providerID":"opencode","id":"model"}}}`}
 	control := &cliControl{executable: "opencode", launcher: launcher}
-	_, _, err := control.CreateSession(context.Background(), CreateSessionRequest{Directory: "/work", Model: provider.ModelSelection{ProviderID: "opencode", ModelID: "model"}, Title: "t"})
+	_, _, err := control.CreateSession(context.Background(), CreateSessionRequest{Server: testEndpoint, Directory: "/work", Model: provider.ModelSelection{ProviderID: "opencode", ModelID: "model"}, Title: "t"})
 	if err != nil {
 		t.Fatal(err)
 	}

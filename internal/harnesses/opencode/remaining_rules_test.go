@@ -48,8 +48,8 @@ func TestCloseRuleAndRefusalLeaveHandleOpen(t *testing.T) {
 	}{
 		{"stale precedes active", rules.CloseFacts{ActiveTurn: true}, rules.CloseBindingStale},
 		{"active requires detach", rules.CloseFacts{SessionMatches: true, ActiveTurn: true}, rules.CloseActiveWorkRequiresDetach},
-		{"detach", rules.CloseFacts{SessionMatches: true, ActiveTurn: true, ExplicitDetach: true}, rules.CloseAllowed},
-		{"idle", rules.CloseFacts{SessionMatches: true}, rules.CloseAllowed},
+		{"detach", rules.CloseFacts{SessionMatches: true, ActiveTurn: true, ExplicitDetach: true}, rules.CloseDetachStopsServer},
+		{"idle", rules.CloseFacts{SessionMatches: true}, rules.CloseStopServer},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -66,7 +66,7 @@ func TestCloseRuleAndRefusalLeaveHandleOpen(t *testing.T) {
 				r.Policy = provider.CloseExplicitDetach
 			}
 			got, err := s.Close(context.Background(), r)
-			if tc.want != rules.CloseAllowed {
+			if !d.Closes() {
 				var e *provider.ProviderError
 				if !errors.As(err, &e) || e.Detail != d.Reason || s.closed || s.state == provider.SessionClosed {
 					t.Fatalf("refusal=%#v state=%s", e, s.state)
@@ -75,6 +75,7 @@ func TestCloseRuleAndRefusalLeaveHandleOpen(t *testing.T) {
 					t.Fatalf("refusal finished broker: %v", err)
 				}
 			} else if err != nil || !got.HandleClosed || got.ExecutionState != provider.ExecutionUnknown || got.ResourcesReleased || !s.closed {
+				// This session owns no server, so nothing proves execution ended.
 				t.Fatalf("close=%#v err=%v", got, err)
 			}
 		})
@@ -105,7 +106,7 @@ func TestResultEnforcementRulesAndOpenRefusal(t *testing.T) {
 			}
 			c := &fakeControl{}
 			ids := 0
-			a := New(Config{Control: c, NewID: func(string) (string, error) { ids++; return "id", nil }})
+			a := New(withFakeServer(Config{Control: c, NewID: func(string) (string, error) { ids++; return "id", nil }}))
 			_, err = a.OpenSession(context.Background(), provider.OpenSessionRequest{Model: provider.ModelSelection{ProviderID: "p", ModelID: "m"}, Workspace: provider.WorkspaceBinding{Path: "/work", Writable: true}, PermissionMode: provider.PermissionDeny, ResultContract: tc.contract})
 			var e *provider.ProviderError
 			if !errors.As(err, &e) || e.Code != tc.code || e.Operation != provider.OperationOpenSession || e.RemoteEffect != provider.RemoteEffectNotSent || e.Retry != provider.RetryNever || e.Cause != nil {

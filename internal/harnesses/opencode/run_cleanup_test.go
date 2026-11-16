@@ -18,7 +18,7 @@ import (
 func runEndingSession(t *testing.T, launcher *fakeLauncher, config Config) (*fakeProcess, provider.SessionState) {
 	t.Helper()
 	config.Control, config.Launcher = &fakeControl{}, launcher
-	adapter := New(config)
+	adapter := New(withFakeServer(config))
 	assignment := provider.AssignmentRef{ProjectID: "p", RunID: "r", AttemptID: "a", AssignmentID: "x", Revision: 1}
 	contract := provider.ResultContractRef{Requested: provider.SchemaNone}
 	opened, err := adapter.OpenSession(context.Background(), provider.OpenSessionRequest{Assignment: assignment, Workspace: provider.WorkspaceBinding{Path: "/work", Writable: true}, Model: provider.ModelSelection{ProviderID: "opencode", ModelID: "m"}, ResultContract: contract, PermissionMode: provider.PermissionDeny})
@@ -138,7 +138,7 @@ func (p *heldRunProcess) Wait() processruntime.Result {
 
 func startHeldRun(t *testing.T, launcher *heldRunLauncher) (provider.Session, provider.EventStream) {
 	t.Helper()
-	adapter := New(Config{Control: &fakeControl{}, Launcher: launcher})
+	adapter := New(withFakeServer(Config{Control: &fakeControl{}, Launcher: launcher}))
 	assignment := provider.AssignmentRef{ProjectID: "p", RunID: "r", AttemptID: "a", AssignmentID: "x", Revision: 1}
 	contract := provider.ResultContractRef{Requested: provider.SchemaNone}
 	opened, err := adapter.OpenSession(context.Background(), provider.OpenSessionRequest{Assignment: assignment, Workspace: provider.WorkspaceBinding{Path: "/work", Writable: true}, Model: provider.ModelSelection{ProviderID: "opencode", ModelID: "m"}, ResultContract: contract, PermissionMode: provider.PermissionDeny})

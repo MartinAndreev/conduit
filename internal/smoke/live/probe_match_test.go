@@ -29,9 +29,39 @@ func TestCommandRequested(t *testing.T) {
 		{"split across args", provider.CommandStartedEvent{Argv: []string{"echo OK > control.txt;", "cat '/h/.conduit/c' > read.txt"}}, false},
 	}
 	for _, tt := range tests {
-		if got := commandRequested(tt.started, command); got != tt.want {
+		if got := commandRequested("codex", tt.started, command); got != tt.want {
 			t.Fatalf("%s: commandRequested = %t, want %t", tt.name, got, tt.want)
 		}
+	}
+}
+
+func TestCommandRequestedOpenCode(t *testing.T) {
+	const command = "echo OK > control.txt; cat '/h/.conduit/c' > read.txt; echo PROBE > '/h/.conduit/p'; true"
+	tests := []struct {
+		name    string
+		started provider.CommandStartedEvent
+		want    bool
+	}{
+		{"exact script", provider.CommandStartedEvent{Display: provider.BoundedText{Text: command}}, true},
+		{"truncated", provider.CommandStartedEvent{Display: provider.BoundedText{Text: command, Truncated: true}}, false},
+		{"with more", provider.CommandStartedEvent{Display: provider.BoundedText{Text: command + "; echo extra"}}, false},
+		{"prefixed", provider.CommandStartedEvent{Display: provider.BoundedText{Text: "cd /tmp && " + command}}, false},
+		{"in a comment", provider.CommandStartedEvent{Display: provider.BoundedText{Text: "echo OK # " + command}}, false},
+		{"in a branch", provider.CommandStartedEvent{Display: provider.BoundedText{Text: "false && " + command}}, false},
+		{"trailing newline", provider.CommandStartedEvent{Display: provider.BoundedText{Text: command + "\n"}}, false},
+		{"leading space", provider.CommandStartedEvent{Display: provider.BoundedText{Text: " " + command}}, false},
+		{"shell display form", provider.CommandStartedEvent{Display: provider.BoundedText{Text: "/bin/zsh -lc \"" + command + "\""}}, false},
+		{"argv present", provider.CommandStartedEvent{Argv: []string{"/bin/sh", "-c", command}, Display: provider.BoundedText{Text: command}}, false},
+		{"empty", provider.CommandStartedEvent{}, false},
+	}
+	for _, tt := range tests {
+		if got := commandRequested("opencode", tt.started, command); got != tt.want {
+			t.Fatalf("%s: commandRequested = %t, want %t", tt.name, got, tt.want)
+		}
+	}
+	// A bare script is not the Codex display form.
+	if commandRequested("codex", provider.CommandStartedEvent{Display: provider.BoundedText{Text: command}}, command) {
+		t.Fatal("codex counted a bare script")
 	}
 }
 
@@ -56,7 +86,7 @@ func TestOSDeniedForAttributesEachPath(t *testing.T) {
 func TestCommandRequestedRefusesAmbiguousDisplay(t *testing.T) {
 	for _, command := range []string{"echo \"x\"", "echo $HOME", "echo `id`", "echo a\\b"} {
 		started := provider.CommandStartedEvent{Display: provider.BoundedText{Text: "/bin/zsh -lc \"" + command + "\""}}
-		if commandRequested(started, command) {
+		if commandRequested("codex", started, command) {
 			t.Fatalf("ambiguous display counted for %q", command)
 		}
 	}
