@@ -51,7 +51,7 @@ func TestWindowsOwnedJobKillsDescendants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.KillTree()
+	ownProcess(t, p)
 	_ = p.Stdin().Close()
 	line := make(chan string, 1)
 	go func() {
@@ -136,7 +136,7 @@ func TestWindowsRootExitIsObservedWhileDescendantHoldsPipes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.KillTree()
+	ownProcess(t, p)
 	_ = p.Stdin().Close()
 	go io.Copy(io.Discard, p.Stdout())
 	go io.Copy(io.Discard, p.Stderr())

@@ -305,12 +305,17 @@ func (s Service) discover(ctx context.Context, o *operation, c configuration.Con
 		if ctx.Err() != nil {
 			return nil, errors.Join(ctx.Err(), err)
 		}
-		if err != nil { // Unexpected infrastructure failure is safely represented, not raw output.
+		// A platform without safe probe cleanup reports the executable found
+		// with an unknown version and a specific warning; discovery continues.
+		unsupported := errors.Is(err, ErrProbePlatformUnsupported)
+		if err != nil && !unsupported { // Unexpected infrastructure failure is safely represented, not raw output.
 			observation.Kind = configuration.ProbeFailed
 		}
 		observations[h] = observation
 		o.snapshot.Observations = append(o.snapshot.Observations, HarnessObservation{h, observation, Capabilities{"unknown", "unknown", "unknown"}})
-		if observation.Kind != configuration.Found || observation.Version == "" {
+		if unsupported {
+			o.snapshot.Diagnostics = append(o.snapshot.Diagnostics, Diagnostic{Code: "harness_probe_unsupported_platform", Severity: Warning, Step: DiscoverHarnesses, Harness: h, Details: "The version check is not run on this platform because it cannot guarantee safe cleanup of the check's processes; account and model capabilities remain unknown."})
+		} else if observation.Kind != configuration.Found || observation.Version == "" {
 			o.snapshot.Diagnostics = append(o.snapshot.Diagnostics, Diagnostic{Code: discoveryCode(observation, c.Harnesses[h].Executable != ""), Severity: Warning, Step: DiscoverHarnesses, Harness: h, Details: "Local discovery did not establish a version; account and model capabilities remain unknown."})
 		}
 		o.emit()

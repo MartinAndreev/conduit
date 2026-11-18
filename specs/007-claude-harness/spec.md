@@ -146,7 +146,8 @@ unresolved, събитията са без атрибуция.
   - `interrupt_then_close` праща interrupt, затваря stdin и изчаква `StopGrace`
     (по подразбиране 2 s);
   - `require_quiescent` е отказан.
-- След това адаптерът убива целия process group и reap-ва.
+- След това адаптерът убива целия process group и финализира процеса
+  (`process.Finalize`: reap-ът на root-а; `Wait` не reap-ва).
 - EOF на stdout, грешен JSON или неочакван exit водят до `SessionLost`, без
   измислен native резултат.
 

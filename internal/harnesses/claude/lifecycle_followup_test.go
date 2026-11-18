@@ -59,6 +59,23 @@ func TestUnexpectedRootExitKillsProcessGroupOnce(t *testing.T) {
 	if calls := proc.killCalls.Load(); calls != 1 {
 		t.Fatalf("KillTree calls = %d, want 1", calls)
 	}
+	awaitFinalized(t, proc)
+}
+
+// awaitFinalized checks that the loss path ended ownership with exactly one
+// Finalize, after its group kill.
+func awaitFinalized(t *testing.T, proc *fakeProcess) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for proc.finalizes.Load() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("owned process was never finalized")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if calls, kills := proc.finalizes.Load(), proc.killsAtFinalize.Load(); calls != 1 || kills == 0 {
+		t.Fatalf("Finalize calls = %d after %d kills, want one after the kill", calls, kills)
+	}
 }
 
 // The transport fails first while the root is alive: the transport path
@@ -326,5 +343,177 @@ func TestWriterFailureDuringRootExitKeepsBufferedFinalEvents(t *testing.T) {
 	}
 	if losses != 1 {
 		t.Fatalf("loss published %d times", losses)
+	}
+}
+
+// Close whose bounded waits end before the root exited still hands the
+// release to Finalize: once the root exits later, it is released although
+// Close already returned.
+func TestTimedOutCloseStillReleasesRootAfterLateExit(t *testing.T) {
+	fake := newFakeClaude(t)
+	fake.ignoreKill = true
+	fake.exitOnStdinClose = false
+	config := testConfig(fake)
+	config.StopGrace = 20 * time.Millisecond
+	opened, err := New(config).OpenSession(context.Background(), openRequest(t, noneContract))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := opened.Session.Close(context.Background(), provider.CloseSessionRequest{Session: opened.Session.Ref(), Policy: provider.CloseRequireQuiescent})
+	if err != nil || result.ResourcesReleased {
+		t.Fatalf("timed-out close = %#v, %v; want resources unconfirmed", result, err)
+	}
+	proc := fake.process()
+	if proc.finalizes.Load() == 0 {
+		t.Fatal("timed-out Close did not finalize")
+	}
+	select {
+	case <-proc.released:
+		t.Fatal("root released before it exited")
+	default:
+	}
+	proc.exit()
+	select {
+	case <-proc.released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("root that exited after Close was never released")
+	}
+}
+
+// A descendant outside the group keeps the pipes, so Wait never returns. The
+// loss path still registers finalization right after its kill, so the root
+// is released once it exited, without depending on Wait.
+func TestLossFinalizesWithoutWaitingForPipes(t *testing.T) {
+	fake := newFakeClaude(t)
+	fake.ignoreKill = true
+	s, stream := openTestSession(t, fake, noneContract)
+	proc := fake.process()
+	proc.exitRootOnly()
+	assertSessionLost(t, s, stream)
+	select {
+	case <-proc.released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("root was not released while Wait stays blocked")
+	}
+	if proc.exited() || proc.killsAtFinalize.Load() == 0 {
+		t.Fatalf("Wait returned (%v) or Finalize preceded the kill (kills %d)", proc.exited(), proc.killsAtFinalize.Load())
+	}
+	proc.exit()
+}
+
+// The loss path's kill fails, then finalization releases the root, so
+// Close's own kill is refused by the finalization gate. That refusal is no
+// termination evidence: the failed loss kill stands, and Close reports
+// neither quiescence nor released resources.
+func TestFailedLossKillIsNotConfirmedByFinalization(t *testing.T) {
+	fake := newFakeClaude(t)
+	s, stream := openTestSession(t, fake, noneContract)
+	proc := fake.process()
+	proc.killErr = errors.New("kill denied")
+	proc.exitRootOnly()
+	assertSessionLost(t, s, stream)
+	select {
+	case <-proc.released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("loss path did not finalize")
+	}
+	proc.exit() // the pipes end; a redirected descendant may still run
+	result, err := s.Close(context.Background(), provider.CloseSessionRequest{Session: s.Ref(), Policy: provider.CloseInterruptThenClose})
+	if err != nil || result.ResourcesReleased || result.ExecutionState != provider.ExecutionUnknown {
+		t.Fatalf("close = %#v, %v; want unconfirmed termination", result, err)
+	}
+}
+
+// Loss and Close overlap; whichever ends signalling first, the denied kill
+// is never turned into confirmed termination.
+func TestOverlappingLossAndCloseKeepDeniedKill(t *testing.T) {
+	fake := newFakeClaude(t)
+	s, _ := openTestSession(t, fake, noneContract)
+	proc := fake.process()
+	proc.killErr = errors.New("kill denied")
+	closed := make(chan provider.CloseSessionResult, 1)
+	go func() {
+		result, _ := s.Close(context.Background(), provider.CloseSessionRequest{Session: s.Ref(), Policy: provider.CloseInterruptThenClose})
+		closed <- result
+	}()
+	proc.exitRootOnly()
+	go func() {
+		<-proc.released
+		proc.exit()
+	}()
+	select {
+	case result := <-closed:
+		if result.ResourcesReleased || result.ExecutionState != provider.ExecutionUnknown {
+			t.Fatalf("close = %#v; want unconfirmed termination", result)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not return")
+	}
+}
+
+// A loss kill that worked stays the termination evidence after finalization
+// refused Close's kill.
+func TestSuccessfulLossKillStaysConfirmedAfterFinalization(t *testing.T) {
+	fake := newFakeClaude(t)
+	s, stream := openTestSession(t, fake, noneContract)
+	proc := fake.process()
+	proc.exitRootOnly()
+	assertSessionLost(t, s, stream)
+	select {
+	case <-proc.released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("loss path did not finalize")
+	}
+	result, err := s.Close(context.Background(), provider.CloseSessionRequest{Session: s.Ref(), Policy: provider.CloseInterruptThenClose})
+	if err != nil || !result.ResourcesReleased || result.ExecutionState != provider.ExecutionNone {
+		t.Fatalf("close = %#v, %v; want confirmed termination", result, err)
+	}
+}
+
+// Initialization is still pending when the root exits; the loss kill is
+// denied and the loss path finalizes. The failed open's cleanup owner then
+// gets a finalization refusal for its own kill: the denied loss kill is the
+// termination evidence, so cleanup reports it instead of success.
+func TestFailedOpenAfterDeniedLossKillReportsUnconfirmedTermination(t *testing.T) {
+	fake := newFakeClaude(t)
+	fake.silentInitialize = true
+	fake.exitOnStdinClose = false
+	denied := errors.New("kill denied")
+	fake.killErr = denied
+	config := testConfig(fake)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	opened := make(chan error, 1)
+	go func() {
+		_, err := New(config).OpenSession(ctx, openRequest(t, noneContract))
+		opened <- err
+	}()
+	var proc *fakeProcess
+	for deadline := time.Now().Add(2 * time.Second); proc == nil; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("process was not launched")
+		}
+		proc = fake.process()
+	}
+	proc.exitRootOnly()
+	select {
+	case <-proc.released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("loss path did not finalize")
+	}
+	err := <-opened
+	var pending *CleanupPendingError
+	if !errors.As(err, &pending) {
+		if !errors.Is(err, denied) {
+			t.Fatalf("open error = %v, want the denied kill as cleanup failure", err)
+		}
+		return
+	}
+	proc.exit()
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer waitCancel()
+	state, waitErr := pending.Owner.Await(waitCtx)
+	if waitErr != nil || !errors.Is(state.TreeTerminationErr, denied) {
+		t.Fatalf("cleanup state = %+v, %v; want the denied loss kill as termination outcome", state, waitErr)
 	}
 }

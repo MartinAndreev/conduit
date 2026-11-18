@@ -655,3 +655,37 @@ func (d *kindByHarness) Discover(ctx context.Context, h configuration.HarnessID,
 	}
 	return o, err
 }
+
+// A platform without safe probe cleanup is an ordinary discovery outcome:
+// every harness is reported found with an unknown version and a specific
+// warning, startup is not blocked and no cleanup failure is reported.
+func TestUnsupportedProbePlatformIsAWarningNotABlock(t *testing.T) {
+	repository, detector, _ := setup(t)
+	detector.kind = configuration.Found
+	detector.version = ""
+	detector.err = ErrProbePlatformUnsupported
+	outcome := (Service{Repository: repository, Detector: detector}).Initialize(context.Background(), nil)
+	if outcome.Snapshot.Status == Blocked || errors.Is(outcome.Err, ErrProbeCleanup) || errors.Is(outcome.Err, ErrProbePlatformUnsupported) {
+		t.Fatal(outcome)
+	}
+	if detector.calls != len(configuration.Supported()) {
+		t.Fatalf("discovery stopped after %d of %d harnesses", detector.calls, len(configuration.Supported()))
+	}
+	for _, observation := range outcome.Snapshot.Observations {
+		if observation.Discovery.Kind != configuration.Found || observation.Discovery.Version != "" {
+			t.Fatalf("observation = %+v, want found with an unknown version", observation)
+		}
+	}
+	unsupported := 0
+	for _, diagnostic := range outcome.Snapshot.Diagnostics {
+		if diagnostic.Code == "harness_probe_cleanup_unconfirmed" || diagnostic.Code == "harness_version_unknown" {
+			t.Fatalf("unexpected diagnostic %+v", diagnostic)
+		}
+		if diagnostic.Code == "harness_probe_unsupported_platform" && diagnostic.Severity == Warning {
+			unsupported++
+		}
+	}
+	if unsupported != len(configuration.Supported()) {
+		t.Fatalf("unsupported-platform diagnostics = %d, want one per harness: %+v", unsupported, outcome.Snapshot.Diagnostics)
+	}
+}

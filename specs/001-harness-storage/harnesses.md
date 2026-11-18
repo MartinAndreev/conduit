@@ -51,8 +51,48 @@ storage, result acceptance, CLI wiring, or live model calls.
 ## Shared owned-process boundary
 
 - `internal/process` starts a fresh owned process group on Unix. `KillTree` sends
-  the signal to that group and `Wait` reaps the root only after both output pipes
-  have reached EOF or were closed.
+  the signal to that group. `Wait` returns once the root exited and both output
+  pipes reached EOF or were closed; it does **not** reap the root.
+- Finalization boundary (2026-11-15): on Linux and Darwin the exited root stays
+  an unreaped zombie, so its PID and process-group number cannot be reused and
+  `KillTree` keeps reaching the group (also after `Wait`), until the owner
+  declares with `process.Finalize` / `RequestFinalize` that it sends no more
+  signals. Each owner registers finalization right after its last signal,
+  independently of `Wait` and the pipes: Close and failed-open cleanup after
+  their kill; the claude/codex loss path after its loss kill; the ACP
+  transport stop after its kill; the OpenCode failed run after its kill (unless
+  Close already claimed the client), a clean run when its observation ends,
+  and a control command after its kill or completion. Once the root exited,
+  finalization refuses every later `Interrupt`/`KillTree`
+  (`process.ErrSignalsFinalized`, which wraps `os.ErrProcessDone`, no
+  syscall) and reaps the root as soon as it is authoritatively waitable
+  (Linux `waitid(WNOHANG|WNOWAIT)`, Darwin sysctl zombie state); the
+  per-process worker keeps that responsibility after a caller's bounded wait.
+  Once the root exited, every finalization ends in one terminal outcome
+  returned to all callers: released, a failed reap, or
+  `ErrReleaseUnavailable` (waitability cannot be established: Linux without
+  `waitid`, or a Darwin state query that fails permanently or keeps failing
+  transiently; the root stays unreaped). Only a negative answer while the
+  exit is still completing is retried; until the root exits, finalization
+  stays in progress. The
+  last two keep signals refused and are reported, never treated as released.
+  A refusal by finalization is not termination evidence
+  (`process.KillConfirmed`): Close keeps the outcome of the earlier kill that
+  ended signalling. `ResourcesReleased`-style results require confirmed
+  termination, the reap and the pipes' end. Decorators of a `Process` must
+  forward `Finalizer` (and `RootExitObserver`).
+- Fallback Unix (aix, dragonfly, freebsd, netbsd, openbsd, solaris;
+  `process.RootRetentionSupported() == false`) reaps the root at exit and
+  refuses group signals from then on. A harness session's `KillTree` after
+  its root exited is refused (`ErrSignalsFinalized`), so a close or loss
+  after a root exit reports unconfirmed termination (`ExecutionUnknown`,
+  resources not released) and descendants are no longer reachable. Startup
+  probes are not run there at all (see the startup contract). Windows
+  signals only through handles and keeps the guarantee.
+- Exit errors: `RootResult` and `Wait` report an unsuccessful exit observed
+  before the reap with an internal error whose text matches
+  `*exec.ExitError` ("exit status 3", "signal: killed"); it is no longer an
+  `*exec.ExitError`, so callers must not type-assert it.
 - On Windows each owned child starts suspended, is assigned to a kill-on-close
   Job Object, and only then resumes, so `KillTree` terminates the whole job and
   `TreeKillSupported` is true. If job assignment fails, `Start` fails instead of

@@ -3,6 +3,7 @@ package startupinfra
 import (
 	"context"
 	"errors"
+	"github.com/MartinAndreev/conduit/internal/app/startup"
 	"github.com/MartinAndreev/conduit/internal/configuration"
 	"github.com/MartinAndreev/conduit/internal/process"
 	"github.com/MartinAndreev/conduit/internal/startupinfra/rules"
@@ -18,6 +19,18 @@ type Detector struct {
 	Launcher process.Launcher
 	LookPath func(string) (string, error)
 	Timeout  time.Duration
+	// retentionSupported replaces process.RootRetentionSupported in tests.
+	retentionSupported func() bool
+}
+
+// rootRetentionSupported reports whether this platform keeps an exited probe
+// root unreaped until its cleanup finalized it, which probe cleanup needs to
+// confirm termination.
+func (d Detector) rootRetentionSupported() bool {
+	if d.retentionSupported != nil {
+		return d.retentionSupported()
+	}
+	return process.RootRetentionSupported()
 }
 
 func (d Detector) Discover(ctx context.Context, h configuration.HarnessID, override string) (configuration.Observation, error) {
@@ -36,6 +49,11 @@ func (d Detector) Discover(ctx context.Context, h configuration.HarnessID, overr
 		return configuration.Observation{Kind: configuration.Missing}, nil
 	}
 	observation := configuration.Observation{Kind: configuration.Found, Path: path}
+	// Without root retention a probe's cleanup can never confirm descendant
+	// termination, so no probe child is started on such a platform.
+	if !d.rootRetentionSupported() {
+		return observation, startup.ErrProbePlatformUnsupported
+	}
 	execution, err := d.executeProbe(ctx, path, descriptor.args)
 	if err != nil {
 		observation.Kind = configuration.ProbeFailed

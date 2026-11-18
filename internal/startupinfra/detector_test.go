@@ -190,6 +190,19 @@ type cleanupFailingProcess struct {
 
 func (p cleanupFailingProcess) KillTree() error { return p.cause }
 
+// Finalize forwards to the real child: a wrapper must keep its Finalizer,
+// or the child's root is never released. The assertions keep every probe
+// wrapper's forwarding compiled in.
+var (
+	_ process.Finalizer = cleanupFailingProcess{}
+	_ process.Finalizer = (*unreapableProbe)(nil)
+	_ process.Finalizer = delayedStdinProbe{}
+)
+
+func (p cleanupFailingProcess) Finalize(ctx context.Context) error {
+	return process.Finalize(ctx, p.Process)
+}
+
 type cleanupFailingLauncher struct {
 	helperLauncher
 	cause error
@@ -224,6 +237,9 @@ type unreapableProbe struct {
 
 func (p *unreapableProbe) Wait() process.Result { <-p.release; return process.Result{ExitCode: 0} }
 func (p *unreapableProbe) KillTree() error      { return p.cause }
+func (p *unreapableProbe) Finalize(ctx context.Context) error {
+	return process.Finalize(ctx, p.Process)
+}
 
 type oneProbeLauncher struct{ child process.Process }
 
@@ -289,6 +305,9 @@ type delayedStdinProbe struct {
 }
 
 func (p delayedStdinProbe) Stdin() io.WriteCloser { return p.stdin }
+func (p delayedStdinProbe) Finalize(ctx context.Context) error {
+	return process.Finalize(ctx, p.Process)
+}
 func TestProbeSlowStdinCloseReturnsWithinCleanupBudget(t *testing.T) {
 	base := &helperLauncher{mode: "codex"}
 	child, err := base.Start(process.Spec{Args: []string{"--version"}})
@@ -378,5 +397,31 @@ func TestObservedStdoutCloseFailureSurvivesBlockedStderrClose(t *testing.T) {
 	state, err = observer.Await(ctx)
 	if err != nil || !state.Complete || !state.RootReaped || !state.ReadersDone || !state.StderrClosure.Complete || state.PipesClosed || !errors.Is(state.Err, cause) {
 		t.Fatal(state, err)
+	}
+}
+
+// countingLauncher fails the test if a probe child is started.
+type countingLauncher struct{ starts int }
+
+func (l *countingLauncher) Start(process.Spec) (process.Process, error) {
+	l.starts++
+	return nil, errors.New("no probe may start on this platform")
+}
+
+// On a platform without root retention no probe child is started: the
+// executable is reported found with an unknown version, and the typed
+// unsupported-platform outcome (not a cleanup failure) explains why.
+func TestProbeIsRefusedWithoutRootRetention(t *testing.T) {
+	launcher := &countingLauncher{}
+	detector := Detector{Launcher: launcher, LookPath: func(string) (string, error) { return os.Executable() }, retentionSupported: func() bool { return false }}
+	observation, err := detector.Discover(context.Background(), configuration.Codex, "")
+	if !errors.Is(err, startup.ErrProbePlatformUnsupported) || errors.Is(err, startup.ErrProbeCleanup) {
+		t.Fatalf("Discover error = %v, want the unsupported-platform outcome", err)
+	}
+	if launcher.starts != 0 {
+		t.Fatalf("probe children started: %d", launcher.starts)
+	}
+	if observation.Kind != configuration.Found || observation.Path == "" || observation.Version != "" {
+		t.Fatalf("observation = %+v, want found with an unknown version", observation)
 	}
 }

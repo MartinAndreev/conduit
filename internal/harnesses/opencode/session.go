@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"github.com/MartinAndreev/conduit/internal/harnesses/opencode/rules"
 	"io"
-	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -35,9 +34,17 @@ type session struct {
 	assignment    provider.AssignmentRef
 	turn          provider.Optional[provider.TurnRef]
 	process       processruntime.Process
-	state         provider.SessionState
-	closed        bool
-	steerPending  bool
+	// closeOwned is the run client Close claimed to terminate; its finalization
+	// then belongs to Close, after its kill.
+	closeOwned processruntime.Process
+	// runKilled is the run client whose failed observation sent its group
+	// kill, with runKillErr its outcome; Close uses it when finalization
+	// refuses its own kill.
+	runKilled    processruntime.Process
+	runKillErr   error
+	state        provider.SessionState
+	closed       bool
+	steerPending bool
 	// deliveryUnknown is a turn start whose delivery is unknown.
 	deliveryUnknown bool
 	// unresolvedSteer is a possibly admitted steer that native
@@ -190,6 +197,8 @@ func (s *session) handleStartStdinCloseFailure(request provider.StartTurnRequest
 	go func() {
 		result := proc.Wait()
 		drains.Wait()
+		// The cleanup kill above was the last signal.
+		_ = processruntime.Finalize(context.Background(), proc)
 		_ = lockscope.WithMutexLock(&s.mu, func() error {
 			if s.process == proc {
 				s.process = nil
@@ -239,6 +248,7 @@ func (s *session) Close(ctx context.Context, request provider.CloseSessionReques
 			return adaptererror.NewWithDetail(provider.OperationCloseSession, provider.ErrorCapabilityUnsupported, provider.RemoteEffectNotSent, decision.Reason, nil)
 		case rules.CloseStopOwnedClient:
 			owned = s.process
+			s.closeOwned = owned
 		}
 		s.closed, s.state = true, provider.SessionClosed
 		s.broker.Finish(nil)
@@ -256,19 +266,28 @@ func (s *session) Close(ctx context.Context, request provider.CloseSessionReques
 // group and reports whether its root was reaped within the bound. A shared
 // OpenCode server is never signalled, so native execution stays unknown.
 func (s *session) stopOwnedClient(ctx context.Context, proc processruntime.Process) bool {
-	killErr := proc.KillTree()
-	if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+	killErr := s.closeKillOutcome(proc, proc.KillTree())
+	// Close sends no further signal: finalization is registered at once, also
+	// when the kill failed, independently of Wait, which a descendant outside
+	// the group can block. Release needs both the reap (Finalize) and the
+	// pipes' end (Wait), each bounded by the same grace.
+	processruntime.RequestFinalize(proc)
+	waited := make(chan struct{})
+	go func() {
+		_ = proc.Wait()
+		close(waited)
+	}()
+	if !processruntime.KillConfirmed(killErr) {
 		return false
 	}
-	reaped := make(chan struct{})
-	go func() { _ = proc.Wait(); close(reaped) }()
-	timer := time.NewTimer(s.config.StopGrace)
-	defer timer.Stop()
-	select {
-	case <-reaped:
-	case <-timer.C:
+	finalizeCtx, cancel := context.WithTimeout(ctx, s.config.StopGrace)
+	defer cancel()
+	if processruntime.Finalize(finalizeCtx, proc) != nil {
 		return false
-	case <-ctx.Done():
+	}
+	select {
+	case <-waited:
+	case <-finalizeCtx.Done():
 		return false
 	}
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
@@ -285,7 +304,7 @@ func (s *session) readRun(proc processruntime.Process, turn provider.TurnRef) {
 	// killRun terminates this run client's own process group at most once
 	// after its observation failed: a descendant may hold stdout open, and a
 	// root that exited on its own does not prove its descendants are gone.
-	killRun := sync.OnceFunc(func() { _ = proc.KillTree() })
+	killRun := sync.OnceFunc(func() { s.killRunClient(proc) })
 	watchDone := make(chan struct{})
 	go func() {
 		defer close(watchDone)
@@ -310,7 +329,14 @@ func (s *session) readRun(proc processruntime.Process, turn provider.TurnRef) {
 	if failed {
 		killRun()
 	}
+	// The run's observation sent its last signal and finalizes, unless Close
+	// already claimed this client's termination: Close then finalizes after
+	// its own kill. The claim is read under the same lock Close takes it in;
+	// a Close that comes later finds a finalized client and gets
+	// os.ErrProcessDone from its kill.
+	closeOwns := false
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		closeOwns = s.closeOwned == proc
 		if s.process == proc && !s.closed && !failed {
 			s.process = nil
 			s.turn = provider.None[provider.TurnRef]()
@@ -320,6 +346,18 @@ func (s *session) readRun(proc processruntime.Process, turn provider.TurnRef) {
 		}
 		return nil
 	})
+	// The release is bounded by StopGrace so the run's final events and
+	// steer reconciliation still follow; past that the process keeps
+	// ownership, and an unconfirmed or failed release is reported.
+	var releaseErr error
+	if !closeOwns {
+		releaseCtx, cancel := context.WithTimeout(context.Background(), s.config.StopGrace)
+		releaseErr = processruntime.Finalize(releaseCtx, proc)
+		cancel()
+	}
+	if releaseErr != nil {
+		s.emit(provider.ProtocolWarningEvent{Code: "opencode_run_release", Detail: boundedtext.String("OpenCode run client release was not confirmed; its root process may remain unreaped", s.config.MaxTextBytes)})
+	}
 	if scanErr != nil {
 		s.emit(provider.ProtocolWarningEvent{Code: "opencode_jsonl_read", Detail: boundedtext.String("OpenCode JSONL exceeded the configured bound or could not be read", s.config.MaxTextBytes)})
 	} else if result.Err != nil || result.ExitCode != 0 {
@@ -334,6 +372,42 @@ func (s *session) readRun(proc processruntime.Process, turn provider.TurnRef) {
 	// be reconciled against the native session.
 	s.reconcileUnresolvedSteer()
 	s.settleReleasedSteers()
+}
+
+// killRunClient sends a failed run's single group kill and records its
+// outcome for Close. The kill is the run's last signal: unless Close already
+// claimed the client's termination (Close then finalizes after its own
+// kill), finalization is registered at once, independently of Wait, which a
+// descendant outside the group can block.
+func (s *session) killRunClient(proc processruntime.Process) {
+	err := proc.KillTree()
+	claimed := false
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		s.runKilled = proc
+		s.runKillErr = err
+		claimed = s.closeOwned == proc
+		return nil
+	})
+	if !claimed {
+		processruntime.RequestFinalize(proc)
+	}
+}
+
+// closeKillOutcome is the termination evidence of Close's kill. When
+// finalization refused it (the run's failed observation ended signalling
+// first), that kill's own outcome stands; a refusal without one confirms
+// nothing.
+func (s *session) closeKillOutcome(proc processruntime.Process, killErr error) error {
+	if !errors.Is(killErr, processruntime.ErrSignalsFinalized) {
+		return killErr
+	}
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		if s.runKilled == proc {
+			killErr = s.runKillErr
+		}
+		return nil
+	})
+	return killErr
 }
 
 // watchRunRootExit waits for the run client's root to exit, independently of

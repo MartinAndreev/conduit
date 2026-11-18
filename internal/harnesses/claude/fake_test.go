@@ -35,6 +35,8 @@ type fakeClaude struct {
 	silentInitialize bool
 	// ignoreKill makes KillTree record the call without ending the process.
 	ignoreKill bool
+	// killErr is copied to every started process (see fakeProcess.killErr).
+	killErr error
 	// onInterrupt, when set, replaces the default interrupt control_response.
 	onInterrupt func(f *fakeClaude, requestID string)
 
@@ -66,7 +68,8 @@ func (f *fakeClaude) Start(spec processruntime.Spec) (processruntime.Process, er
 	proc := &fakeProcess{
 		stdin: clientInput, stdout: clientOutput, stderr: stderrReader,
 		serverInput: serverInput, serverOutput: serverOutput, stderrWriter: stderrWriter,
-		done: make(chan struct{}), rootDone: make(chan struct{}), ignoreKill: f.ignoreKill,
+		done: make(chan struct{}), rootDone: make(chan struct{}), ignoreKill: f.ignoreKill, killErr: f.killErr,
+		released: make(chan struct{}),
 	}
 	_ = lockscope.WithMutexLock(&f.mu, func() error {
 		f.spec = spec
@@ -206,10 +209,20 @@ type fakeProcess struct {
 	rootOnce   sync.Once
 	doneOnce   sync.Once
 	ignoreKill bool
+	// killErr makes KillTree fail (the OS refused) without ending anything.
+	killErr    error
 	killCalls  atomic.Int32
 	killed     atomic.Bool
 	waited     atomic.Bool
 	interrupts atomic.Int32
+	// finalizes counts Finalize calls; killsAtFinalize records KillTree
+	// calls before the first one. Like production, the first call owns the
+	// release: released closes once the root exited, also after every
+	// caller stopped waiting.
+	finalizes       atomic.Int32
+	killsAtFinalize atomic.Int32
+	finalizeOnce    sync.Once
+	released        chan struct{}
 }
 
 func (*fakeProcess) PID() int                { return 42 }
@@ -245,6 +258,15 @@ func (p *fakeProcess) RootResult() processruntime.Result {
 
 func (p *fakeProcess) KillTree() error {
 	p.killCalls.Add(1)
+	// Like production, finalization refuses every later signal.
+	select {
+	case <-p.released:
+		return processruntime.ErrSignalsFinalized
+	default:
+	}
+	if p.killErr != nil {
+		return p.killErr
+	}
 	if p.ignoreKill {
 		return nil
 	}
@@ -258,6 +280,27 @@ func (p *fakeProcess) KillTree() error {
 	p.killed.Store(true)
 	p.exit()
 	return nil
+}
+
+// Finalize implements processruntime.Finalizer like production: the first
+// call registers the release, which completes once the root exited; callers
+// wait for it bounded by ctx. It never kills.
+func (p *fakeProcess) Finalize(ctx context.Context) error {
+	if p.finalizes.Add(1) == 1 {
+		p.killsAtFinalize.Store(p.killCalls.Load())
+	}
+	p.finalizeOnce.Do(func() {
+		go func() {
+			<-p.rootDone
+			close(p.released)
+		}()
+	})
+	select {
+	case <-p.released:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (p *fakeProcess) Wait() processruntime.Result {

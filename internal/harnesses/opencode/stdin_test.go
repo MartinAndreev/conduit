@@ -60,6 +60,28 @@ type trackedEOFProcess struct {
 	reaped   chan struct{}
 }
 
+// A decorator must forward Finalize (else the child's root is never
+// released) and RootExitObserver (else root exit is seen only after the
+// pipes end); the assertions keep that compiled in.
+var (
+	_ processruntime.Finalizer        = (*trackedEOFProcess)(nil)
+	_ processruntime.RootExitObserver = (*trackedEOFProcess)(nil)
+)
+
+func (p *trackedEOFProcess) Finalize(ctx context.Context) error {
+	return processruntime.Finalize(ctx, p.Process)
+}
+
+func (p *trackedEOFProcess) RootExited() <-chan struct{} {
+	exited, _ := processruntime.ObserveRootExit(p.Process)
+	return exited
+}
+
+func (p *trackedEOFProcess) RootResult() processruntime.Result {
+	_, result := processruntime.ObserveRootExit(p.Process)
+	return result()
+}
+
 func (p *trackedEOFProcess) Stdin() io.WriteCloser {
 	return eofCloseWriter{WriteCloser: p.Process.Stdin(), err: p.closeErr}
 }
