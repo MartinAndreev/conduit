@@ -375,6 +375,26 @@ remain accepted:
   could hold an intentionally detached shared service. Since each session now
   runs its own `opencode serve` in a separate process group, `opencode run`
   terminates its own process group on every exit before finalization.
+- **OpenCode release accounting (accepted 2026-11-20).** The final review
+  round of the single run-client owner found no P1. Martin accepted the
+  remaining edge cases; none makes Close report released resources that are
+  not:
+  - If Close claims the run client before its root exits, and a process
+    outside the client's group (for example after `setsid`) holds stderr
+    open, `readRun` yields to Close and the post-root-exit budget never
+    force-closes the pipes. `Wait` stays blocked, so every Close keeps
+    reporting `ResourcesReleased=false`.
+  - The `StopGrace` bound on run observation assumes a `Launcher` whose pipes
+    unblock a pending read when closed and whose `Close` does not block. A
+    custom `Launcher` without that, or one that hides `RootExitObserver` or
+    `Finalizer` behind a decorator, can keep `readRun` past the budget or
+    call `Wait` before the kill. A synchronous `Stdin().Close()` that blocks
+    after the root exits delays the kill until Close or server loss. The
+    standard `ExecLauncher` meets these requirements.
+  - The real Unix descendant test cleans up its sleeper by PID, with a small
+    window in which the PID could be reused. It affects only the test.
+  - Some fake-process tests still check negative cases with short sleeps and
+    could miss a regression that only changes ordering.
 - **Platforms.** Windows code paths are cross-vetted and their tests are
   compiled, but nothing has run on Windows. Linux has not been run natively.
 - **Local toolchain.** `go test -race ./internal/sessions` does not link with
