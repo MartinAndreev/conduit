@@ -70,18 +70,19 @@ func TestDecideClientCloseRelease(t *testing.T) {
 		facts ClientCloseReleaseFacts
 		want  ReleaseKind
 	}{
-		{"natural confirmed", ClientCloseReleaseFacts{NaturalRelease: true, Release: confirmedRelease}, ReleaseConfirmed},
-		{"natural ignores unconfirmed kill and tree support", ClientCloseReleaseFacts{NaturalRelease: true, KillConfirmed: false, TreeKillSupported: false, Release: confirmedRelease}, ReleaseConfirmed},
-		{"natural pending", ClientCloseReleaseFacts{NaturalRelease: true, Release: ReleaseFacts{}}, ReleasePending},
-		{"natural failed reap", ClientCloseReleaseFacts{NaturalRelease: true, Release: ReleaseFacts{Finished: true, ReleaseFailed: true}}, ReleaseFailed},
-		{"killed confirmed", ClientCloseReleaseFacts{KillConfirmed: true, TreeKillSupported: true, Release: confirmedRelease}, ReleaseConfirmed},
-		{"killed unconfirmed fails even if release finished", ClientCloseReleaseFacts{KillConfirmed: false, TreeKillSupported: true, Release: confirmedRelease}, ReleaseFailed},
-		{"killed unconfirmed precedes pending", ClientCloseReleaseFacts{KillConfirmed: false, TreeKillSupported: true, Release: ReleaseFacts{}}, ReleaseFailed},
-		{"tree kill unsupported fails", ClientCloseReleaseFacts{KillConfirmed: true, TreeKillSupported: false, Release: confirmedRelease}, ReleaseFailed},
-		{"killed pending release", ClientCloseReleaseFacts{KillConfirmed: true, TreeKillSupported: true, Release: ReleaseFacts{}}, ReleasePending},
-		{"killed failed release", ClientCloseReleaseFacts{KillConfirmed: true, TreeKillSupported: true, Release: ReleaseFacts{Finished: true, RootReaped: true, ReleaseFailed: true}}, ReleaseFailed},
-		{"killed pipe close failed", ClientCloseReleaseFacts{KillConfirmed: true, TreeKillSupported: true, Release: ReleaseFacts{Finished: true, RootReaped: true, PipeCloseFailed: true}}, ReleaseFailed},
-		{"killed finished without reap", ClientCloseReleaseFacts{KillConfirmed: true, TreeKillSupported: true, Release: ReleaseFacts{Finished: true}}, ReleaseFailed},
+		{"natural pending", ClientCloseReleaseFacts{NaturalRelease: true, TreeKillSupported: true, Release: ReleaseFacts{}}, ReleasePending},
+		{"natural finished with tree kill is unconfirmed for descendants", ClientCloseReleaseFacts{NaturalRelease: true, TreeKillSupported: true, Release: confirmedRelease}, ReleaseFailed},
+		{"natural finished without tree kill is unconfirmed", ClientCloseReleaseFacts{NaturalRelease: true, TreeKillSupported: false, Release: confirmedRelease}, ReleaseFailed},
+		{"natural failed reap", ClientCloseReleaseFacts{NaturalRelease: true, TreeKillSupported: true, Release: ReleaseFacts{Finished: true, ReleaseFailed: true}}, ReleaseFailed},
+		{"killed pending kill", ClientCloseReleaseFacts{KillFinished: false, KillConfirmed: false, TreeKillSupported: true, Release: confirmedRelease}, ReleasePending},
+		{"killed confirmed", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: true, TreeKillSupported: true, Release: confirmedRelease}, ReleaseConfirmed},
+		{"killed unconfirmed fails even if release finished", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: false, TreeKillSupported: true, Release: confirmedRelease}, ReleaseFailed},
+		{"killed unconfirmed precedes pending release", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: false, TreeKillSupported: true, Release: ReleaseFacts{}}, ReleaseFailed},
+		{"tree kill unsupported fails", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: true, TreeKillSupported: false, Release: confirmedRelease}, ReleaseFailed},
+		{"killed pending release", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: true, TreeKillSupported: true, Release: ReleaseFacts{}}, ReleasePending},
+		{"killed failed release", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: true, TreeKillSupported: true, Release: ReleaseFacts{Finished: true, RootReaped: true, ReleaseFailed: true}}, ReleaseFailed},
+		{"killed pipe close failed", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: true, TreeKillSupported: true, Release: ReleaseFacts{Finished: true, RootReaped: true, PipeCloseFailed: true}}, ReleaseFailed},
+		{"killed finished without reap", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: true, TreeKillSupported: true, Release: ReleaseFacts{Finished: true}}, ReleaseFailed},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

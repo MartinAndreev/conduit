@@ -185,8 +185,11 @@ func DecideClientClaim(f ClientClaimFacts) ClientClaimDecision {
 // evaluated by Close.
 type ClientCloseReleaseFacts struct {
 	// NaturalRelease is true when readRun reserved natural finalization before
-	// Close claimed the client, so no group kill was needed.
+	// Close claimed the client, so no group kill was sent.
 	NaturalRelease bool
+	// KillFinished is true when the client's single group kill completed
+	// within the caller's wait; KillConfirmed is final only then.
+	KillFinished bool
 	// KillConfirmed is true when the client's single group kill confirmed
 	// termination (process.KillConfirmed). ErrSignalsFinalized is never
 	// confirmed.
@@ -194,22 +197,36 @@ type ClientCloseReleaseFacts struct {
 	// TreeKillSupported is true when KillTree terminates the whole owned
 	// process group rather than only the root.
 	TreeKillSupported bool
-	// Release are the facts of the shared Wait + Finalize release observer.
+	// Release are the facts of the shared Wait + Finalize + pipe-close
+	// release observer.
 	Release ReleaseFacts
 }
 
 // DecideClientCloseRelease answers whether Close may count a run client as
-// released. A naturally finalized client needs only DecideRelease
-// confirmation; a killed client additionally requires a confirmed group kill
-// and tree-kill support.
+// released. When readRun reserved natural finalization without a group kill,
+// descendants without open pipes are not proven stopped: once the natural
+// release ends it is not confirmed (while running it is pending). A killed
+// client requires the kill to have finished and confirmed termination,
+// tree-kill support, and DecideRelease confirmation of Wait, reap, stdin, and
+// pipe closure.
 func DecideClientCloseRelease(f ClientCloseReleaseFacts) ReleaseDecision {
-	if !f.NaturalRelease {
-		if !f.KillConfirmed {
-			return ReleaseDecision{Kind: ReleaseFailed, Reason: "the owned OpenCode run client's group termination was not confirmed"}
+	if f.NaturalRelease {
+		if !f.Release.Finished {
+			return ReleaseDecision{Kind: ReleasePending, Reason: "the owned OpenCode run client's natural finalization is still running"}
 		}
-		if !f.TreeKillSupported {
-			return ReleaseDecision{Kind: ReleaseFailed, Reason: "only the owned OpenCode run client root could be terminated; a descendant may still run"}
+		if f.TreeKillSupported {
+			return ReleaseDecision{Kind: ReleaseFailed, Reason: "the owned OpenCode run client finalized naturally without terminating its process group; descendants are not proven stopped"}
 		}
+		return ReleaseDecision{Kind: ReleaseFailed, Reason: "only the owned OpenCode run client root could be terminated; a descendant may still run"}
+	}
+	if !f.KillFinished {
+		return ReleaseDecision{Kind: ReleasePending, Reason: "the owned OpenCode run client's group termination is still running"}
+	}
+	if !f.KillConfirmed {
+		return ReleaseDecision{Kind: ReleaseFailed, Reason: "the owned OpenCode run client's group termination was not confirmed"}
+	}
+	if !f.TreeKillSupported {
+		return ReleaseDecision{Kind: ReleaseFailed, Reason: "only the owned OpenCode run client root could be terminated; a descendant may still run"}
 	}
 	return DecideRelease(f.Release)
 }

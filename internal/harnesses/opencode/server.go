@@ -100,6 +100,9 @@ type ownedServer struct {
 	rootExited <-chan struct{}
 	cleanup    *processruntime.CleanupOwner
 	stopGrace  time.Duration
+	// afterStopAwait is a test seam called in abortServer after stopOutcome
+	// returns and before checking cleanup.Done; nil in production.
+	afterStopAwait func()
 }
 
 // readiness is the outcome of reading server stdout until the listening line.
@@ -204,12 +207,7 @@ func (o *ownedServer) stop(ctx context.Context) rules.ServerStopDecision {
 	return o.stopOutcome(ctx).stop
 }
 
-func (o *ownedServer) stopOutcome(ctx context.Context) serverStopOutcome {
-	o.cleanup.BeginCleanup()
-	waitCtx, cancel := context.WithTimeout(ctx, o.stopGrace)
-	defer cancel()
-	state, err := o.cleanup.Await(waitCtx)
-	complete := err == nil && state.Complete
+func (o *ownedServer) outcomeFromState(state processruntime.CleanupState, complete bool) serverStopOutcome {
 	stop := rules.DecideServerStop(rules.ServerStopFacts{
 		CleanupComplete:   complete,
 		RootReaped:        state.RootReaped,
@@ -220,4 +218,17 @@ func (o *ownedServer) stopOutcome(ctx context.Context) serverStopOutcome {
 	releaseFacts.Finished = complete
 	release := rules.DecideRelease(releaseFacts)
 	return serverStopOutcome{stop: stop, release: release, state: state}
+}
+
+func (o *ownedServer) stopOutcome(ctx context.Context) serverStopOutcome {
+	o.cleanup.BeginCleanup()
+	waitCtx, cancel := context.WithTimeout(ctx, o.stopGrace)
+	defer cancel()
+	state, err := o.cleanup.Await(waitCtx)
+	return o.outcomeFromState(state, err == nil && state.Complete)
+}
+
+func (o *ownedServer) latestOutcome() serverStopOutcome {
+	state := o.cleanup.Latest()
+	return o.outcomeFromState(state, state.Complete)
 }

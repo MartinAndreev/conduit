@@ -355,12 +355,22 @@ func (c *cliControl) run(ctx context.Context, server ServerEndpoint, dir string,
 		// release, and the unconfirmed release fails the command.
 		finalizeCtx, cancel := context.WithTimeout(ctx, controlCleanupBudget)
 		defer cancel()
-		// Wait's own release error (for example a Windows Job Object close)
-		// fails the release as a failed finalization does.
-		if err := errors.Join(result.ReleaseErr, processruntime.Finalize(finalizeCtx, proc)); err != nil {
+		// Wait's own release error (for example a Windows Job Object close),
+		// finalization, and the cleanup owner's asynchronous stdin close all
+		// belong to release confirmation.
+		finalizeErr := processruntime.Finalize(finalizeCtx, proc)
+		stdinClosure, stdinWaitErr := awaitOwnerStdin(finalizeCtx, owner)
+		facts := processReleaseFacts(
+			finalizeErr == nil && stdinWaitErr == nil && stdinClosure.Complete,
+			result.ReleaseErr,
+			finalizeErr,
+			stdinClosure.Err,
+		)
+		if !rules.DecideRelease(facts).Confirmed() {
+			err := errors.Join(result.ReleaseErr, finalizeErr, stdinWaitErr, stdinClosure.Err)
 			// The release keeps going (or failed); the session keeps observing
 			// it so Close accounts for it.
-			return commandOutput{}, true, &releasePendingError{release: startFinishedRelease(proc, result), cause: fmt.Errorf("%w: %w", errControlCleanup, err)}
+			return commandOutput{}, true, &releasePendingError{release: startFinishedRelease(proc, result, owner), cause: fmt.Errorf("%w: %w", errControlCleanup, err)}
 		}
 		return commandOutput{stdout: stdout.Bytes(), succeeded: result.Err == nil && result.ExitCode == 0}, true, nil
 	}

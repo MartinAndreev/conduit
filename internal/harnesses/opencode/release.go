@@ -3,6 +3,9 @@ package opencode
 import (
 	"context"
 	"errors"
+	"io"
+	"os"
+	"time"
 
 	"github.com/MartinAndreev/conduit/internal/harnesses/opencode/rules"
 	processruntime "github.com/MartinAndreev/conduit/internal/process"
@@ -10,13 +13,14 @@ import (
 
 // processRelease is the observable release of one owned client process (a
 // run client or a control command) that the session stopped waiting for
-// before it was confirmed. The session keeps it until rules.DecideRelease
-// confirms it; until then Close does not report resources released.
+// before it was confirmed. The session keeps it until decideRelease confirms
+// it; until then Close does not report resources released.
 type processRelease interface {
 	// Done closes once the release work ended.
 	Done() <-chan struct{}
-	// releaseFacts are the current facts; final once Done closed.
-	releaseFacts() rules.ReleaseFacts
+	// decideRelease evaluates the current release decision; final once Done
+	// closed.
+	decideRelease() rules.ReleaseDecision
 }
 
 // ownerRelease is the release of a cancelled control command: its cleanup
@@ -24,8 +28,8 @@ type processRelease interface {
 type ownerRelease struct{ owner *processruntime.CleanupOwner }
 
 func (r ownerRelease) Done() <-chan struct{} { return r.owner.Done() }
-func (r ownerRelease) releaseFacts() rules.ReleaseFacts {
-	return cleanupReleaseFacts(r.owner.Latest())
+func (r ownerRelease) decideRelease() rules.ReleaseDecision {
+	return rules.DecideRelease(cleanupReleaseFacts(r.owner.Latest()))
 }
 
 // cleanupReleaseFacts are the release facts of a cleanup owner's state.
@@ -38,46 +42,104 @@ func cleanupReleaseFacts(state processruntime.CleanupState) rules.ReleaseFacts {
 	}
 }
 
-// finishedRelease observes the non-signalling release of a client process:
-// Wait's own release (Result.ReleaseErr, for example closing a Windows Job
-// Object) and finalization's terminal outcome. Finalization keeps its worker
-// after a caller's bound, so a later Finalize returns that outcome.
+// processReleaseFacts builds rules.ReleaseFacts from the common release
+// outcomes of Wait, Finalize, and pipe/stdin closure. Both finishedRelease
+// (control commands) and runClient (run clients) use it without sharing
+// each other's side effects.
+func processReleaseFacts(finished bool, waitReleaseErr, finalizeErr, pipeCloseErr error) rules.ReleaseFacts {
+	if !finished {
+		return rules.ReleaseFacts{}
+	}
+	return rules.ReleaseFacts{
+		Finished:        true,
+		RootReaped:      finalizeErr == nil,
+		ReleaseFailed:   waitReleaseErr != nil || finalizeErr != nil,
+		PipeCloseFailed: pipeCloseErr != nil,
+	}
+}
+
+// awaitOwnerStdin waits, bounded by ctx, for owner's asynchronous stdin close
+// to complete. When owner is nil it reports an already completed close.
+func awaitOwnerStdin(ctx context.Context, owner *processruntime.CleanupOwner) (processruntime.ClosureState, error) {
+	if owner == nil {
+		return processruntime.ClosureState{Complete: true}, nil
+	}
+	if closure := owner.Latest().StdinClosure; closure.Complete {
+		return closure, nil
+	}
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			closure := owner.Latest().StdinClosure
+			if closure.Complete {
+				return closure, nil
+			}
+			return closure, ctx.Err()
+		case <-ticker.C:
+			if closure := owner.Latest().StdinClosure; closure.Complete {
+				return closure, nil
+			}
+		}
+	}
+}
+
+// closeCapturePipe closes one child pipe end, treating os.ErrClosed as
+// already released (matching internal/process/cleanup.go).
+func closeCapturePipe(pipe io.Closer) error {
+	err := pipe.Close()
+	if errors.Is(err, os.ErrClosed) {
+		return nil
+	}
+	return err
+}
+
+// finishedRelease observes the non-signalling release of a finished control
+// command: Wait's own release (Result.ReleaseErr, for example closing a
+// Windows Job Object), finalization's terminal outcome, and the cleanup
+// owner's asynchronous stdin close.
 type finishedRelease struct {
 	done chan struct{}
-	// result, finalizeErr and err are read only after done closed. err joins
-	// result.ReleaseErr and finalizeErr.
+	// result, finalizeErr and stdinErr are read only after done closed.
 	result      processruntime.Result
 	finalizeErr error
-	err         error
+	stdinErr    error
 }
 
 // startFinishedRelease observes the release of a control command whose Wait
 // already returned result.
-func startFinishedRelease(proc processruntime.Process, result processruntime.Result) *finishedRelease {
+func startFinishedRelease(proc processruntime.Process, result processruntime.Result, owner *processruntime.CleanupOwner) *finishedRelease {
 	release := &finishedRelease{done: make(chan struct{}), result: result}
 	go func() {
 		release.finalizeErr = processruntime.Finalize(context.Background(), proc)
-		release.err = errors.Join(release.result.ReleaseErr, release.finalizeErr)
+		stdinClosure, _ := awaitOwnerStdin(context.Background(), owner)
+		release.stdinErr = stdinClosure.Err
 		close(release.done)
 	}()
 	return release
 }
 
 func (r *finishedRelease) Done() <-chan struct{} { return r.done }
+
 func (r *finishedRelease) releaseFacts() rules.ReleaseFacts {
 	select {
 	case <-r.done:
-		return rules.ReleaseFacts{Finished: true, RootReaped: r.finalizeErr == nil, ReleaseFailed: r.err != nil}
+		return processReleaseFacts(true, r.result.ReleaseErr, r.finalizeErr, r.stdinErr)
 	default:
-		return rules.ReleaseFacts{}
+		return processReleaseFacts(false, nil, nil, nil)
 	}
 }
 
+func (r *finishedRelease) decideRelease() rules.ReleaseDecision {
+	return rules.DecideRelease(r.releaseFacts())
+}
+
 // releasePendingError reports a control command whose release was not
-// confirmed: a finished command whose finalization failed or did not end
-// within its bound, or a cancelled command whose cleanup completed without
-// a confirmed reap or pipe close. The session keeps release until it is
-// confirmed.
+// confirmed: a finished command whose finalization or stdin close failed or
+// did not end within its bound, or a cancelled command whose cleanup
+// completed without a confirmed reap or pipe close. The session keeps
+// release until it is confirmed.
 type releasePendingError struct {
 	release processRelease
 	cause   error

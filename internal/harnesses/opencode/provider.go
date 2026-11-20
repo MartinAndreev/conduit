@@ -138,9 +138,19 @@ func abortServer(ctx context.Context, server *ownedServer, cause error) error {
 	if outcome.stop.Confirmed() && outcome.release.Confirmed() {
 		return cause
 	}
+	if server.afterStopAwait != nil {
+		server.afterStopAwait()
+	}
 	var stopErr error
 	select {
 	case <-server.cleanup.Done():
+		// Cleanup may have finished right after Await timed out; recompute
+		// both decisions from the final snapshot so ReleaseErr and pipe
+		// close errors are never lost.
+		outcome = server.latestOutcome()
+		if outcome.stop.Confirmed() && outcome.release.Confirmed() {
+			return cause
+		}
 		if !outcome.stop.Confirmed() {
 			stopErr = errors.Join(errors.New(outcome.stop.Reason), outcome.state.TreeTerminationErr)
 		}

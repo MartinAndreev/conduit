@@ -212,26 +212,38 @@ storage, result acceptance, CLI wiring, or live model calls.
   termination and release owner (`runClient`) shared by `readRun`, Close,
   `watchServer`, `killRunClient`, and stdin-close failure cleanup. Ownership of
   finalization is reserved atomically under `s.mu` via `rules.DecideClientClaim`:
-  once `readRun` reserves natural finalization on a clean exit, a later Close
-  or server-loss path sends no kill and awaits that shared natural release
+  once `readRun` reserves natural finalization on a clean exit, `watchServer`
+  skips killing and Close sends no kill and awaits that shared natural release
   (otherwise Close or a kill path reserves the client's single `KillTree`,
-  followed immediately by `RequestFinalize` independently of `Wait` and the
-  pipes, and `readRun` yields when Close claimed it first). Every caller shares
-  that single kill's outcome (`process.ErrSignalsFinalized` is never a
-  confirmed kill) and one shared `Wait` + `Finalize` observer, so repeated
-  Close timeouts await the same observer without spawning extra `Wait`
-  goroutines or sending another kill. The session's own server is stopped
-  through its `process.CleanupOwner`, which registers finalization right after
-  the group kill; `rules.DecideServerStop` decides `ExecutionNone`, while
+  run by one worker and followed immediately by `RequestFinalize`
+  independently of `Wait` and the pipes, and `readRun` yields when Close
+  claimed it first). Because a naturally finalized client's group was never
+  killed, descendants without open pipes are not proven stopped, so
+  `rules.DecideClientCloseRelease` keeps `ResourcesReleased=false` (while
+  `ExecutionState` still becomes `none` when the server stop confirms). Callers
+  await the single kill worker within their own deadline so a blocked
+  `KillTree` cannot prevent Close from stopping the server (the kill stays
+  unconfirmed until it finishes, and `process.ErrSignalsFinalized` is never a
+  confirmed kill). Stdin is pending from client publication until its close
+  outcome is recorded; the single shared `Wait` + `Finalize` observer starts
+  even on an unconfirmed kill or unsupported tree kill, retains the kill
+  outcome, stdin close error, and forced pipe-close errors, and is reused by
+  repeated Close timeouts without spawning extra `Wait` goroutines or sending
+  another kill. The session's own server is stopped through its
+  `process.CleanupOwner`, which registers finalization right after the group
+  kill; `rules.DecideServerStop` decides `ExecutionNone`, while
   `rules.DecideRelease` also checks the server's `Wait` release error and
-  pipe/stdin close errors (also joined into a failed open's error). The session
-  tracks every unconfirmed client release (a run client whose release was not
-  confirmed within `readRun`'s bound or after stdin-close failure, a finished
-  control command whose `Finalize` or `Wait` release failed or timed out, and a
-  cancelled control command's cleanup owner); Close waits for them within
-  `StopGrace` and reports `ResourcesReleased` only when `rules.DecideRelease`
-  confirms every tracked release; a pending or failed one keeps it false, also
-  for a later Close.
+  pipe/stdin close errors (a failed open recomputes both decisions from
+  `Latest()` if cleanup completed right after `Await` timed out, and joins any
+  unconfirmed stop or release errors). The session tracks every unconfirmed
+  client release (a run client whose release was not confirmed within
+  `readRun`'s bound or after stdin-close failure, a finished control command
+  whose `Finalize`, `Wait` release, or `CleanupOwner` stdin close failed or
+  timed out, and a cancelled control command's cleanup owner); Close waits for
+  them within `StopGrace` and reports `ResourcesReleased` only when every
+  tracked release is confirmed (`rules.DecideClientCloseRelease` for killed
+  run clients, `rules.DecideRelease` otherwise); a pending or failed one keeps
+  it false, also for a later Close.
 - The shared OpenCode service is not owned by the adapter and is never killed by
   close. With no proven final phase or native schema field, the adapter withholds
   `ResultCandidate` in this slice.

@@ -10,9 +10,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MartinAndreev/conduit/internal/lockscope"
 	processruntime "github.com/MartinAndreev/conduit/internal/process"
 	"github.com/MartinAndreev/conduit/internal/sessions/provider"
 )
+
+type closeOutcome struct {
+	res provider.CloseSessionResult
+	err error
+}
 
 // naturalFinalizeProcess exits cleanly right away and blocks inside Finalize
 // after signalling finalizeEntered, so a test can interleave Close right
@@ -23,8 +29,10 @@ type naturalFinalizeProcess struct {
 	rootDone        chan struct{}
 	finalizeEntered chan struct{}
 	finalizeGate    chan struct{}
+	finalizeDone    chan struct{}
 	enterOnce       sync.Once
 	gateOnce        sync.Once
+	doneOnce        sync.Once
 	finalized       atomic.Bool
 	kills           atomic.Int32
 	finalizes       atomic.Int32
@@ -38,6 +46,7 @@ func newNaturalFinalizeProcess() *naturalFinalizeProcess {
 		rootDone:        root,
 		finalizeEntered: make(chan struct{}),
 		finalizeGate:    make(chan struct{}),
+		finalizeDone:    make(chan struct{}),
 	}
 }
 
@@ -67,6 +76,7 @@ func (p *naturalFinalizeProcess) Finalize(ctx context.Context) error {
 	p.enterOnce.Do(func() { close(p.finalizeEntered) })
 	select {
 	case <-p.finalizeGate:
+		p.doneOnce.Do(func() { close(p.finalizeDone) })
 		return p.finalizeErr
 	case <-ctx.Done():
 		return ctx.Err()
@@ -158,13 +168,26 @@ func openSessionWithGrace(t *testing.T, launcher processruntime.Launcher, server
 	return opened.Session, srv
 }
 
-// Limit 1: when readRun reserves natural finalization just before Close
-// claims the client, Close must not send a kill (which would get
-// ErrSignalsFinalized) and must await that natural release instead.
-// Conversely, an actual ErrSignalsFinalized from KillTree is never a
-// confirmed kill.
+func closeAsync(sess provider.Session) <-chan closeOutcome {
+	ch := make(chan closeOutcome, 1)
+	go func() {
+		res, err := sess.Close(context.Background(), provider.CloseSessionRequest{
+			Session: sess.Ref(),
+			Policy:  provider.CloseInterruptThenClose,
+		})
+		ch <- closeOutcome{res: res, err: err}
+	}()
+	return ch
+}
+
+// Limit 1 + Option A: when readRun reserves natural finalization just before
+// Close claims the client, Close must not send a kill (which would get
+// ErrSignalsFinalized) and must await that natural release instead. Because
+// the process group was never killed, descendants without open pipes are not
+// proven stopped, so Close returns ExecutionNone and ResourcesReleased=false.
+// An actual ErrSignalsFinalized from KillTree is likewise never confirmed.
 func TestCloseAwaitsNaturalRunFinalizationWithoutKill(t *testing.T) {
-	t.Run("natural finalization confirms while Close waits", func(t *testing.T) {
+	t.Run("natural finalization finishes while Close waits without killing", func(t *testing.T) {
 		proc := newNaturalFinalizeProcess()
 		t.Cleanup(proc.release)
 		sess, _ := openSessionWithGrace(t, oneRunLauncher{proc}, nil, time.Second)
@@ -173,25 +196,30 @@ func TestCloseAwaitsNaturalRunFinalizationWithoutKill(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("readRun did not enter natural finalization")
 		}
-		closed := make(chan provider.CloseSessionResult, 1)
-		go func() {
-			closed <- closeForAccounting(t, sess)
-		}()
+		closed := closeAsync(sess)
 		waitForState(t, sess, provider.SessionClosed)
 		proc.release()
-		result := <-closed
-		if result.ExecutionState != provider.ExecutionNone || !result.ResourcesReleased {
-			t.Fatalf("close after natural finalization = %#v, want ExecutionNone and ResourcesReleased=true", result)
+		outcome := <-closed
+		if outcome.err != nil {
+			t.Fatalf("close error = %v", outcome.err)
+		}
+		if outcome.res.ExecutionState != provider.ExecutionNone || outcome.res.ResourcesReleased {
+			t.Fatalf("close after natural finalization = %#v, want ExecutionNone and ResourcesReleased=false", outcome.res)
+		}
+		select {
+		case <-proc.finalizeDone:
+		case <-time.After(2 * time.Second):
+			t.Fatal("natural finalization did not complete")
 		}
 		if kills := proc.kills.Load(); kills != 0 {
 			t.Fatalf("kills = %d, want 0 (Close must await natural finalization without killing)", kills)
 		}
-		if again := closeForAccounting(t, sess); again.ExecutionState != provider.ExecutionNone || !again.ResourcesReleased || proc.kills.Load() != 0 {
+		if again := closeForAccounting(t, sess); again.ExecutionState != provider.ExecutionNone || again.ResourcesReleased || proc.kills.Load() != 0 {
 			t.Fatalf("repeated close = %#v kills = %d", again, proc.kills.Load())
 		}
 	})
 
-	t.Run("repeated Close after timeout confirms once natural release finishes", func(t *testing.T) {
+	t.Run("repeated Close after timeout awaits same natural release without killing", func(t *testing.T) {
 		proc := newNaturalFinalizeProcess()
 		t.Cleanup(proc.release)
 		sess, _ := openSessionWithGrace(t, oneRunLauncher{proc}, nil, 40*time.Millisecond)
@@ -208,9 +236,14 @@ func TestCloseAwaitsNaturalRunFinalizationWithoutKill(t *testing.T) {
 			t.Fatalf("kills = %d, want 0", kills)
 		}
 		proc.release()
+		select {
+		case <-proc.finalizeDone:
+		case <-time.After(2 * time.Second):
+			t.Fatal("natural finalization did not finish")
+		}
 		again := closeForAccounting(t, sess)
-		if again.ExecutionState != provider.ExecutionNone || !again.ResourcesReleased {
-			t.Fatalf("second close after natural finalization finished = %#v", again)
+		if again.ExecutionState != provider.ExecutionNone || again.ResourcesReleased {
+			t.Fatalf("second close after natural finalization finished = %#v, want ExecutionNone and ResourcesReleased=false", again)
 		}
 		if kills := proc.kills.Load(); kills != 0 {
 			t.Fatalf("kills = %d, want 0", kills)
@@ -227,13 +260,14 @@ func TestCloseAwaitsNaturalRunFinalizationWithoutKill(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("readRun did not enter natural finalization")
 		}
-		closed := make(chan provider.CloseSessionResult, 1)
-		go func() {
-			closed <- closeForAccounting(t, sess)
-		}()
+		closed := closeAsync(sess)
 		waitForState(t, sess, provider.SessionClosed)
 		proc.release()
-		for i, res := range []provider.CloseSessionResult{<-closed, closeForAccounting(t, sess)} {
+		first := <-closed
+		if first.err != nil {
+			t.Fatalf("first close error = %v", first.err)
+		}
+		for i, res := range []provider.CloseSessionResult{first.res, closeForAccounting(t, sess)} {
 			if res.ExecutionState != provider.ExecutionNone || res.ResourcesReleased {
 				t.Fatalf("close #%d after failed natural finalization = %#v", i+1, res)
 			}
@@ -261,13 +295,17 @@ func TestCloseAwaitsNaturalRunFinalizationWithoutKill(t *testing.T) {
 
 // countingHeldPipeProcess models an escaped descendant holding stdout after
 // the root exited cleanly: KillTree succeeds and Finalize succeeds, while
-// Wait stays blocked until release(). waits and inFlightWaits track whether
-// repeated Close calls accumulate duplicate Wait goroutines.
+// Wait stays blocked until release(). waitEntered and waitExited synchronize
+// deterministically without sleeps.
 type countingHeldPipeProcess struct {
 	stdoutR       *io.PipeReader
 	stdoutW       *io.PipeWriter
 	rootDone      chan struct{}
+	waitEntered   chan struct{}
+	waitExited    chan struct{}
 	waitGate      chan struct{}
+	enterOnce     sync.Once
+	exitOnce      sync.Once
 	releaseOnce   sync.Once
 	kills         atomic.Int32
 	waits         atomic.Int32
@@ -280,10 +318,12 @@ func newCountingHeldPipeProcess() *countingHeldPipeProcess {
 	root := make(chan struct{})
 	close(root)
 	return &countingHeldPipeProcess{
-		stdoutR:  r,
-		stdoutW:  w,
-		rootDone: root,
-		waitGate: make(chan struct{}),
+		stdoutR:     r,
+		stdoutW:     w,
+		rootDone:    root,
+		waitEntered: make(chan struct{}),
+		waitExited:  make(chan struct{}),
+		waitGate:    make(chan struct{}),
 	}
 }
 
@@ -308,7 +348,11 @@ func (p *countingHeldPipeProcess) Finalize(context.Context) error {
 func (p *countingHeldPipeProcess) Wait() processruntime.Result {
 	p.waits.Add(1)
 	p.inFlightWaits.Add(1)
-	defer p.inFlightWaits.Add(-1)
+	p.enterOnce.Do(func() { close(p.waitEntered) })
+	defer func() {
+		p.inFlightWaits.Add(-1)
+		p.exitOnce.Do(func() { close(p.waitExited) })
+	}()
 	<-p.waitGate
 	return processruntime.Result{ExitCode: 0}
 }
@@ -331,10 +375,18 @@ func TestRepeatedCloseTimeoutsShareSingleWaitObserver(t *testing.T) {
 	proc := newCountingHeldPipeProcess()
 	t.Cleanup(proc.release)
 	sess, _ := openSessionWithGrace(t, oneRunLauncher{proc}, nil, 30*time.Millisecond)
+	client := sess.(*session).client
 	for i := range 5 {
 		res := closeForAccounting(t, sess)
 		if res.ExecutionState != provider.ExecutionNone || res.ResourcesReleased {
 			t.Fatalf("close timeout #%d = %#v, want ExecutionNone and ResourcesReleased=false", i+1, res)
+		}
+		if i == 0 {
+			select {
+			case <-proc.waitEntered:
+			case <-time.After(2 * time.Second):
+				t.Fatal("shared Wait observer did not start")
+			}
 		}
 	}
 	if kills := proc.kills.Load(); kills != 1 {
@@ -347,12 +399,15 @@ func TestRepeatedCloseTimeoutsShareSingleWaitObserver(t *testing.T) {
 		t.Fatalf("in-flight Wait calls = %d, want 1", inFlight)
 	}
 	proc.release()
-	deadline := time.Now().Add(2 * time.Second)
-	for proc.inFlightWaits.Load() != 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("shared Wait observer did not finish after pipe release")
-		}
-		time.Sleep(5 * time.Millisecond)
+	select {
+	case <-proc.waitExited:
+	case <-time.After(2 * time.Second):
+		t.Fatal("shared Wait observer did not exit after pipe release")
+	}
+	select {
+	case <-client.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("shared release observer did not complete after pipe release")
 	}
 	final := closeForAccounting(t, sess)
 	if final.ExecutionState != provider.ExecutionNone || !final.ResourcesReleased {
@@ -469,8 +524,6 @@ func TestServerLossTerminatesAndFinalizesCleanExitedRunWithHeldPipe(t *testing.T
 			if proc.waited.Load() {
 				t.Fatal("Wait returned although the descendant still holds stderr")
 			}
-			// While the pipe is held, Close reuses watchServer's kill and
-			// reports unreleased resources without sending another kill.
 			pending := closeForAccounting(t, sess)
 			if pending.ExecutionState != provider.ExecutionNone || pending.ResourcesReleased {
 				t.Fatalf("close while pipe held = %#v", pending)
@@ -478,8 +531,6 @@ func TestServerLossTerminatesAndFinalizesCleanExitedRunWithHeldPipe(t *testing.T
 			if kills := proc.kills.Load(); kills != 1 {
 				t.Fatalf("Close sent a second kill after watchServer: kills = %d", kills)
 			}
-			// Once the descendant drops stderr, Close reports the outcome of
-			// watchServer's single kill and shared release.
 			proc.release()
 			done := closeForAccounting(t, sess)
 			if done.ExecutionState != provider.ExecutionNone || done.ResourcesReleased != tc.wantReleased {
@@ -510,6 +561,7 @@ type failingReleaseServerProcess struct {
 	stdoutCloseErr error
 	stderrCloseErr error
 	stdinCloseErr  error
+	waitGate       chan struct{}
 }
 
 func (p *failingReleaseServerProcess) Stdin() io.WriteCloser {
@@ -531,6 +583,9 @@ func (p *failingReleaseServerProcess) Stderr() io.ReadCloser {
 	return p.fakeServerProcess.Stderr()
 }
 func (p *failingReleaseServerProcess) Wait() processruntime.Result {
+	if p.waitGate != nil {
+		<-p.waitGate
+	}
 	res := p.fakeServerProcess.Wait()
 	res.ReleaseErr = p.waitReleaseErr
 	return res
@@ -561,12 +616,11 @@ func TestServerReleaseErrorsBlockResourcesReleased(t *testing.T) {
 	cases := []struct {
 		name      string
 		configure func(*failingReleaseServerProcess)
-		cause     error
 	}{
-		{"Wait ReleaseErr", func(p *failingReleaseServerProcess) { p.waitReleaseErr = errors.New("job object close failed") }, errors.New("job object close failed")},
-		{"stdout PipeCloseErr", func(p *failingReleaseServerProcess) { p.stdoutCloseErr = errors.New("stdout close failed") }, errors.New("stdout close failed")},
-		{"stderr PipeCloseErr", func(p *failingReleaseServerProcess) { p.stderrCloseErr = errors.New("stderr close failed") }, errors.New("stderr close failed")},
-		{"StdinCloseErr", func(p *failingReleaseServerProcess) { p.stdinCloseErr = errors.New("stdin close failed") }, errors.New("stdin close failed")},
+		{"Wait ReleaseErr", func(p *failingReleaseServerProcess) { p.waitReleaseErr = errors.New("job object close failed") }},
+		{"stdout PipeCloseErr", func(p *failingReleaseServerProcess) { p.stdoutCloseErr = errors.New("stdout close failed") }},
+		{"stderr PipeCloseErr", func(p *failingReleaseServerProcess) { p.stderrCloseErr = errors.New("stderr close failed") }},
+		{"StdinCloseErr", func(p *failingReleaseServerProcess) { p.stdinCloseErr = errors.New("stdin close failed") }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -607,6 +661,530 @@ func TestServerReleaseErrorsBlockResourcesReleased(t *testing.T) {
 		_, err := adapter.OpenSession(context.Background(), openRequest())
 		if !errors.Is(err, releaseErr) {
 			t.Fatalf("failed open error = %v, want joined server release error %v", err, releaseErr)
+		}
+	})
+}
+
+// gatedCloser blocks Close until gate closes, signalling entered once inside.
+type gatedCloser struct {
+	entered   chan struct{}
+	gate      chan struct{}
+	enterOnce sync.Once
+	gateOnce  sync.Once
+	err       error
+}
+
+func newGatedCloser(err error) *gatedCloser {
+	return &gatedCloser{entered: make(chan struct{}), gate: make(chan struct{}), err: err}
+}
+func (*gatedCloser) Write(b []byte) (int, error) { return len(b), nil }
+func (c *gatedCloser) Close() error {
+	c.enterOnce.Do(func() { close(c.entered) })
+	<-c.gate
+	return c.err
+}
+func (c *gatedCloser) release() { c.gateOnce.Do(func() { close(c.gate) }) }
+
+// stdinAccountingProcess models a run client whose stdin close, KillTree,
+// forced pipe close, and Wait can be independently scripted and gated.
+type stdinAccountingProcess struct {
+	stdin          io.WriteCloser
+	stdout         io.ReadCloser
+	stderr         io.ReadCloser
+	killErr        error
+	killEntered    chan struct{}
+	killGate       chan struct{}
+	killEnterOnce  sync.Once
+	killGateOnce   sync.Once
+	kills          atomic.Int32
+	waitGate       chan struct{}
+	waitDone       chan struct{}
+	waitOnce       sync.Once
+	waitDoneOnce   sync.Once
+	finalizeErr    error
+	treeKillUnsupp bool
+}
+
+func newStdinAccountingProcess(stdin io.WriteCloser) *stdinAccountingProcess {
+	return &stdinAccountingProcess{
+		stdin:       stdin,
+		stdout:      io.NopCloser(strings.NewReader("")),
+		stderr:      io.NopCloser(strings.NewReader("")),
+		killEntered: make(chan struct{}),
+		waitDone:    make(chan struct{}),
+	}
+}
+
+func (*stdinAccountingProcess) PID() int                { return 35 }
+func (p *stdinAccountingProcess) Stdin() io.WriteCloser { return p.stdin }
+func (p *stdinAccountingProcess) Stdout() io.ReadCloser { return p.stdout }
+func (p *stdinAccountingProcess) Stderr() io.ReadCloser { return p.stderr }
+func (*stdinAccountingProcess) Interrupt() error        { return nil }
+func (p *stdinAccountingProcess) TreeKillSupported() bool {
+	return !p.treeKillUnsupp
+}
+func (p *stdinAccountingProcess) KillTree() error {
+	p.kills.Add(1)
+	p.killEnterOnce.Do(func() { close(p.killEntered) })
+	if p.killGate != nil {
+		<-p.killGate
+	}
+	return p.killErr
+}
+func (p *stdinAccountingProcess) Wait() processruntime.Result {
+	if p.waitGate != nil {
+		<-p.waitGate
+	}
+	p.waitDoneOnce.Do(func() { close(p.waitDone) })
+	return processruntime.Result{}
+}
+func (p *stdinAccountingProcess) Finalize(context.Context) error { return p.finalizeErr }
+func (p *stdinAccountingProcess) releaseWait() {
+	if p.waitGate != nil {
+		p.waitOnce.Do(func() { close(p.waitGate) })
+	}
+}
+func (p *stdinAccountingProcess) releaseKill() {
+	if p.killGate != nil {
+		p.killGateOnce.Do(func() { close(p.killGate) })
+	}
+}
+
+var _ processruntime.Finalizer = (*stdinAccountingProcess)(nil)
+
+// Finding 1: stdin close failure must retain kill outcome, stdin error, and
+// forced pipe close errors in runClient even after Wait/Finalize finish and
+// s.client clears; and Close must not observe a premature release while
+// StartTurn's stdin close is still pending.
+func TestStdinCloseFailureAccountingAndPendingWindow(t *testing.T) {
+	t.Run("refused kill stays unreleased after root exits and s.client clears", func(t *testing.T) {
+		proc := newStdinAccountingProcess(failingCloser{err: errors.New("stdin close failed")})
+		proc.killErr = errors.New("kill denied")
+		adapter := New(withFakeServer(Config{Control: &fakeControl{}, Launcher: oneRunLauncher{proc}, StopGrace: time.Second}))
+		req := openRequest()
+		opened, err := adapter.OpenSession(context.Background(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := opened.Session.StartTurn(context.Background(), provider.StartTurnRequest{
+			Session: opened.Session.Ref(), Assignment: req.Assignment, ResultContract: req.ResultContract,
+		}); err == nil {
+			t.Fatal("StartTurn succeeded despite stdin close failure")
+		}
+		// Wait until handleStartStdinCloseFailure clears s.client.
+		s := opened.Session.(*session)
+		select {
+		case <-proc.waitDone:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Wait did not finish")
+		}
+		for i := range 2 {
+			res := closeForAccounting(t, opened.Session)
+			if res.ExecutionState != provider.ExecutionNone || res.ResourcesReleased {
+				t.Fatalf("close #%d after refused kill on stdin failure = %#v, want ExecutionNone and ResourcesReleased=false", i+1, res)
+			}
+		}
+		_ = lockscope.WithMutexLock(&s.mu, func() error {
+			if s.client != nil {
+				t.Errorf("s.client was not cleared after Wait/Finalize finished")
+			}
+			return nil
+		})
+	})
+
+	t.Run("stdin error alone blocks ResourcesReleased even when kill and reap succeed", func(t *testing.T) {
+		proc := newStdinAccountingProcess(failingCloser{err: errors.New("stdin close failed")})
+		adapter := New(withFakeServer(Config{Control: &fakeControl{}, Launcher: oneRunLauncher{proc}, StopGrace: time.Second}))
+		req := openRequest()
+		opened, err := adapter.OpenSession(context.Background(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := opened.Session.StartTurn(context.Background(), provider.StartTurnRequest{
+			Session: opened.Session.Ref(), Assignment: req.Assignment, ResultContract: req.ResultContract,
+		}); err == nil {
+			t.Fatal("StartTurn succeeded despite stdin close failure")
+		}
+		for i := range 2 {
+			res := closeForAccounting(t, opened.Session)
+			if res.ExecutionState != provider.ExecutionNone || res.ResourcesReleased {
+				t.Fatalf("close #%d after stdin close error = %#v, want ExecutionNone and ResourcesReleased=false", i+1, res)
+			}
+		}
+	})
+
+	t.Run("forced stdout close error after kill failure is retained in release facts", func(t *testing.T) {
+		stdoutErr := errors.New("stdout close failed")
+		proc := newStdinAccountingProcess(failingCloser{err: errors.New("stdin close failed")})
+		proc.killErr = errors.New("kill denied")
+		proc.stdout = closeErrReader{ReadCloser: io.NopCloser(strings.NewReader("")), closeErr: stdoutErr}
+		adapter := New(withFakeServer(Config{Control: &fakeControl{}, Launcher: oneRunLauncher{proc}, StopGrace: time.Second}))
+		req := openRequest()
+		opened, err := adapter.OpenSession(context.Background(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = opened.Session.StartTurn(context.Background(), provider.StartTurnRequest{
+			Session: opened.Session.Ref(), Assignment: req.Assignment, ResultContract: req.ResultContract,
+		})
+		if !errors.Is(err, stdoutErr) {
+			t.Fatalf("StartTurn err = %v, want joined stdout close error", err)
+		}
+		s := opened.Session.(*session)
+		var tracked *runClient
+		_ = lockscope.WithMutexLock(&s.mu, func() error {
+			for _, rel := range s.releases {
+				if rc, ok := rel.(*runClient); ok {
+					tracked = rc
+				}
+			}
+			return nil
+		})
+		if tracked == nil {
+			t.Fatal("runClient was not tracked in s.releases")
+		}
+		select {
+		case <-tracked.Done():
+		case <-time.After(2 * time.Second):
+			t.Fatal("runClient release did not finish")
+		}
+		if facts := tracked.releaseFacts(); !facts.PipeCloseFailed || tracked.pipeCloseError() == nil {
+			t.Fatalf("releaseFacts = %#v pipeCloseErr = %v, want PipeCloseFailed=true", facts, tracked.pipeCloseError())
+		}
+		if res := closeForAccounting(t, opened.Session); res.ExecutionState != provider.ExecutionNone || res.ResourcesReleased {
+			t.Fatalf("close = %#v, want ExecutionNone and ResourcesReleased=false", res)
+		}
+	})
+
+	t.Run("Close waits for pending StartTurn stdin close before deciding release", func(t *testing.T) {
+		stdin := newGatedCloser(errors.New("stdin close failed"))
+		t.Cleanup(stdin.release)
+		proc := newStdinAccountingProcess(stdin)
+		adapter := New(withFakeServer(Config{Control: &fakeControl{}, Launcher: oneRunLauncher{proc}, StopGrace: time.Second}))
+		req := openRequest()
+		opened, err := adapter.OpenSession(context.Background(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		startDone := make(chan error, 1)
+		go func() {
+			_, startErr := opened.Session.StartTurn(context.Background(), provider.StartTurnRequest{
+				Session: opened.Session.Ref(), Assignment: req.Assignment, ResultContract: req.ResultContract,
+			})
+			startDone <- startErr
+		}()
+		select {
+		case <-stdin.entered:
+		case <-time.After(2 * time.Second):
+			t.Fatal("StartTurn did not enter Stdin().Close()")
+		}
+		closed := closeAsync(opened.Session)
+		// KillTree and Wait both finish right away while Stdin().Close() is
+		// still blocked; Close must wait for stdinDone instead of reporting
+		// ResourcesReleased=true before StartTurn records the stdin error.
+		select {
+		case <-proc.killEntered:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Close did not start KillTree")
+		}
+		select {
+		case <-proc.waitDone:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Wait did not complete")
+		}
+		select {
+		case out := <-closed:
+			t.Fatalf("Close returned %#v (err=%v) while stdin close was still pending", out.res, out.err)
+		default:
+		}
+		stdin.release()
+		if startErr := <-startDone; startErr == nil {
+			t.Fatal("StartTurn succeeded despite stdin close error")
+		}
+		out := <-closed
+		if out.err != nil {
+			t.Fatalf("Close error = %v", out.err)
+		}
+		if out.res.ExecutionState != provider.ExecutionNone || out.res.ResourcesReleased {
+			t.Fatalf("Close = %#v, want ExecutionNone and ResourcesReleased=false", out.res)
+		}
+	})
+}
+
+// Finding 2: a blocked KillTree (started by watchServer or Close itself) must
+// not block Close beyond StopGrace or prevent Close from stopping the server.
+func TestBlockedKillTreeDoesNotBlockCloseFromStoppingServer(t *testing.T) {
+	proc := newStdinAccountingProcess(nopWriteCloser{Writer: io.Discard})
+	proc.killGate = make(chan struct{})
+	proc.waitGate = make(chan struct{})
+	t.Cleanup(func() {
+		proc.releaseKill()
+		proc.releaseWait()
+	})
+	servers := &fakeServerLauncher{}
+	sess, srv := openSessionWithGrace(t, oneRunLauncher{proc}, servers, 40*time.Millisecond)
+	client := sess.(*session).client
+
+	// Close starts the single kill worker, hits StopGrace while KillTree is
+	// blocked, and must still proceed to stop the session's own server.
+	started := time.Now()
+	first := closeForAccounting(t, sess)
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("Close was blocked by KillTree for %s", elapsed)
+	}
+	select {
+	case <-proc.killEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("kill worker did not invoke KillTree")
+	}
+	if srv.kills.Load() == 0 {
+		t.Fatal("Close did not stop the server while client KillTree was blocked")
+	}
+	if first.ExecutionState != provider.ExecutionNone || first.ResourcesReleased {
+		t.Fatalf("first Close = %#v, want ExecutionNone and ResourcesReleased=false", first)
+	}
+
+	// Unblock KillTree and Wait: the shared worker and release observer
+	// finish, and a repeated Close confirms release with only one KillTree.
+	proc.releaseKill()
+	proc.releaseWait()
+	select {
+	case <-client.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("shared release observer did not complete after KillTree unblocked")
+	}
+	second := closeForAccounting(t, sess)
+	if second.ExecutionState != provider.ExecutionNone || !second.ResourcesReleased {
+		t.Fatalf("second Close after KillTree unblocked = %#v, want ExecutionNone and ResourcesReleased=true", second)
+	}
+	if kills := proc.kills.Load(); kills != 1 {
+		t.Fatalf("kills = %d, want 1", kills)
+	}
+}
+
+// Finding 3: even when KillTree is refused or tree kill is unsupported,
+// Close must still start the shared release observer so releaseDone closes
+// once the process eventually exits, while DecideClientCloseRelease keeps
+// ResourcesReleased false.
+func TestUnconfirmedKillStillCompletesReleaseObserver(t *testing.T) {
+	cases := []struct {
+		name      string
+		configure func(*stdinAccountingProcess)
+	}{
+		{"refused kill", func(p *stdinAccountingProcess) { p.killErr = errors.New("kill denied") }},
+		{"tree kill unsupported", func(p *stdinAccountingProcess) { p.treeKillUnsupp = true }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stdoutR, stdoutW := io.Pipe()
+			proc := newStdinAccountingProcess(nopWriteCloser{Writer: io.Discard})
+			proc.stdout = stdoutR
+			proc.waitGate = make(chan struct{})
+			tc.configure(proc)
+			t.Cleanup(func() {
+				_ = stdoutW.Close()
+				proc.releaseWait()
+			})
+			sess, _ := openSessionWithGrace(t, oneRunLauncher{proc}, nil, 50*time.Millisecond)
+			client := sess.(*session).client
+			first := closeForAccounting(t, sess)
+			if first.ExecutionState != provider.ExecutionNone || first.ResourcesReleased {
+				t.Fatalf("first close = %#v, want ExecutionNone and ResourcesReleased=false", first)
+			}
+			_ = stdoutW.Close()
+			proc.releaseWait()
+			select {
+			case <-client.Done():
+			case <-time.After(2 * time.Second):
+				t.Fatal("shared release observer never closed releaseDone after unconfirmed kill")
+			}
+			second := closeForAccounting(t, sess)
+			if second.ExecutionState != provider.ExecutionNone || second.ResourcesReleased {
+				t.Fatalf("second close = %#v, want ExecutionNone and ResourcesReleased=false", second)
+			}
+		})
+	}
+}
+
+// Finding 4: if server cleanup finishes right after Await timed out and
+// before abortServer checks cleanup.Done, abortServer must recompute both
+// stop and release decisions from cleanup.Latest() so ReleaseErr and pipe
+// close errors are never lost (and a clean finish is not misreported).
+func TestAbortServerReadsFinalSnapshotWhenCleanupCompletesAfterAwaitTimeout(t *testing.T) {
+	t.Run("preserves ReleaseErr and PipeCloseErr from final snapshot", func(t *testing.T) {
+		waitReleaseErr := errors.New("late server job object close failed")
+		stdoutCloseErr := errors.New("late server stdout close failed")
+		waitGate := make(chan struct{})
+		proc := &failingReleaseServerProcess{
+			fakeServerProcess: newFakeServerProcess(testListeningLine),
+			waitReleaseErr:    waitReleaseErr,
+			stdoutCloseErr:    stdoutCloseErr,
+			waitGate:          waitGate,
+		}
+		t.Cleanup(func() {
+			select {
+			case <-waitGate:
+			default:
+				close(waitGate)
+			}
+		})
+		server, err := startOwnedServer(context.Background(), oneRunLauncher{proc}, linuxLaunch(), testServerPassword, time.Second, 20*time.Millisecond)
+		if err != nil {
+			t.Fatal(err)
+		}
+		server.afterStopAwait = func() {
+			close(waitGate)
+			<-server.cleanup.Done()
+		}
+		cause := errors.New("create session failed")
+		got := abortServer(context.Background(), server, cause)
+		var pending *CleanupPendingError
+		if errors.As(got, &pending) {
+			t.Fatalf("abortServer returned CleanupPendingError although Done was closed: %v", got)
+		}
+		if !errors.Is(got, cause) || !errors.Is(got, waitReleaseErr) || !errors.Is(got, stdoutCloseErr) {
+			t.Fatalf("abortServer = %v, want cause + waitReleaseErr + stdoutCloseErr", got)
+		}
+	})
+
+	t.Run("clean completion after timeout returns original cause without pending error", func(t *testing.T) {
+		waitGate := make(chan struct{})
+		proc := &failingReleaseServerProcess{
+			fakeServerProcess: newFakeServerProcess(testListeningLine),
+			waitGate:          waitGate,
+		}
+		t.Cleanup(func() {
+			select {
+			case <-waitGate:
+			default:
+				close(waitGate)
+			}
+		})
+		server, err := startOwnedServer(context.Background(), oneRunLauncher{proc}, linuxLaunch(), testServerPassword, time.Second, 20*time.Millisecond)
+		if err != nil {
+			t.Fatal(err)
+		}
+		server.afterStopAwait = func() {
+			close(waitGate)
+			<-server.cleanup.Done()
+		}
+		cause := errors.New("create session failed")
+		got := abortServer(context.Background(), server, cause)
+		if !errors.Is(got, cause) {
+			t.Fatalf("abortServer = %v, want cause", got)
+		}
+		var pending *CleanupPendingError
+		if errors.As(got, &pending) {
+			t.Fatalf("abortServer returned CleanupPendingError on clean final snapshot: %v", got)
+		}
+		if got != cause {
+			t.Fatalf("abortServer = %v, want unmodified cause %v", got, cause)
+		}
+	})
+}
+
+type scriptedControlProcess struct {
+	stdin  io.WriteCloser
+	output string
+}
+
+func (*scriptedControlProcess) PID() int                { return 36 }
+func (p *scriptedControlProcess) Stdin() io.WriteCloser { return p.stdin }
+func (p *scriptedControlProcess) Stdout() io.ReadCloser {
+	return io.NopCloser(strings.NewReader(p.output))
+}
+func (*scriptedControlProcess) Stderr() io.ReadCloser   { return io.NopCloser(strings.NewReader("")) }
+func (*scriptedControlProcess) Interrupt() error        { return nil }
+func (*scriptedControlProcess) KillTree() error         { return nil }
+func (*scriptedControlProcess) TreeKillSupported() bool { return true }
+func (*scriptedControlProcess) Wait() processruntime.Result {
+	return processruntime.Result{ExitCode: 0}
+}
+func (*scriptedControlProcess) Finalize(context.Context) error { return nil }
+
+var _ processruntime.Finalizer = (*scriptedControlProcess)(nil)
+
+// Finding 5: the normal completion path of cliControl.run must include the
+// cleanup owner's stdin close outcome in release confirmation and hand any
+// unconfirmed release to endControlOp so Close accounts for it.
+func TestFinishedControlCommandAccountsForStdinClose(t *testing.T) {
+	t.Run("failed stdin close fails command and blocks Close ResourcesReleased", func(t *testing.T) {
+		stdinErr := errors.New("control stdin close failed")
+		proc := &scriptedControlProcess{
+			stdin:  failingCloser{err: stdinErr},
+			output: `{"data":{"id":"receipt"}}`,
+		}
+		control := cliPromptControl{
+			fakeControl: &fakeControl{},
+			cli:         &cliControl{executable: "opencode", launcher: oneRunLauncher{proc}},
+		}
+		fixture := newReconcileFixture(t, control, 300*time.Millisecond, func(s *session) {
+			s.config.StopGrace = 300 * time.Millisecond
+		})
+		err := steerOnce(context.Background(), fixture)
+		if !errors.Is(err, errControlCleanup) || !errors.Is(err, stdinErr) {
+			t.Fatalf("steer = %v, want errControlCleanup + stdinErr", err)
+		}
+		awaitTurnEnded(t, fixture.session)
+		for i := range 2 {
+			res := closeForAccounting(t, fixture.session)
+			if res.ExecutionState != provider.ExecutionNone || res.ResourcesReleased {
+				t.Fatalf("close #%d after failed control stdin close = %#v, want ExecutionNone and ResourcesReleased=false", i+1, res)
+			}
+		}
+	})
+
+	t.Run("pending stdin close stays tracked until stdin closes cleanly", func(t *testing.T) {
+		stdin := newGatedCloser(nil)
+		t.Cleanup(stdin.release)
+		proc := &scriptedControlProcess{
+			stdin:  stdin,
+			output: `{"data":{"id":"receipt"}}`,
+		}
+		control := cliPromptControl{
+			fakeControl: &fakeControl{},
+			cli:         &cliControl{executable: "opencode", launcher: oneRunLauncher{proc}},
+		}
+		fixture := newReconcileFixture(t, control, 300*time.Millisecond, func(s *session) {
+			s.config.StopGrace = 60 * time.Millisecond
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+		err := steerOnce(ctx, fixture)
+		cancel()
+		if !errors.Is(err, errControlCleanup) || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("steer = %v, want errControlCleanup + DeadlineExceeded", err)
+		}
+		select {
+		case <-stdin.entered:
+		case <-time.After(2 * time.Second):
+			t.Fatal("control command did not attempt stdin close")
+		}
+		awaitTurnEnded(t, fixture.session)
+		first := closeForAccounting(t, fixture.session)
+		if first.ExecutionState != provider.ExecutionNone || first.ResourcesReleased {
+			t.Fatalf("close while control stdin close pending = %#v, want ExecutionNone and ResourcesReleased=false", first)
+		}
+		stdin.release()
+		// Wait for the tracked finishedRelease to observe stdin completion.
+		s := fixture.session.(*session)
+		var tracked processRelease
+		_ = lockscope.WithMutexLock(&s.mu, func() error {
+			if len(s.releases) > 0 {
+				tracked = s.releases[0]
+			}
+			return nil
+		})
+		if tracked == nil {
+			t.Fatal("pending control stdin release was not tracked in s.releases")
+		}
+		select {
+		case <-tracked.Done():
+		case <-time.After(2 * time.Second):
+			t.Fatal("tracked control release did not complete after stdin closed")
+		}
+		again := closeForAccounting(t, fixture.session)
+		if again.ExecutionState != provider.ExecutionNone || !again.ResourcesReleased {
+			t.Fatalf("close after control stdin closed = %#v, want ExecutionNone and ResourcesReleased=true", again)
 		}
 	})
 }

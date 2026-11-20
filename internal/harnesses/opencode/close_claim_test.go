@@ -35,6 +35,7 @@ func TestCloseClaimKeepsRunFromFinalizing(t *testing.T) {
 			s := opened.Session.(*session)
 			proc := &fakeProcess{stdout: io.NopCloser(strings.NewReader("")), stderr: io.NopCloser(strings.NewReader(""))}
 			client := newRunClient(proc)
+			_ = client.closeStdin()
 			_ = lockscope.WithMutexLock(&s.mu, func() error {
 				s.client = client
 				if tc.claimed {
