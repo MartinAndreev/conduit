@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"sync"
-	"sync/atomic"
 
 	"github.com/MartinAndreev/conduit/internal/harnesses/opencode/rules"
 	"github.com/MartinAndreev/conduit/internal/lockscope"
@@ -17,11 +16,15 @@ import (
 //   - finalization and termination ownership is reserved atomically under the
 //     session mutex (s.mu) via claimLocked and rules.DecideClientClaim;
 //   - every exit (clean or failed) runs at most one kill worker that calls
-//     KillTree and immediately starts the single Finalize worker independently
-//     of Wait and pipes; callers wait within their own deadline;
+//     KillTree and synchronously registers finalization before closing
+//     killDone; callers wait within their own deadline;
+//   - when proc implements RootExitObserver, Wait is invoked only after
+//     killDone closes, so on Windows KillTree always runs before Wait closes
+//     the Job Object;
 //   - stdin is pending from publication until closeStdin records its outcome,
-//     and forced stdout/stderr closure runs at most once in its own worker
-//     whose completion enters releaseDone;
+//     and stdout/stderr closure runs once in its own worker whose completion
+//     always precedes releaseDone (capturing forced-close errors as well as
+//     trackedReadCloser's idempotent Close errors discarded by Wait);
 //   - at most one Wait and one release observer run for the whole lifetime of
 //     the client, so repeated Close calls only await that shared observer
 //     without spawning more goroutines.
@@ -37,11 +40,11 @@ type runClient struct {
 	stdinDone chan struct{}
 	stdinErr  error
 
-	// Forced stdout/stderr closure worker (used on stdin-close cleanup when
-	// termination fails or times out). pipeMu protects pipeCloseErr.
+	// Single stdout/stderr close worker. May be triggered early (forced
+	// cleanup on stdin failure or post-root-exit timeout) or after Wait in
+	// startRelease; its completion always precedes releaseDone.
 	pipeMu       sync.Mutex
 	pipesOnce    sync.Once
-	pipesStarted atomic.Bool
 	pipesDone    chan struct{}
 	pipeCloseErr error
 
@@ -92,14 +95,15 @@ func (c *runClient) closeStdin() error {
 	return c.stdinErr
 }
 
-// startClosePipes launches the client's single forced stdout/stderr close
-// worker (used after stdin-close failure when termination fails or times out).
-// The worker has no deadline because io.Closer.Close takes no context and
-// must finish in the background so releaseDone reflects its terminal outcome
-// while callers bound their own wait via awaitClosePipes.
+// startClosePipes launches the client's single stdout/stderr close worker.
+// It is invoked either early (forced cleanup on stdin failure or post-root-exit
+// timeout) or after Wait in startRelease (to observe trackedReadCloser's
+// idempotent Close error that execProcess.Wait discards). The worker has no
+// deadline because io.Closer.Close takes no context and must finish in the
+// background so releaseDone reflects its terminal outcome while callers bound
+// their own wait via awaitClosePipes.
 func (c *runClient) startClosePipes() <-chan struct{} {
 	c.pipesOnce.Do(func() {
-		c.pipesStarted.Store(true)
 		go func() {
 			err := errors.Join(closeCapturePipe(c.proc.Stdout()), closeCapturePipe(c.proc.Stderr()))
 			_ = lockscope.WithMutexLock(&c.pipeMu, func() error {
@@ -112,9 +116,9 @@ func (c *runClient) startClosePipes() <-chan struct{} {
 	return c.pipesDone
 }
 
-// awaitClosePipes starts forced pipe closure and waits for it bounded by ctx.
-// When ctx expires first, the worker keeps running and its completion still
-// feeds releaseDone.
+// awaitClosePipes starts pipe closure and waits for it bounded by ctx. When
+// ctx expires first, the worker keeps running and its completion still feeds
+// releaseDone.
 func (c *runClient) awaitClosePipes(ctx context.Context) error {
 	done := c.startClosePipes()
 	select {
@@ -139,38 +143,47 @@ func (c *runClient) pipeCloseError() error {
 	return err
 }
 
-// startFinalize launches the client's single Finalize worker once, right
-// after KillTree finishes, independently of Wait and output pipes. Calling
-// Finalize(context.Background()) directly both registers finalization right
-// away (closing the signal gate once the root exits, like RequestFinalize)
-// and observes its single terminal outcome without calling Finalize twice.
-// The worker has no deadline because finalization owns reaping the root to
-// completion after callers stop waiting.
-func (c *runClient) startFinalize() <-chan struct{} {
+// registerFinalize registers finalization synchronously right after KillTree
+// (before killDone closes), matching process.RequestFinalize, and launches at
+// most one background observer when finalization is still in progress
+// (returned context.Canceled). When finalization already completed
+// synchronously (nil or a terminal error) finalizeDone closes immediately
+// without calling Finalize a second time. The background observer has no
+// deadline because finalization owns reaping the root to completion after
+// callers stop waiting.
+func (c *runClient) registerFinalize() {
 	c.finalizeOnce.Do(func() {
-		if finalizer, ok := c.proc.(processruntime.Finalizer); ok {
-			go func() {
-				c.finalizeErr = finalizer.Finalize(context.Background())
-				close(c.finalizeDone)
-			}()
-		} else {
+		finalizer, ok := c.proc.(processruntime.Finalizer)
+		if !ok {
 			close(c.finalizeDone)
+			return
 		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		err := finalizer.Finalize(ctx)
+		if !errors.Is(err, context.Canceled) {
+			c.finalizeErr = err
+			close(c.finalizeDone)
+			return
+		}
+		go func() {
+			c.finalizeErr = finalizer.Finalize(context.Background())
+			close(c.finalizeDone)
+		}()
 	})
-	return c.finalizeDone
 }
 
 // startTerminate launches the client's single kill worker (at most one per
-// client). The worker sends KillTree, immediately registers finalization via
-// startFinalize (independently of Wait and pipes), stores the outcome, and
-// closes killDone. Callers never block inside sync.Once.Do; the worker itself
-// has no deadline because KillTree takes no context and callers bound their
-// wait via awaitTerminate.
+// client). The worker sends KillTree, synchronously registers finalization
+// right after it (independently of Wait and pipes) before closing killDone,
+// and stores the outcome. Callers never block inside sync.Once.Do; the worker
+// itself has no deadline because KillTree takes no context and callers bound
+// their wait via awaitTerminate.
 func (c *runClient) startTerminate() <-chan struct{} {
 	c.killOnce.Do(func() {
 		go func() {
 			c.killErr = c.proc.KillTree()
-			c.startFinalize()
+			c.registerFinalize()
 			close(c.killDone)
 		}()
 	})
@@ -206,11 +219,17 @@ func (c *runClient) killOutcome() (finished bool, err error) {
 }
 
 // startWait starts the client's single Wait observer and returns the channel
-// that closes once Wait completed. The worker has no deadline because
+// that closes once Wait completed. When proc implements RootExitObserver,
+// Wait runs only after killDone closed so on Windows KillTree always runs
+// before Wait closes the Job Object. The worker has no deadline because
 // Process.Wait takes no context and must be shared across callers.
 func (c *runClient) startWait() <-chan struct{} {
 	c.waitOnce.Do(func() {
+		_, hasRootObserver := c.proc.(processruntime.RootExitObserver)
 		go func() {
+			if hasRootObserver {
+				<-c.killDone
+			}
 			c.waitResult = c.proc.Wait()
 			close(c.waitDone)
 		}()
@@ -218,14 +237,9 @@ func (c *runClient) startWait() <-chan struct{} {
 	return c.waitDone
 }
 
-// wait blocks until the shared Wait observer completes and returns its result.
-func (c *runClient) wait() processruntime.Result {
-	<-c.startWait()
-	return c.waitResult
-}
-
 // observeRootExit reports root exit independently of output pipes when proc
-// implements RootExitObserver, and otherwise shares the single Wait observer.
+// implements RootExitObserver (without invoking Wait ahead of KillTree), and
+// otherwise shares the single Wait observer.
 func (c *runClient) observeRootExit() (<-chan struct{}, func() processruntime.Result) {
 	if observer, ok := c.proc.(processruntime.RootExitObserver); ok {
 		return observer.RootExited(), observer.RootResult
@@ -239,11 +253,12 @@ func (c *runClient) observeRootExit() (<-chan struct{}, func() processruntime.Re
 
 // startRelease starts the client's single release observer. It waits for
 // stdin close (so Close cannot observe a premature release before StartTurn
-// recorded stdin's outcome), for the single kill worker (and forced pipe
+// recorded stdin's outcome), for the single kill worker (starting forced pipe
 // closure when stdin failed and kill failed), for the single Wait, for the
-// single Finalize worker, and for any forced pipe closure before closing
-// releaseDone. The observer has no deadline because it aggregates the
-// terminal outcomes of those OS-bound workers for bounded callers.
+// single Finalize observer, and always for the single stdout/stderr close
+// worker before closing releaseDone. The observer has no deadline because it
+// aggregates the terminal outcomes of those OS-bound workers for bounded
+// callers.
 func (c *runClient) startRelease() <-chan struct{} {
 	c.releaseOnce.Do(func() {
 		waitDone := c.startWait()
@@ -255,9 +270,7 @@ func (c *runClient) startRelease() <-chan struct{} {
 			}
 			<-waitDone
 			<-c.finalizeDone
-			if c.pipesStarted.Load() {
-				<-c.pipesDone
-			}
+			<-c.startClosePipes()
 			close(c.releaseDone)
 		}()
 	})

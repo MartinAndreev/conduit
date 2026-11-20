@@ -111,3 +111,22 @@ func TestDecideCancelledControlRelease(t *testing.T) {
 		})
 	}
 }
+
+func TestDecidePlatformRetention(t *testing.T) {
+	cases := []struct {
+		name  string
+		facts PlatformRetentionFacts
+		want  PlatformRetentionKind
+	}{
+		{"supported", PlatformRetentionFacts{RootRetentionSupported: true}, PlatformRetentionSupported},
+		{"unsupported", PlatformRetentionFacts{RootRetentionSupported: false}, PlatformRetentionUnsupported},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			decision := DecidePlatformRetention(tc.facts)
+			if decision.Kind != tc.want || decision.Reason == "" {
+				t.Fatalf("decision = %#v, want %s", decision, tc.want)
+			}
+		})
+	}
+}

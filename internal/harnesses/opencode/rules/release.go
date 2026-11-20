@@ -231,3 +231,39 @@ func DecideCancelledControlRelease(f CancelledControlReleaseFacts) ReleaseDecisi
 	}
 	return DecideRelease(f.Release)
 }
+
+// PlatformRetentionFacts describe whether the host platform retains an exited
+// child root unreaped until finalization (process.RootRetentionSupported).
+type PlatformRetentionFacts struct {
+	RootRetentionSupported bool
+}
+
+type PlatformRetentionKind string
+
+const (
+	PlatformRetentionSupported   PlatformRetentionKind = "supported"
+	PlatformRetentionUnsupported PlatformRetentionKind = "unsupported"
+)
+
+type PlatformRetentionDecision struct {
+	Kind   PlatformRetentionKind
+	Reason string
+}
+
+// DecidePlatformRetention answers whether OpenCode may launch owned child
+// processes on this platform. Without root retention (fallback Unix), an
+// exited root is reaped immediately and a later group signal can hit a reused
+// PGID or be refused with ErrSignalsFinalized, so the adapter refuses before
+// launching any child.
+func DecidePlatformRetention(f PlatformRetentionFacts) PlatformRetentionDecision {
+	if !f.RootRetentionSupported {
+		return PlatformRetentionDecision{
+			Kind:   PlatformRetentionUnsupported,
+			Reason: "platform does not retain exited root processes until finalization; OpenCode cannot safely confirm process-group termination",
+		}
+	}
+	return PlatformRetentionDecision{
+		Kind:   PlatformRetentionSupported,
+		Reason: "platform retains exited root processes until finalization",
+	}
+}

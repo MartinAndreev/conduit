@@ -60,9 +60,9 @@ storage, result acceptance, CLI wiring, or live model calls.
   signals. Each owner registers finalization right after its last signal,
   independently of `Wait` and the pipes: Close and failed-open cleanup after
   their kill; the claude/codex loss path after its loss kill; the ACP
-  transport stop after its kill; the OpenCode failed run after its kill (unless
-  Close already claimed the client), a clean run when its observation ends,
-  and a control command after its kill or completion. Once the root exited,
+  transport stop after its kill; the OpenCode run client (both clean and failed
+  exits) after its group kill (unless Close already claimed the client); and a
+  control command after its kill or completion. Once the root exited,
   finalization refuses every later `Interrupt`/`KillTree`
   (`process.ErrSignalsFinalized`, which wraps `os.ErrProcessDone`, no
   syscall) and reaps the root as soon as it is authoritatively waitable
@@ -87,8 +87,10 @@ storage, result acceptance, CLI wiring, or live model calls.
   its root exited is refused (`ErrSignalsFinalized`), so a close or loss
   after a root exit reports unconfirmed termination (`ExecutionUnknown`,
   resources not released) and descendants are no longer reachable. Startup
-  probes are not run there at all (see the startup contract). Windows
-  signals only through handles and keeps the guarantee.
+  probes and OpenCode sessions/turns are not started there at all (see the
+  startup contract and OpenCode release accounting below). Windows signals only
+  through handles and keeps the guarantee, provided callers do not call `Wait`
+  (which closes the Job Object) ahead of `KillTree`.
 - Exit errors: `RootResult` and `Wait` report an unsuccessful exit observed
   before the reap with an internal error whose text matches
   `*exec.ExitError` ("exit status 3", "signal: killed"); it is no longer an
@@ -208,49 +210,77 @@ storage, result acceptance, CLI wiring, or live model calls.
   (`Wait`'s `ReleaseErr`, `PipeCloseErr`, and `StdinCloseErr` all nil), the
   active run client to pass `rules.DecideClientCloseRelease` within `StopGrace`
   (default 2 s), and every tracked release to be confirmed (below).
-- OpenCode release accounting (2026-11-20): each `opencode run` client has one
-  termination and release owner (`runClient`) shared by `readRun`, Close,
-  `watchServer`, `killRunClient`, and stdin-close failure cleanup. Decision
-  (Martin, 2026-11-20): because the session's own `opencode serve` runs in a
-  separate process group, every `opencode run` exit — clean (code 0) or failed
-  — terminates the run client's own process group while its root is still
-  unreaped (so the PGID cannot be reused), killing descendants including ones
-  that closed all pipes. Ownership of that single kill and finalization is
-  reserved atomically under `s.mu` via `rules.DecideClientClaim`: Close claims
-  first if it arrives first and `readRun` yields so it cannot finalize ahead of
-  Close's kill; otherwise `watchRunRootExit`/`readRun`, `watchServer`, or
-  stdin-close cleanup reserves and starts the single kill worker (which runs
-  `KillTree` and immediately starts the single `Finalize` worker independently
-  of `Wait` and the pipes). Neither `watchRunRootExit` nor `readRun` blocks
-  unboundedly on `KillTree`, and Close awaits both termination and release
-  within `StopGrace` and `ctx`, proceeding to stop the server even if
-  `KillTree` blocks (the kill stays unconfirmed until it finishes, and
-  `process.ErrSignalsFinalized` is never a confirmed kill). Stdin is pending
-  from client publication until its close outcome is recorded; forced
-  stdout/stderr closure on stdin-close failure runs once in its own worker
-  whose completion enters `releaseDone` while `StartTurn` stays bounded. The
-  single shared `Wait` + `Finalize` observer starts even on an unconfirmed kill
-  or unsupported tree kill and is reused by repeated Close timeouts without
-  spawning extra `Wait` goroutines or sending another kill. Both active run
-  clients (`s.client`) and tracked run clients (`s.releases`) are evaluated by
-  the same `rules.DecideClientCloseRelease` rule (confirmed group kill,
-  tree-kill support, and `rules.DecideRelease`). The session's own server is
-  stopped through its `process.CleanupOwner`, which registers finalization
-  right after the group kill; `rules.DecideServerStop` decides `ExecutionNone`,
-  while `rules.DecideRelease` also checks the server's `Wait` release error and
-  pipe/stdin close errors (a failed open recomputes both decisions from
-  `Latest()` if cleanup completed right after `Await` timed out, and joins any
-  unconfirmed stop or release errors). The session tracks every unconfirmed
-  client release: a run client whose termination or release was not confirmed
-  within `readRun`'s bound or after stdin-close failure, a finished control
-  command whose `Finalize`, `Wait` release, or channel-observed `CleanupOwner`
-  stdin close failed or timed out (`rules.DecideRelease`), and a cancelled
-  control command's cleanup owner (`rules.DecideCancelledControlRelease`: a
-  refused group kill or unsupported tree kill blocks `ResourcesReleased` both
-  in the returned error and in later Close calls, even after the root and pipes
-  exit). Close waits for them within `StopGrace` and reports
-  `ResourcesReleased` only when every tracked release is confirmed; a pending
-  or failed one keeps it false, also for a later Close.
+- OpenCode release accounting (2026-11-20):
+  - **Platform root-retention gate (Decision A, 2026-11-20)**: on fallback Unix
+    platforms where `process.RootRetentionSupported() == false`, OpenCode
+    refuses `OpenSession` before launching its own server (and also refuses
+    `StartTurn` before `Launcher.Start`) via `rules.DecidePlatformRetention`
+    with `capability_unsupported` and `RemoteEffect=not_sent`, avoiding
+    post-reap PGID reuse.
+  - **Single run-client owner and kill on every exit**: each `opencode run`
+    client has one termination and release owner (`runClient`) shared by
+    `readRun`, Close, `watchServer`, `killRunClient`, and stdin-close failure
+    cleanup. Because the session's own `opencode serve` runs in a separate
+    process group, every `opencode run` exit — clean (code 0) or failed —
+    terminates the run client's own process group while its root is still
+    unreaped (on Linux/Darwin) or its Job Object is still open (on Windows),
+    killing descendants including ones that closed all stdio pipes. Ownership
+    of that single kill and finalization is reserved atomically under `s.mu`
+    via `rules.DecideClientClaim`: Close claims first if it arrives first and
+    `readRun` yields so it cannot finalize ahead of Close's kill; otherwise
+    `watchRunRootExit`/`readRun`, `watchServer`, or stdin-close cleanup
+    reserves and starts the single kill worker.
+  - **Kill, finalization, and Windows `Wait` ordering (Decision B & Finding 4,
+    2026-11-20)**: the single kill worker runs `KillTree`, synchronously
+    registers finalization right after `KillTree` before closing `killDone`
+    (spawning at most one background `Finalize` observer if reaping is still in
+    progress), and stores the kill outcome. Whenever the process implements
+    `process.RootExitObserver` (including Windows `execProcess`, whose `Wait`
+    closes the Job Object), `readRun` reads exit status from `RootResult` and
+    `runClient` waits for `killDone` before calling `Wait`, so `KillTree`
+    always precedes Job Object closure.
+  - **Bounded observation and pipe-close accounting (Findings 1–3,
+    2026-11-20)**: neither `watchRunRootExit` nor `readRun` blocks unboundedly
+    on `KillTree` or held pipes. `watchRunRootExit` starts the `StopGrace`
+    budget when the root exits (`<-rootExited`); if a descendant holds stdout
+    or stderr open past that budget while `KillTree` is blocked or refused,
+    `runClient`'s single pipe-close worker force-closes both pipes, records any
+    close errors, and lets `readRun` publish `opencode_run_release`, the final
+    session state, and steer reconciliation while keeping the client tracked in
+    `s.releases`. Close awaits both termination and release within `StopGrace`
+    and `ctx`, proceeding to stop the server even if `KillTree` blocks (the
+    kill stays unconfirmed until it finishes, and `process.ErrSignalsFinalized`
+    is never a confirmed kill). Stdin is pending from client publication until
+    its close outcome is recorded; the single stdout/stderr close worker runs
+    once — early on forced cleanup (stdin-close failure or post-root-exit
+    timeout) or after `Wait` on normal exits — and always completes before
+    `releaseDone` closes so cached `trackedReadCloser` close errors discarded
+    by `execProcess.Wait` as well as forced-close errors always enter
+    `rules.DecideRelease`. The single shared `Wait` + `Finalize` observer
+    starts even on an unconfirmed kill or unsupported tree kill and is reused
+    by repeated Close timeouts without spawning extra `Wait` goroutines or
+    sending another kill. Both active run clients (`s.client`) and tracked run
+    clients (`s.releases`) are evaluated by the same
+    `rules.DecideClientCloseRelease` rule (confirmed group kill, tree-kill
+    support, and `rules.DecideRelease`).
+  - **Owned server and control command accounting**: the session's own server
+    is stopped through its `process.CleanupOwner`, which registers finalization
+    right after the group kill; `rules.DecideServerStop` decides
+    `ExecutionNone`, while `rules.DecideRelease` also checks the server's
+    `Wait` release error and pipe/stdin close errors (a failed open recomputes
+    both decisions from `Latest()` if cleanup completed right after `Await`
+    timed out, and joins any unconfirmed stop or release errors). The session
+    tracks every unconfirmed client release: a run client whose termination or
+    release was not confirmed within `readRun`'s bound or after stdin-close
+    failure, a finished control command whose `Finalize`, `Wait` release, or
+    channel-observed `CleanupOwner` stdin close failed or timed out
+    (`rules.DecideRelease`), and a cancelled control command's cleanup owner
+    (`rules.DecideCancelledControlRelease`: a refused group kill or unsupported
+    tree kill blocks `ResourcesReleased` both in the returned error and in
+    later Close calls, even after the root and pipes exit). Close waits for
+    them within `StopGrace` and reports `ResourcesReleased` only when every
+    tracked release is confirmed; a pending or failed one keeps it false, also
+    for a later Close.
 - The shared OpenCode service is not owned by the adapter and is never killed by
   close. With no proven final phase or native schema field, the adapter withholds
   `ResultCandidate` in this slice.

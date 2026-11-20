@@ -64,21 +64,9 @@ func TestReconcileControlCleanupIsAccountedByClose(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("reconciliation did not run")
 			}
-			closeSession := func() provider.CloseSessionResult {
-				t.Helper()
-				result, err := fixture.session.Close(context.Background(), provider.CloseSessionRequest{Session: fixture.session.Ref(), Policy: provider.CloseInterruptThenClose})
-				if err != nil {
-					t.Fatal(err)
-				}
-				return result
-			}
-			start := time.Now()
-			first := closeSession()
+			first := awaitCloseOutcome(t, closeAsync(fixture.session), 2*time.Second)
 			if first.ExecutionState != provider.ExecutionNone || first.ResourcesReleased {
 				t.Fatalf("close with a pending control cleanup = %#v", first)
-			}
-			if time.Since(start) > 2*time.Second {
-				t.Fatal("close was not bounded")
 			}
 			release()
 			select {
@@ -86,7 +74,7 @@ func TestReconcileControlCleanupIsAccountedByClose(t *testing.T) {
 			case <-time.After(2 * time.Second):
 				t.Fatal("control cleanup did not complete")
 			}
-			if again := closeSession(); again.ResourcesReleased != tc.wantReleased || again.ExecutionState != provider.ExecutionNone {
+			if again := awaitCloseOutcome(t, closeAsync(fixture.session), 2*time.Second); again.ResourcesReleased != tc.wantReleased || again.ExecutionState != provider.ExecutionNone {
 				t.Fatalf("close after the control cleanup completed = %#v, want ExecutionNone and ResourcesReleased=%t", again, tc.wantReleased)
 			}
 		})

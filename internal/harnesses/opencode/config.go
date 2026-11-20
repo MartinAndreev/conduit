@@ -125,6 +125,15 @@ type Config struct {
 	host sandboxHost
 	// newPassword draws the per-session server password.
 	newPassword func() (string, error)
+	// retentionSupported replaces process.RootRetentionSupported in tests.
+	retentionSupported func() bool
+}
+
+func (c Config) rootRetentionSupported() bool {
+	if c.retentionSupported != nil {
+		return c.retentionSupported()
+	}
+	return processruntime.RootRetentionSupported()
 }
 
 func withDefaults(config Config) Config {
@@ -157,6 +166,9 @@ func withDefaults(config Config) Config {
 	}
 	if config.newPassword == nil {
 		config.newPassword = newServerPassword
+	}
+	if config.retentionSupported == nil {
+		config.retentionSupported = processruntime.RootRetentionSupported
 	}
 	if config.Now == nil {
 		config.Now = time.Now

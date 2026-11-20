@@ -41,6 +41,9 @@ func (a *Adapter) OpenSession(ctx context.Context, request provider.OpenSessionR
 	if err != nil {
 		return provider.OpenSessionResult{}, err
 	}
+	if retention := rules.DecidePlatformRetention(rules.PlatformRetentionFacts{RootRetentionSupported: a.config.rootRetentionSupported()}); retention.Kind != rules.PlatformRetentionSupported {
+		return provider.OpenSessionResult{}, adaptererror.NewWithDetail(provider.OperationOpenSession, provider.ErrorCapabilityUnsupported, provider.RemoteEffectNotSent, retention.Reason, nil)
+	}
 	adapterSessionID, err := a.config.NewID("opencode-session")
 	if err != nil {
 		return provider.OpenSessionResult{}, adaptererror.NewWithDetail(provider.OperationOpenSession, provider.ErrorProtocolViolation, provider.RemoteEffectNotSent, "could not allocate adapter session ID", err)
