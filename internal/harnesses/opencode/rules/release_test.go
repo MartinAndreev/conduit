@@ -32,23 +32,19 @@ func TestDecideClientClaim(t *testing.T) {
 		facts          ClientClaimFacts
 		wantKind       ClientClaimKind
 		wantNext       ClientOwner
-		wantNeedsKill  bool
-		wantNaturalRel bool
+		wantStartsKill bool
 	}{
-		{"none + natural reserves natural", ClientClaimFacts{Current: ClientOwnerNone, Actor: ClientActorNatural}, ClientClaimFinalizeNaturally, ClientOwnerNatural, false, true},
-		{"none + kill reserves killed", ClientClaimFacts{Current: ClientOwnerNone, Actor: ClientActorKill}, ClientClaimKill, ClientOwnerKilled, true, false},
-		{"none + close reserves close", ClientClaimFacts{Current: ClientOwnerNone, Actor: ClientActorClose}, ClientClaimKill, ClientOwnerClose, true, false},
-		{"natural + natural awaits natural", ClientClaimFacts{Current: ClientOwnerNatural, Actor: ClientActorNatural}, ClientClaimAwaitNatural, ClientOwnerNatural, false, true},
-		{"natural + kill skips kill and awaits natural", ClientClaimFacts{Current: ClientOwnerNatural, Actor: ClientActorKill}, ClientClaimAwaitNatural, ClientOwnerNatural, false, true},
-		{"natural + close skips kill and awaits natural", ClientClaimFacts{Current: ClientOwnerNatural, Actor: ClientActorClose}, ClientClaimAwaitNatural, ClientOwnerNatural, false, true},
-		{"killed + natural awaits post-kill release", ClientClaimFacts{Current: ClientOwnerKilled, Actor: ClientActorNatural}, ClientClaimAwaitKill, ClientOwnerKilled, true, false},
-		{"killed + kill shares single kill", ClientClaimFacts{Current: ClientOwnerKilled, Actor: ClientActorKill}, ClientClaimAwaitKill, ClientOwnerKilled, true, false},
-		{"killed + close shares single kill and release", ClientClaimFacts{Current: ClientOwnerKilled, Actor: ClientActorClose}, ClientClaimAwaitKill, ClientOwnerKilled, true, false},
-		{"close + natural yields to close", ClientClaimFacts{Current: ClientOwnerClose, Actor: ClientActorNatural}, ClientClaimYieldToClose, ClientOwnerClose, false, false},
-		{"close + kill shares close kill", ClientClaimFacts{Current: ClientOwnerClose, Actor: ClientActorKill}, ClientClaimAwaitKill, ClientOwnerClose, true, false},
-		{"close + close awaits repeated close release", ClientClaimFacts{Current: ClientOwnerClose, Actor: ClientActorClose}, ClientClaimAwaitKill, ClientOwnerClose, true, false},
-		{"invalid current owner", ClientClaimFacts{Current: ClientOwner("bogus"), Actor: ClientActorClose}, ClientClaimInvalid, ClientOwner("bogus"), false, false},
-		{"invalid actor", ClientClaimFacts{Current: ClientOwnerNone, Actor: ClientClaimActor("bogus")}, ClientClaimInvalid, ClientOwnerNone, false, false},
+		{"none + run reserves killed", ClientClaimFacts{Current: ClientOwnerNone, Actor: ClientActorRun}, ClientClaimKill, ClientOwnerKilled, true},
+		{"none + kill reserves killed", ClientClaimFacts{Current: ClientOwnerNone, Actor: ClientActorKill}, ClientClaimKill, ClientOwnerKilled, true},
+		{"none + close reserves close", ClientClaimFacts{Current: ClientOwnerNone, Actor: ClientActorClose}, ClientClaimKill, ClientOwnerClose, true},
+		{"killed + run shares kill", ClientClaimFacts{Current: ClientOwnerKilled, Actor: ClientActorRun}, ClientClaimAwaitKill, ClientOwnerKilled, true},
+		{"killed + kill shares kill", ClientClaimFacts{Current: ClientOwnerKilled, Actor: ClientActorKill}, ClientClaimAwaitKill, ClientOwnerKilled, true},
+		{"killed + close shares kill", ClientClaimFacts{Current: ClientOwnerKilled, Actor: ClientActorClose}, ClientClaimAwaitKill, ClientOwnerKilled, true},
+		{"close + run yields to close", ClientClaimFacts{Current: ClientOwnerClose, Actor: ClientActorRun}, ClientClaimYieldToClose, ClientOwnerClose, false},
+		{"close + kill shares close kill", ClientClaimFacts{Current: ClientOwnerClose, Actor: ClientActorKill}, ClientClaimAwaitKill, ClientOwnerClose, true},
+		{"close + close awaits repeated close release", ClientClaimFacts{Current: ClientOwnerClose, Actor: ClientActorClose}, ClientClaimAwaitKill, ClientOwnerClose, true},
+		{"invalid current owner", ClientClaimFacts{Current: ClientOwner("bogus"), Actor: ClientActorClose}, ClientClaimInvalid, ClientOwner("bogus"), false},
+		{"invalid actor", ClientClaimFacts{Current: ClientOwnerNone, Actor: ClientClaimActor("bogus")}, ClientClaimInvalid, ClientOwnerNone, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -56,8 +52,8 @@ func TestDecideClientClaim(t *testing.T) {
 			if decision.Kind != tc.wantKind || decision.NextOwner != tc.wantNext || decision.Reason == "" {
 				t.Fatalf("decision = %#v, want kind=%s next=%s", decision, tc.wantKind, tc.wantNext)
 			}
-			if decision.NeedsKill() != tc.wantNeedsKill || decision.NaturalRelease() != tc.wantNaturalRel {
-				t.Fatalf("NeedsKill=%t NaturalRelease=%t, want %t %t", decision.NeedsKill(), decision.NaturalRelease(), tc.wantNeedsKill, tc.wantNaturalRel)
+			if decision.StartsKill() != tc.wantStartsKill {
+				t.Fatalf("StartsKill=%t, want %t", decision.StartsKill(), tc.wantStartsKill)
 			}
 		})
 	}
@@ -70,23 +66,45 @@ func TestDecideClientCloseRelease(t *testing.T) {
 		facts ClientCloseReleaseFacts
 		want  ReleaseKind
 	}{
-		{"natural pending", ClientCloseReleaseFacts{NaturalRelease: true, TreeKillSupported: true, Release: ReleaseFacts{}}, ReleasePending},
-		{"natural finished with tree kill is unconfirmed for descendants", ClientCloseReleaseFacts{NaturalRelease: true, TreeKillSupported: true, Release: confirmedRelease}, ReleaseFailed},
-		{"natural finished without tree kill is unconfirmed", ClientCloseReleaseFacts{NaturalRelease: true, TreeKillSupported: false, Release: confirmedRelease}, ReleaseFailed},
-		{"natural failed reap", ClientCloseReleaseFacts{NaturalRelease: true, TreeKillSupported: true, Release: ReleaseFacts{Finished: true, ReleaseFailed: true}}, ReleaseFailed},
-		{"killed pending kill", ClientCloseReleaseFacts{KillFinished: false, KillConfirmed: false, TreeKillSupported: true, Release: confirmedRelease}, ReleasePending},
-		{"killed confirmed", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: true, TreeKillSupported: true, Release: confirmedRelease}, ReleaseConfirmed},
-		{"killed unconfirmed fails even if release finished", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: false, TreeKillSupported: true, Release: confirmedRelease}, ReleaseFailed},
-		{"killed unconfirmed precedes pending release", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: false, TreeKillSupported: true, Release: ReleaseFacts{}}, ReleaseFailed},
+		{"pending kill", ClientCloseReleaseFacts{KillFinished: false, KillConfirmed: false, TreeKillSupported: true, Release: confirmedRelease}, ReleasePending},
+		{"confirmed", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: true, TreeKillSupported: true, Release: confirmedRelease}, ReleaseConfirmed},
+		{"unconfirmed kill fails even if release finished", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: false, TreeKillSupported: true, Release: confirmedRelease}, ReleaseFailed},
+		{"unconfirmed kill precedes pending release", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: false, TreeKillSupported: true, Release: ReleaseFacts{}}, ReleaseFailed},
 		{"tree kill unsupported fails", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: true, TreeKillSupported: false, Release: confirmedRelease}, ReleaseFailed},
-		{"killed pending release", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: true, TreeKillSupported: true, Release: ReleaseFacts{}}, ReleasePending},
-		{"killed failed release", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: true, TreeKillSupported: true, Release: ReleaseFacts{Finished: true, RootReaped: true, ReleaseFailed: true}}, ReleaseFailed},
-		{"killed pipe close failed", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: true, TreeKillSupported: true, Release: ReleaseFacts{Finished: true, RootReaped: true, PipeCloseFailed: true}}, ReleaseFailed},
-		{"killed finished without reap", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: true, TreeKillSupported: true, Release: ReleaseFacts{Finished: true}}, ReleaseFailed},
+		{"pending release", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: true, TreeKillSupported: true, Release: ReleaseFacts{}}, ReleasePending},
+		{"failed release", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: true, TreeKillSupported: true, Release: ReleaseFacts{Finished: true, RootReaped: true, ReleaseFailed: true}}, ReleaseFailed},
+		{"pipe close failed", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: true, TreeKillSupported: true, Release: ReleaseFacts{Finished: true, RootReaped: true, PipeCloseFailed: true}}, ReleaseFailed},
+		{"finished without reap", ClientCloseReleaseFacts{KillFinished: true, KillConfirmed: true, TreeKillSupported: true, Release: ReleaseFacts{Finished: true}}, ReleaseFailed},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			decision := DecideClientCloseRelease(tc.facts)
+			if decision.Kind != tc.want || decision.Reason == "" || decision.Confirmed() != (tc.want == ReleaseConfirmed) {
+				t.Fatalf("decision = %#v, want %s", decision, tc.want)
+			}
+		})
+	}
+}
+
+func TestDecideCancelledControlRelease(t *testing.T) {
+	confirmedRelease := ReleaseFacts{Finished: true, RootReaped: true}
+	cases := []struct {
+		name  string
+		facts CancelledControlReleaseFacts
+		want  ReleaseKind
+	}{
+		{"pending cleanup", CancelledControlReleaseFacts{TreeKillSupported: true, Release: ReleaseFacts{}}, ReleasePending},
+		{"pending precedes kill failure", CancelledControlReleaseFacts{TreeKillFailed: true, TreeKillSupported: true, Release: ReleaseFacts{}}, ReleasePending},
+		{"confirmed", CancelledControlReleaseFacts{TreeKillSupported: true, Release: confirmedRelease}, ReleaseConfirmed},
+		{"refused kill fails even after reap and pipes", CancelledControlReleaseFacts{TreeKillFailed: true, TreeKillSupported: true, Release: confirmedRelease}, ReleaseFailed},
+		{"tree kill unsupported fails", CancelledControlReleaseFacts{TreeKillSupported: false, Release: confirmedRelease}, ReleaseFailed},
+		{"failed release", CancelledControlReleaseFacts{TreeKillSupported: true, Release: ReleaseFacts{Finished: true, RootReaped: true, ReleaseFailed: true}}, ReleaseFailed},
+		{"pipe close failed", CancelledControlReleaseFacts{TreeKillSupported: true, Release: ReleaseFacts{Finished: true, RootReaped: true, PipeCloseFailed: true}}, ReleaseFailed},
+		{"finished without reap", CancelledControlReleaseFacts{TreeKillSupported: true, Release: ReleaseFacts{Finished: true}}, ReleaseFailed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			decision := DecideCancelledControlRelease(tc.facts)
 			if decision.Kind != tc.want || decision.Reason == "" || decision.Confirmed() != (tc.want == ReleaseConfirmed) {
 				t.Fatalf("decision = %#v, want %s", decision, tc.want)
 			}

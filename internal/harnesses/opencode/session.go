@@ -224,12 +224,16 @@ func (s *session) handleStartStdinCloseFailure(request provider.StartTurnRequest
 	drains.Add(2)
 	go func() { defer drains.Done(); _, _ = io.Copy(io.Discard, client.proc.Stdout()) }()
 	go func() { defer drains.Done(); _, _ = io.Copy(io.Discard, client.proc.Stderr()) }()
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	grace := s.config.StopGrace
+	if grace <= 0 {
+		grace = 2 * time.Second
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), grace)
 	defer cancel()
-	if claim.NeedsKill() {
+	if claim.StartsKill() {
 		client.startTerminate()
 	}
-	releaseDone := client.startRelease(claim.NeedsKill())
+	releaseDone := client.startRelease()
 	s.trackRelease(client)
 	done := make(chan processruntime.Result, 1)
 	go func() {
@@ -243,21 +247,24 @@ func (s *session) handleStartStdinCloseFailure(request provider.StartTurnRequest
 		})
 		done <- client.waitResult
 	}()
-	if claim.NeedsKill() {
+	if claim.StartsKill() {
 		killFinished, killErr := client.awaitTerminate(cleanupCtx)
 		if !killFinished {
-			cause = errors.Join(cause, errors.New("owned OpenCode CLI cleanup timed out; reaping remains pending"), client.closePipes())
+			client.startClosePipes()
+			cause = errors.Join(cause, errors.New("owned OpenCode CLI cleanup timed out; reaping remains pending"))
 			return adaptererror.Delivery(provider.OperationStartTurn, request.RequestID, true, cause)
 		}
 		if killErr != nil {
-			cause = errors.Join(cause, fmt.Errorf("terminate owned OpenCode CLI: %w", killErr), client.closePipes())
+			pipeErr := client.awaitClosePipes(cleanupCtx)
+			cause = errors.Join(cause, fmt.Errorf("terminate owned OpenCode CLI: %w", killErr), pipeErr)
 		}
 	}
 	select {
 	case result := <-done:
 		cause = errors.Join(cause, result.Err)
 	case <-cleanupCtx.Done():
-		cause = errors.Join(cause, errors.New("owned OpenCode CLI cleanup timed out; reaping remains pending"), client.closePipes())
+		client.startClosePipes()
+		cause = errors.Join(cause, errors.New("owned OpenCode CLI cleanup timed out; reaping remains pending"))
 	}
 	return adaptererror.Delivery(provider.OperationStartTurn, request.RequestID, true, cause)
 }
@@ -406,46 +413,24 @@ func (s *session) awaitReleases(ctx context.Context) bool {
 	return released
 }
 
-// stopOwnedClient stops (or awaits natural finalization of) only this
-// session's own `opencode run` child through its single runClient owner and
-// reports whether its release is confirmed within the bound. Both the kill
-// wait and the release wait share the same StopGrace/ctx budget so a blocked
-// KillTree cannot keep Close from stopping the session's server. The shared
-// release observer is started even when termination fails or tree kill is
-// unsupported, while DecideClientCloseRelease keeps confirmation false.
-func (s *session) stopOwnedClient(ctx context.Context, client *runClient, claim rules.ClientClaimDecision) bool {
+// stopOwnedClient stops only this session's own `opencode run` child through
+// its single runClient owner and reports whether its termination and release
+// are confirmed within the bound. Both the kill wait and the release wait
+// share the same StopGrace/ctx budget so a blocked KillTree cannot keep Close
+// from stopping the session's server. The shared release observer is started
+// even when termination fails or tree kill is unsupported, while
+// DecideClientCloseRelease keeps confirmation false.
+func (s *session) stopOwnedClient(ctx context.Context, client *runClient, _ rules.ClientClaimDecision) bool {
 	waitCtx, cancel := context.WithTimeout(ctx, s.config.StopGrace)
 	defer cancel()
-	natural := claim.NaturalRelease()
-	killFinished := false
-	killConfirmed := false
-	if !natural {
-		client.startTerminate()
-		client.startRelease(true)
-		var killErr error
-		killFinished, killErr = client.awaitTerminate(waitCtx)
-		if killFinished {
-			killConfirmed = processruntime.KillConfirmed(killErr)
-		}
-		if !killFinished || !killConfirmed || !client.proc.TreeKillSupported() {
-			return rules.DecideClientCloseRelease(rules.ClientCloseReleaseFacts{
-				NaturalRelease:    false,
-				KillFinished:      killFinished,
-				KillConfirmed:     killConfirmed,
-				TreeKillSupported: client.proc.TreeKillSupported(),
-				Release:           client.releaseFacts(),
-			}).Confirmed()
-		}
+	client.startTerminate()
+	client.startRelease()
+	killFinished, killErr := client.awaitTerminate(waitCtx)
+	if !killFinished || !processruntime.KillConfirmed(killErr) || !client.proc.TreeKillSupported() {
+		return client.decideRelease().Confirmed()
 	}
-	facts := client.awaitRelease(waitCtx, !natural)
-	decision := rules.DecideClientCloseRelease(rules.ClientCloseReleaseFacts{
-		NaturalRelease:    natural,
-		KillFinished:      killFinished,
-		KillConfirmed:     killConfirmed,
-		TreeKillSupported: client.proc.TreeKillSupported(),
-		Release:           facts,
-	})
-	if !decision.Confirmed() {
+	client.awaitRelease(waitCtx)
+	if !client.decideRelease().Confirmed() {
 		return false
 	}
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
@@ -459,9 +444,10 @@ func (s *session) stopOwnedClient(ctx context.Context, client *runClient, claim 
 }
 
 func (s *session) readRun(client *runClient, turn provider.TurnRef) {
-	// killRun terminates this run client's own process group at most once
-	// after its observation failed: a descendant may hold stdout open, and a
-	// root that exited on its own does not prove its descendants are gone.
+	// killRun reserves and starts this run client's single process-group kill
+	// without blocking on KillTree. Both clean and failed exits terminate the
+	// run client's own process group (the session's server runs in a separate
+	// group) before finalization reaps the root.
 	killRun := sync.OnceFunc(func() { s.killRunClient(client) })
 	watchDone := make(chan struct{})
 	go func() {
@@ -480,35 +466,29 @@ func (s *session) readRun(client *runClient, turn provider.TurnRef) {
 		_, _ = io.Copy(io.Discard, client.proc.Stdout())
 	}
 	result := client.wait()
-	// Wait returned, so the root has exited and the watch has decided; join
-	// it so its kill decision precedes the turn's final events.
+	// Wait returned, so the root has exited and the watch has started (or
+	// yielded) the single kill worker without blocking on KillTree itself.
 	<-watchDone
 	failed := scanErr != nil || result.Err != nil || result.ExitCode != 0
-	if failed {
-		killRun()
-	}
-	// Reserve natural finalization atomically under s.mu unless Close already
-	// claimed the client (Close then sends its kill and finalizes) or a kill
-	// path already claimed it (await that shared post-kill release). The
+	// Reserve termination/finalization atomically under s.mu unless Close
+	// already claimed the client (Close then owns its kill and release). The
 	// session state is changed only by the final transition below, together
 	// with its event.
 	var claim rules.ClientClaimDecision
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
-		claim = client.claimLocked(rules.ClientActorNatural)
+		claim = client.claimLocked(rules.ClientActorRun)
 		return nil
 	})
-	// The release is bounded by StopGrace so the run's final events and
-	// steer reconciliation still follow; past that the shared release
-	// observer keeps ownership, and an unconfirmed or failed release stays
-	// tracked and is reported.
+	// Bound waiting by StopGrace so a slow KillTree or reap cannot block the
+	// run's final events and steer reconciliation; past that the shared
+	// release observer keeps ownership and client stays tracked in s.releases
+	// so Close applies the exact same DecideClientCloseRelease rule.
 	if claim.Kind != rules.ClientClaimYieldToClose {
+		client.startTerminate()
 		releaseCtx, cancel := context.WithTimeout(context.Background(), s.config.StopGrace)
-		facts := client.awaitRelease(releaseCtx, claim.NeedsKill())
+		client.awaitRelease(releaseCtx)
 		cancel()
-		if !rules.DecideRelease(facts).Confirmed() {
-			// The turn ends below and may forget the client; its shared
-			// release stays tracked so Close does not report resources
-			// released before it is confirmed.
+		if !client.decideRelease().Confirmed() {
 			s.trackRelease(client)
 			s.emit(provider.ProtocolWarningEvent{Code: "opencode_run_release", Detail: boundedtext.String("OpenCode run client release was not confirmed; its root process may remain unreaped", s.config.MaxTextBytes)})
 		}
@@ -578,38 +558,38 @@ func (s *session) watchServer(server *ownedServer) {
 		return
 	}
 	server.cleanup.BeginCleanup()
-	if client != nil && claim.NeedsKill() {
+	if client != nil && claim.StartsKill() {
 		client.startTerminate()
 	}
 }
 
-// killRunClient sends a failed run's single group kill through the shared
-// runClient owner, registering finalization right after it independently of
-// Wait, unless readRun already reserved natural finalization.
+// killRunClient reserves the run client's termination under s.mu and starts
+// its single kill worker without blocking, unless Close already claimed the
+// client. Callers wait for the outcome within their own deadline via the
+// shared release observer.
 func (s *session) killRunClient(client *runClient) {
 	var claim rules.ClientClaimDecision
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
-		claim = client.claimLocked(rules.ClientActorKill)
+		claim = client.claimLocked(rules.ClientActorRun)
 		return nil
 	})
-	if claim.NeedsKill() {
-		<-client.startTerminate()
+	if claim.StartsKill() {
+		client.startTerminate()
 	}
 }
 
 // watchRunRootExit waits for the run client's root to exit, independently of
 // stdout and stderr: a descendant may hold either pipe, keeping the read or
-// process.Wait blocked. It ends only at root exit (Wait cannot return before
-// it). A failed root exit ends the observation, so the group is always killed.
-// A clean root exit kills nothing: the group could contain a process that
-// OpenCode intends to outlive the client (such as a shared service), so the
-// observation keeps waiting for the pipes to end.
+// process.Wait blocked. On every root exit (clean or failed) it starts the
+// client's single process-group kill via killRun and returns without waiting
+// for KillTree to complete: the session's own OpenCode server runs in a
+// separate process group, so killing the client's group while its root is
+// still unreaped (PGID cannot be reused) cleans up every descendant,
+// including ones that closed stdout/stderr.
 func (s *session) watchRunRootExit(client *runClient, killRun func()) {
-	rootExited, rootResult := client.observeRootExit()
+	rootExited, _ := client.observeRootExit()
 	<-rootExited
-	if result := rootResult(); result.Err != nil || result.ExitCode != 0 {
-		killRun()
-	}
+	killRun()
 }
 
 func (s *session) emit(body provider.EventBody) {

@@ -134,12 +134,12 @@ func (a *Adapter) identifyServer(ctx context.Context, server *ownedServer, works
 // observable (Done, Latest), as the Codex adapter does for a failed open;
 // once it ended, as its reason and termination error.
 func abortServer(ctx context.Context, server *ownedServer, cause error) error {
-	outcome := server.stopOutcome(context.WithoutCancel(ctx))
+	return abortServerOutcome(server, server.stopOutcome(context.WithoutCancel(ctx)), cause)
+}
+
+func abortServerOutcome(server *ownedServer, outcome serverStopOutcome, cause error) error {
 	if outcome.stop.Confirmed() && outcome.release.Confirmed() {
 		return cause
-	}
-	if server.afterStopAwait != nil {
-		server.afterStopAwait()
 	}
 	var stopErr error
 	select {
@@ -170,12 +170,13 @@ func abortServer(ctx context.Context, server *ownedServer, cause error) error {
 }
 
 // CleanupPendingError reports that a failed open returned before its owned
-// OpenCode server was confirmed stopped. Owner keeps the cleanup observable:
-// Done closes on completion and Latest reports its state. Cause is the stop
-// decision's reason.
+// OpenCode server was confirmed stopped (or a cancelled control command before
+// its cleanup finished). Owner keeps the cleanup observable: Done closes on
+// completion and Latest reports its state. Cause is the stop decision's reason.
 type CleanupPendingError struct {
-	Owner *processruntime.CleanupOwner
-	Cause error
+	Owner                *processruntime.CleanupOwner
+	Cause                error
+	treeKillNotSupported bool
 }
 
 func (e *CleanupPendingError) Error() string {

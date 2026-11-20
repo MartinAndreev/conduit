@@ -67,10 +67,10 @@ func TestFailedRunKillsOwnedGroupOnce(t *testing.T) {
 	}
 }
 
-func TestCleanRunExitDoesNotKill(t *testing.T) {
+func TestCleanRunExitKillsOwnedGroupOnce(t *testing.T) {
 	proc, state := runEndingSession(t, &fakeLauncher{output: "", delay: time.Millisecond}, Config{})
-	if state != provider.SessionIdleObserved || proc.kills.Load() != 0 {
-		t.Fatalf("state = %s kills = %d", state, proc.kills.Load())
+	if state != provider.SessionIdleObserved || proc.kills.Load() != 1 {
+		t.Fatalf("state = %s kills = %d, want idle_observed and 1 kill", state, proc.kills.Load())
 	}
 }
 
@@ -196,16 +196,14 @@ func TestFailedRootExitWithOnlyStderrHeldKillsGroup(t *testing.T) {
 	}
 }
 
-// A clean root exit kills nothing (the group may hold a process meant to
-// outlive the client); the observation ends when the pipes end. readRun
-// joins the root-exit watch before its final events, so the kill count is
-// final once the idle event arrives.
-func TestCleanRootExitWithHeldStdoutDoesNotKill(t *testing.T) {
+// A clean root exit kills the run client's own process group (the session's
+// server runs in a separate group), so a descendant holding stdout is
+// terminated and the turn ends idle once the pipes close.
+func TestCleanRootExitWithHeldStdoutKillsGroup(t *testing.T) {
 	launcher := &heldRunLauncher{rootExit: 0}
 	_, stream := startHeldRun(t, launcher)
-	launcher.last.releasePipes()
 	receiveRunEnd(t, stream, provider.SessionIdleObserved)
-	if kills := launcher.last.kills.Load(); kills != 0 {
-		t.Fatalf("clean root exit killed the group %d times", kills)
+	if kills := launcher.last.kills.Load(); kills != 1 {
+		t.Fatalf("clean root exit killed the group %d times, want 1", kills)
 	}
 }

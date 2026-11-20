@@ -341,14 +341,16 @@ func (c *cliControl) run(ctx context.Context, server ServerEndpoint, dir string,
 	go func() { wg.Wait(); close(drained) }()
 	// One cleanup owner per command; it is used only when the caller stops
 	// waiting (its kill is then the last signal and it finalizes), and then
-	// stays observable if the cleanup does not finish. A finished command
-	// sends no signal and is finalized directly below.
-	owner := processruntime.NewCleanupOwnerWithDrain(proc, drained)
+	// stays observable if the cleanup does not finish. Wrapping Stdin lets
+	// the normal completion path await CleanupOwner's asynchronous stdin close
+	// via a channel without polling or modifying internal/process.
+	wrapped, stdinSig := wrapControlStdin(proc)
+	owner := processruntime.NewCleanupOwnerWithDrain(wrapped, drained)
 	done := make(chan processruntime.Result, 1)
 	go func() { result := proc.Wait(); <-drained; done <- result }()
 	select {
 	case <-ctx.Done():
-		return commandOutput{}, true, errors.Join(ctx.Err(), c.abandon(owner))
+		return commandOutput{}, true, errors.Join(ctx.Err(), c.abandon(owner, proc.TreeKillSupported()))
 	case result := <-done:
 		// A finished command is released within the caller's context and the
 		// cleanup budget; past that the process keeps ownership of the
@@ -359,18 +361,18 @@ func (c *cliControl) run(ctx context.Context, server ServerEndpoint, dir string,
 		// finalization, and the cleanup owner's asynchronous stdin close all
 		// belong to release confirmation.
 		finalizeErr := processruntime.Finalize(finalizeCtx, proc)
-		stdinClosure, stdinWaitErr := awaitOwnerStdin(finalizeCtx, owner)
+		stdinComplete, stdinErr, stdinWaitErr := stdinSig.await(finalizeCtx)
 		facts := processReleaseFacts(
-			finalizeErr == nil && stdinWaitErr == nil && stdinClosure.Complete,
+			finalizeErr == nil && stdinWaitErr == nil && stdinComplete,
 			result.ReleaseErr,
 			finalizeErr,
-			stdinClosure.Err,
+			stdinErr,
 		)
 		if !rules.DecideRelease(facts).Confirmed() {
-			err := errors.Join(result.ReleaseErr, finalizeErr, stdinWaitErr, stdinClosure.Err)
+			err := errors.Join(result.ReleaseErr, finalizeErr, stdinWaitErr, stdinErr)
 			// The release keeps going (or failed); the session keeps observing
 			// it so Close accounts for it.
-			return commandOutput{}, true, &releasePendingError{release: startFinishedRelease(proc, result, owner), cause: fmt.Errorf("%w: %w", errControlCleanup, err)}
+			return commandOutput{}, true, &releasePendingError{release: startFinishedRelease(proc, result, stdinSig), cause: fmt.Errorf("%w: %w", errControlCleanup, err)}
 		}
 		return commandOutput{stdout: stdout.Bytes(), succeeded: result.Err == nil && result.ExitCode == 0}, true, nil
 	}
@@ -378,11 +380,12 @@ func (c *cliControl) run(ctx context.Context, server ServerEndpoint, dir string,
 
 // abandon terminates a command the caller stopped waiting for and waits for
 // its cleanup within the stop grace. An unfinished cleanup is returned as a
-// *CleanupPendingError whose Owner keeps it observable. A finished one
-// returns a refused termination and, when rules.DecideRelease does not
-// confirm the release (failed reap, failed pipe close), errControlCleanup
-// with those errors in a releasePendingError the session keeps.
-func (c *cliControl) abandon(owner *processruntime.CleanupOwner) error {
+// *CleanupPendingError whose Owner keeps it observable. A finished one is
+// evaluated by rules.DecideCancelledControlRelease: a refused group kill,
+// unsupported tree kill, failed reap, or failed pipe/stdin close returns
+// errControlCleanup in a releasePendingError that the session keeps so Close
+// accounts for it.
+func (c *cliControl) abandon(owner *processruntime.CleanupOwner, treeKillSupported bool) error {
 	owner.BeginCleanup()
 	grace := c.stopGrace
 	if grace <= 0 {
@@ -392,16 +395,24 @@ func (c *cliControl) abandon(owner *processruntime.CleanupOwner) error {
 	defer cancel()
 	state, err := owner.Await(waitCtx)
 	if err != nil {
-		return &CleanupPendingError{Owner: owner, Cause: errors.New("cancelled OpenCode control command was not confirmed stopped")}
+		return &CleanupPendingError{
+			Owner:                owner,
+			Cause:                errors.New("cancelled OpenCode control command was not confirmed stopped"),
+			treeKillNotSupported: !treeKillSupported,
+		}
 	}
-	if rules.DecideRelease(cleanupReleaseFacts(state)).Confirmed() {
-		return state.TreeTerminationErr
+	decision := rules.DecideCancelledControlRelease(rules.CancelledControlReleaseFacts{
+		TreeKillFailed:    state.TreeTerminationErr != nil,
+		TreeKillSupported: treeKillSupported,
+		Release:           cleanupReleaseFacts(state),
+	})
+	if decision.Confirmed() {
+		return nil
 	}
-	unconfirmed := &releasePendingError{
-		release: ownerRelease{owner: owner},
-		cause:   errors.Join(errControlCleanup, state.RootResult.ReleaseErr, state.PipeCloseErr, state.StdinCloseErr),
+	return &releasePendingError{
+		release: ownerRelease{owner: owner, treeKillNotSupported: !treeKillSupported},
+		cause:   errors.Join(errControlCleanup, state.TreeTerminationErr, state.RootResult.ReleaseErr, state.PipeCloseErr, state.StdinCloseErr),
 	}
-	return errors.Join(state.TreeTerminationErr, unconfirmed)
 }
 
 // clientSpec is one client command of the session's own server: the

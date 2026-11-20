@@ -100,9 +100,6 @@ type ownedServer struct {
 	rootExited <-chan struct{}
 	cleanup    *processruntime.CleanupOwner
 	stopGrace  time.Duration
-	// afterStopAwait is a test seam called in abortServer after stopOutcome
-	// returns and before checking cleanup.Done; nil in production.
-	afterStopAwait func()
 }
 
 // readiness is the outcome of reading server stdout until the listening line.

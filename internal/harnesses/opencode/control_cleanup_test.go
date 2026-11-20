@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,54 +17,79 @@ import (
 	"github.com/MartinAndreev/conduit/internal/sessions/provider"
 )
 
-// A reconciliation query whose control command could not be stopped leaves
-// its cleanup owner with the session: Close does not report resources
-// released until it completed, and a later Close observes the completion.
+// A reconciliation query whose control command cleanup is still pending leaves
+// its cleanup owner with the session: Close does not report resources released
+// until cleanup completes with a confirmed group termination, and a refused
+// group kill keeps ResourcesReleased false even after the root and pipes exit.
 func TestReconcileControlCleanupIsAccountedByClose(t *testing.T) {
-	hung := newFakeServerProcess("")
-	hung.killErr = errFakeKill
-	defer hung.exit()
-	owner := processruntime.NewCleanupOwner(hung)
-	owner.BeginCleanup()
-	control := &fakeControl{promptErr: errors.New("reply lost"), promptSent: true, queryErr: errors.Join(context.DeadlineExceeded, &CleanupPendingError{Owner: owner, Cause: errors.New("not stopped")})}
-	reconciled := make(chan rules.SteerReconcileKind, 1)
-	fixture := newReconcileFixture(t, control, 20*time.Millisecond, func(s *session) {
-		s.config.StopGrace = 100 * time.Millisecond
-		s.steerReconcileApplied = func(kind rules.SteerReconcileKind) { reconciled <- kind }
-	})
-	_, _ = fixture.session.Steer(context.Background(), provider.SteerRequest{Session: fixture.session.Ref(), ExpectedActiveTurn: fixture.started.Turn, CurrentAssignment: fixture.assigned, ExpectedRevision: fixture.assigned.Revision, NewAssignment: nextRevision(fixture.assigned), Mode: provider.DeliverActiveTurn, Parts: []provider.InputPart{{Text: "fix"}}})
-	select {
-	case kind := <-reconciled:
-		if kind != rules.SteerReconcileDoubtRemains {
-			t.Fatalf("reconcile = %s", kind)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("reconciliation did not run")
-	}
-	closeSession := func() provider.CloseSessionResult {
-		t.Helper()
-		result, err := fixture.session.Close(context.Background(), provider.CloseSessionRequest{Session: fixture.session.Ref(), Policy: provider.CloseInterruptThenClose})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return result
-	}
-	start := time.Now()
-	first := closeSession()
-	if first.ExecutionState != provider.ExecutionNone || first.ResourcesReleased {
-		t.Fatalf("close with a pending control cleanup = %#v", first)
-	}
-	if time.Since(start) > 2*time.Second {
-		t.Fatal("close was not bounded")
-	}
-	hung.exit()
-	select {
-	case <-owner.Done():
-	case <-time.After(2 * time.Second):
-		t.Fatal("control cleanup did not complete")
-	}
-	if again := closeSession(); !again.ResourcesReleased || again.ExecutionState != provider.ExecutionNone {
-		t.Fatalf("close after the control cleanup completed = %#v", again)
+	for _, tc := range []struct {
+		name         string
+		killErr      error
+		wantReleased bool
+	}{
+		{"confirmed kill completes later", nil, true},
+		{"refused kill keeps resources unreleased after exit", errFakeKill, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var proc processruntime.Process
+			var release func()
+			if tc.killErr != nil {
+				hung := newFakeServerProcess("")
+				hung.killErr = tc.killErr
+				proc = hung
+				release = hung.exit
+			} else {
+				gate := make(chan struct{})
+				var once sync.Once
+				p := newStdinAccountingProcess(nopWriteCloser{Writer: io.Discard})
+				p.waitGate = gate
+				proc = p
+				release = func() { once.Do(func() { close(gate) }) }
+			}
+			t.Cleanup(release)
+			owner := processruntime.NewCleanupOwner(proc)
+			owner.BeginCleanup()
+			control := &fakeControl{promptErr: errors.New("reply lost"), promptSent: true, queryErr: errors.Join(context.DeadlineExceeded, &CleanupPendingError{Owner: owner, Cause: errors.New("not stopped")})}
+			reconciled := make(chan rules.SteerReconcileKind, 1)
+			fixture := newReconcileFixture(t, control, 20*time.Millisecond, func(s *session) {
+				s.config.StopGrace = 100 * time.Millisecond
+				s.steerReconcileApplied = func(kind rules.SteerReconcileKind) { reconciled <- kind }
+			})
+			_, _ = fixture.session.Steer(context.Background(), provider.SteerRequest{Session: fixture.session.Ref(), ExpectedActiveTurn: fixture.started.Turn, CurrentAssignment: fixture.assigned, ExpectedRevision: fixture.assigned.Revision, NewAssignment: nextRevision(fixture.assigned), Mode: provider.DeliverActiveTurn, Parts: []provider.InputPart{{Text: "fix"}}})
+			select {
+			case kind := <-reconciled:
+				if kind != rules.SteerReconcileDoubtRemains {
+					t.Fatalf("reconcile = %s", kind)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("reconciliation did not run")
+			}
+			closeSession := func() provider.CloseSessionResult {
+				t.Helper()
+				result, err := fixture.session.Close(context.Background(), provider.CloseSessionRequest{Session: fixture.session.Ref(), Policy: provider.CloseInterruptThenClose})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return result
+			}
+			start := time.Now()
+			first := closeSession()
+			if first.ExecutionState != provider.ExecutionNone || first.ResourcesReleased {
+				t.Fatalf("close with a pending control cleanup = %#v", first)
+			}
+			if time.Since(start) > 2*time.Second {
+				t.Fatal("close was not bounded")
+			}
+			release()
+			select {
+			case <-owner.Done():
+			case <-time.After(2 * time.Second):
+				t.Fatal("control cleanup did not complete")
+			}
+			if again := closeSession(); again.ResourcesReleased != tc.wantReleased || again.ExecutionState != provider.ExecutionNone {
+				t.Fatalf("close after the control cleanup completed = %#v, want ExecutionNone and ResourcesReleased=%t", again, tc.wantReleased)
+			}
+		})
 	}
 }
 
@@ -144,9 +171,12 @@ func (b *blockedPendingQueryControl) QuerySteerDelivery(context.Context, SteerDe
 // resources released, and the owner that query registers after Close took
 // its snapshot is accounted for by a later Close.
 func TestCloseCountsInFlightControlQuery(t *testing.T) {
-	hung := newFakeServerProcess("")
-	hung.killErr = errFakeKill
-	defer hung.exit()
+	waitGate := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(waitGate) }) }
+	t.Cleanup(release)
+	hung := newStdinAccountingProcess(nopWriteCloser{Writer: io.Discard})
+	hung.waitGate = waitGate
 	owner := processruntime.NewCleanupOwner(hung)
 	owner.BeginCleanup()
 	control := &blockedPendingQueryControl{fakeControl: &fakeControl{promptErr: errors.New("reply lost"), promptSent: true}, entered: make(chan struct{}), release: make(chan struct{}), owner: owner}
@@ -186,7 +216,7 @@ func TestCloseCountsInFlightControlQuery(t *testing.T) {
 	if result := closeSession(); result.ResourcesReleased {
 		t.Fatalf("close with a pending owner registered after the snapshot = %#v", result)
 	}
-	hung.exit()
+	release()
 	<-owner.Done()
 	if result := closeSession(); !result.ResourcesReleased {
 		t.Fatalf("close after completion = %#v", result)

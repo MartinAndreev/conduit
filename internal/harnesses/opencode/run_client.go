@@ -14,12 +14,14 @@ import (
 // runClient is the single owner of one `opencode run` child's termination and
 // release. readRun, Close, watchServer, killRunClient and stdin-close cleanup
 // all coordinate through it:
-//   - finalization ownership is reserved atomically under the session mutex
-//     (s.mu) via claimLocked and rules.DecideClientClaim;
-//   - at most one kill worker sends KillTree followed immediately by
-//     RequestFinalize, and callers wait for it within their own deadline;
+//   - finalization and termination ownership is reserved atomically under the
+//     session mutex (s.mu) via claimLocked and rules.DecideClientClaim;
+//   - every exit (clean or failed) runs at most one kill worker that calls
+//     KillTree and immediately starts the single Finalize worker independently
+//     of Wait and pipes; callers wait within their own deadline;
 //   - stdin is pending from publication until closeStdin records its outcome,
-//     and forced stdout/stderr close errors are retained in the shared result;
+//     and forced stdout/stderr closure runs at most once in its own worker
+//     whose completion enters releaseDone;
 //   - at most one Wait and one release observer run for the whole lifetime of
 //     the client, so repeated Close calls only await that shared observer
 //     without spawning more goroutines.
@@ -28,10 +30,6 @@ type runClient struct {
 
 	// owner is read and updated only while holding the owning session's mu.
 	owner rules.ClientOwner
-	// killedMode records whether claimLocked ever moved the client to a kill
-	// path (ClientOwnerKilled or ClientOwnerClose), so decideRelease enforces
-	// kill confirmation when the client is tracked in s.releases.
-	killedMode atomic.Bool
 
 	// stdinDone stays open (pending) from newRunClient until closeStdin
 	// records Stdin().Close()'s outcome.
@@ -39,15 +37,21 @@ type runClient struct {
 	stdinDone chan struct{}
 	stdinErr  error
 
-	// pipeMu protects pipeCloseErr recorded when forced cleanup closes
-	// stdout/stderr after a stdin-close failure.
+	// Forced stdout/stderr closure worker (used on stdin-close cleanup when
+	// termination fails or times out). pipeMu protects pipeCloseErr.
 	pipeMu       sync.Mutex
 	pipesOnce    sync.Once
+	pipesStarted atomic.Bool
+	pipesDone    chan struct{}
 	pipeCloseErr error
 
 	killOnce sync.Once
 	killDone chan struct{}
 	killErr  error
+
+	finalizeOnce sync.Once
+	finalizeDone chan struct{}
+	finalizeErr  error
 
 	waitOnce   sync.Once
 	waitDone   chan struct{}
@@ -55,27 +59,25 @@ type runClient struct {
 
 	releaseOnce sync.Once
 	releaseDone chan struct{}
-	finalizeErr error
 }
 
 func newRunClient(proc processruntime.Process) *runClient {
 	return &runClient{
-		proc:        proc,
-		stdinDone:   make(chan struct{}),
-		killDone:    make(chan struct{}),
-		waitDone:    make(chan struct{}),
-		releaseDone: make(chan struct{}),
+		proc:         proc,
+		stdinDone:    make(chan struct{}),
+		pipesDone:    make(chan struct{}),
+		killDone:     make(chan struct{}),
+		finalizeDone: make(chan struct{}),
+		waitDone:     make(chan struct{}),
+		releaseDone:  make(chan struct{}),
 	}
 }
 
-// claimLocked evaluates and applies a finalization/termination reservation.
+// claimLocked evaluates and applies a termination/finalization reservation.
 // The owning session's mu must be held.
 func (c *runClient) claimLocked(actor rules.ClientClaimActor) rules.ClientClaimDecision {
 	decision := rules.DecideClientClaim(rules.ClientClaimFacts{Current: c.owner, Actor: actor})
 	c.owner = decision.NextOwner
-	if decision.NextOwner == rules.ClientOwnerKilled || decision.NextOwner == rules.ClientOwnerClose {
-		c.killedMode.Store(true)
-	}
 	return decision
 }
 
@@ -90,18 +92,42 @@ func (c *runClient) closeStdin() error {
 	return c.stdinErr
 }
 
-// closePipes forces stdout and stderr closed once (used after a stdin-close
-// failure when cleanup is refused or times out) and records any close errors
-// in the shared release outcome.
-func (c *runClient) closePipes() error {
+// startClosePipes launches the client's single forced stdout/stderr close
+// worker (used after stdin-close failure when termination fails or times out).
+// The worker has no deadline because io.Closer.Close takes no context and
+// must finish in the background so releaseDone reflects its terminal outcome
+// while callers bound their own wait via awaitClosePipes.
+func (c *runClient) startClosePipes() <-chan struct{} {
 	c.pipesOnce.Do(func() {
-		err := errors.Join(closeCapturePipe(c.proc.Stdout()), closeCapturePipe(c.proc.Stderr()))
-		_ = lockscope.WithMutexLock(&c.pipeMu, func() error {
-			c.pipeCloseErr = err
-			return nil
-		})
+		c.pipesStarted.Store(true)
+		go func() {
+			err := errors.Join(closeCapturePipe(c.proc.Stdout()), closeCapturePipe(c.proc.Stderr()))
+			_ = lockscope.WithMutexLock(&c.pipeMu, func() error {
+				c.pipeCloseErr = err
+				return nil
+			})
+			close(c.pipesDone)
+		}()
 	})
-	return c.pipeCloseError()
+	return c.pipesDone
+}
+
+// awaitClosePipes starts forced pipe closure and waits for it bounded by ctx.
+// When ctx expires first, the worker keeps running and its completion still
+// feeds releaseDone.
+func (c *runClient) awaitClosePipes(ctx context.Context) error {
+	done := c.startClosePipes()
+	select {
+	case <-done:
+		return c.pipeCloseError()
+	default:
+	}
+	select {
+	case <-done:
+		return c.pipeCloseError()
+	case <-ctx.Done():
+		return nil
+	}
 }
 
 func (c *runClient) pipeCloseError() error {
@@ -113,15 +139,38 @@ func (c *runClient) pipeCloseError() error {
 	return err
 }
 
+// startFinalize launches the client's single Finalize worker once, right
+// after KillTree finishes, independently of Wait and output pipes. Calling
+// Finalize(context.Background()) directly both registers finalization right
+// away (closing the signal gate once the root exits, like RequestFinalize)
+// and observes its single terminal outcome without calling Finalize twice.
+// The worker has no deadline because finalization owns reaping the root to
+// completion after callers stop waiting.
+func (c *runClient) startFinalize() <-chan struct{} {
+	c.finalizeOnce.Do(func() {
+		if finalizer, ok := c.proc.(processruntime.Finalizer); ok {
+			go func() {
+				c.finalizeErr = finalizer.Finalize(context.Background())
+				close(c.finalizeDone)
+			}()
+		} else {
+			close(c.finalizeDone)
+		}
+	})
+	return c.finalizeDone
+}
+
 // startTerminate launches the client's single kill worker (at most one per
-// client). The worker sends KillTree, registers finalization immediately
-// after it (independently of Wait and pipes), stores the outcome, and closes
-// killDone. Callers never block inside sync.Once.Do.
+// client). The worker sends KillTree, immediately registers finalization via
+// startFinalize (independently of Wait and pipes), stores the outcome, and
+// closes killDone. Callers never block inside sync.Once.Do; the worker itself
+// has no deadline because KillTree takes no context and callers bound their
+// wait via awaitTerminate.
 func (c *runClient) startTerminate() <-chan struct{} {
 	c.killOnce.Do(func() {
 		go func() {
 			c.killErr = c.proc.KillTree()
-			processruntime.RequestFinalize(c.proc)
+			c.startFinalize()
 			close(c.killDone)
 		}()
 	})
@@ -157,7 +206,8 @@ func (c *runClient) killOutcome() (finished bool, err error) {
 }
 
 // startWait starts the client's single Wait observer and returns the channel
-// that closes once Wait completed.
+// that closes once Wait completed. The worker has no deadline because
+// Process.Wait takes no context and must be shared across callers.
 func (c *runClient) startWait() <-chan struct{} {
 	c.waitOnce.Do(func() {
 		go func() {
@@ -189,20 +239,24 @@ func (c *runClient) observeRootExit() (<-chan struct{}, func() processruntime.Re
 
 // startRelease starts the client's single release observer. It waits for
 // stdin close (so Close cannot observe a premature release before StartTurn
-// recorded stdin's outcome), for the single kill worker when needsKill is
-// true (so finalization never precedes the kill), for the single Wait, and
-// then for Finalize.
-func (c *runClient) startRelease(needsKill bool) <-chan struct{} {
+// recorded stdin's outcome), for the single kill worker (and forced pipe
+// closure when stdin failed and kill failed), for the single Wait, for the
+// single Finalize worker, and for any forced pipe closure before closing
+// releaseDone. The observer has no deadline because it aggregates the
+// terminal outcomes of those OS-bound workers for bounded callers.
+func (c *runClient) startRelease() <-chan struct{} {
 	c.releaseOnce.Do(func() {
 		waitDone := c.startWait()
 		go func() {
 			<-c.stdinDone
-			if needsKill {
-				<-c.killDone
+			<-c.killDone
+			if c.stdinErr != nil && c.killErr != nil {
+				c.startClosePipes()
 			}
 			<-waitDone
-			if finalizer, ok := c.proc.(processruntime.Finalizer); ok {
-				c.finalizeErr = finalizer.Finalize(context.Background())
+			<-c.finalizeDone
+			if c.pipesStarted.Load() {
+				<-c.pipesDone
 			}
 			close(c.releaseDone)
 		}()
@@ -212,8 +266,8 @@ func (c *runClient) startRelease(needsKill bool) <-chan struct{} {
 
 // awaitRelease ensures the shared release observer is running, waits for it
 // bounded by ctx, and returns the current release facts.
-func (c *runClient) awaitRelease(ctx context.Context, needsKill bool) rules.ReleaseFacts {
-	done := c.startRelease(needsKill)
+func (c *runClient) awaitRelease(ctx context.Context) rules.ReleaseFacts {
+	done := c.startRelease()
 	select {
 	case <-done:
 		return c.releaseFacts()
@@ -237,10 +291,9 @@ func (c *runClient) releaseFacts() rules.ReleaseFacts {
 	}
 }
 
-func (c *runClient) closeReleaseFacts(natural bool) rules.ClientCloseReleaseFacts {
+func (c *runClient) closeReleaseFacts() rules.ClientCloseReleaseFacts {
 	killFinished, killErr := c.killOutcome()
 	return rules.ClientCloseReleaseFacts{
-		NaturalRelease:    natural,
 		KillFinished:      killFinished,
 		KillConfirmed:     killFinished && processruntime.KillConfirmed(killErr),
 		TreeKillSupported: c.proc.TreeKillSupported(),
@@ -248,11 +301,10 @@ func (c *runClient) closeReleaseFacts(natural bool) rules.ClientCloseReleaseFact
 	}
 }
 
+// decideRelease evaluates the same DecideClientCloseRelease rule whether the
+// client is active in s.client or tracked in s.releases.
 func (c *runClient) decideRelease() rules.ReleaseDecision {
-	if c.killedMode.Load() {
-		return rules.DecideClientCloseRelease(c.closeReleaseFacts(false))
-	}
-	return rules.DecideRelease(c.releaseFacts())
+	return rules.DecideClientCloseRelease(c.closeReleaseFacts())
 }
 
 var _ processRelease = (*runClient)(nil)
