@@ -189,17 +189,35 @@ func readServerStdout(stdout io.Reader, ready chan<- readiness) {
 	_, _ = io.Copy(io.Discard, stdout)
 }
 
+// serverStopOutcome separates execution-end confirmation (DecideServerStop)
+// from full process resource release (DecideRelease, which also checks
+// Wait's ReleaseErr and pipe/stdin close errors).
+type serverStopOutcome struct {
+	stop    rules.ServerStopDecision
+	release rules.ReleaseDecision
+	state   processruntime.CleanupState
+}
+
 // stop terminates the server's process group and waits for its cleanup,
 // bounded by ctx and the stop grace. Repeated calls share the one cleanup.
 func (o *ownedServer) stop(ctx context.Context) rules.ServerStopDecision {
+	return o.stopOutcome(ctx).stop
+}
+
+func (o *ownedServer) stopOutcome(ctx context.Context) serverStopOutcome {
 	o.cleanup.BeginCleanup()
 	waitCtx, cancel := context.WithTimeout(ctx, o.stopGrace)
 	defer cancel()
 	state, err := o.cleanup.Await(waitCtx)
-	return rules.DecideServerStop(rules.ServerStopFacts{
-		CleanupComplete:   err == nil && state.Complete,
+	complete := err == nil && state.Complete
+	stop := rules.DecideServerStop(rules.ServerStopFacts{
+		CleanupComplete:   complete,
 		RootReaped:        state.RootReaped,
 		TreeKillSupported: o.proc.TreeKillSupported(),
 		TreeKillFailed:    state.TreeTerminationErr != nil,
 	})
+	releaseFacts := cleanupReleaseFacts(state)
+	releaseFacts.Finished = complete
+	release := rules.DecideRelease(releaseFacts)
+	return serverStopOutcome{stop: stop, release: release, state: state}
 }

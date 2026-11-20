@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MartinAndreev/conduit/internal/harnesses/opencode/rules"
 	"github.com/MartinAndreev/conduit/internal/lockscope"
 	"github.com/MartinAndreev/conduit/internal/sessions/provider"
 )
@@ -33,15 +34,16 @@ func TestCloseClaimKeepsRunFromFinalizing(t *testing.T) {
 			}
 			s := opened.Session.(*session)
 			proc := &fakeProcess{stdout: io.NopCloser(strings.NewReader("")), stderr: io.NopCloser(strings.NewReader(""))}
+			client := newRunClient(proc)
 			_ = lockscope.WithMutexLock(&s.mu, func() error {
-				s.process = proc
+				s.client = client
 				if tc.claimed {
 					s.closed = true
-					s.closeOwned = proc
+					client.claimLocked(rules.ClientActorClose)
 				}
 				return nil
 			})
-			s.readRun(proc, provider.TurnRef{AdapterTurnID: "turn-1"})
+			s.readRun(client, provider.TurnRef{AdapterTurnID: "turn-1"})
 			if got := proc.finalizes.Load(); got != tc.finalizes {
 				t.Fatalf("run finalized %d times, want %d", got, tc.finalizes)
 			}

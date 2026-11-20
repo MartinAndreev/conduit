@@ -51,22 +51,11 @@ type finishedRelease struct {
 	err         error
 }
 
-// startFinishedRelease observes the release of a client whose Wait already
-// returned result (a finished control command or run client).
+// startFinishedRelease observes the release of a control command whose Wait
+// already returned result.
 func startFinishedRelease(proc processruntime.Process, result processruntime.Result) *finishedRelease {
-	return startRelease(proc, func() processruntime.Result { return result })
-}
-
-// startClientRelease observes the release of a client that may still run:
-// Wait, then finalization.
-func startClientRelease(proc processruntime.Process) *finishedRelease {
-	return startRelease(proc, proc.Wait)
-}
-
-func startRelease(proc processruntime.Process, wait func() processruntime.Result) *finishedRelease {
-	release := &finishedRelease{done: make(chan struct{})}
+	release := &finishedRelease{done: make(chan struct{}), result: result}
 	go func() {
-		release.result = wait()
 		release.finalizeErr = processruntime.Finalize(context.Background(), proc)
 		release.err = errors.Join(release.result.ReleaseErr, release.finalizeErr)
 		close(release.done)

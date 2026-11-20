@@ -227,7 +227,7 @@ func TestStdinCloseCleanupFailureIsBoundedAndRetainsOwnership(t *testing.T) {
 		deadline := time.Now().Add(time.Second)
 		for {
 			s.mu.Lock()
-			reaped := s.process == nil
+			reaped := s.client == nil
 			s.mu.Unlock()
 			if reaped {
 				return
@@ -249,7 +249,7 @@ func TestStdinCloseCleanupFailureIsBoundedAndRetainsOwnership(t *testing.T) {
 		t.Fatalf("cleanup causes lost: %v", err)
 	}
 	s.mu.Lock()
-	retained := s.process == proc && s.turn.Present && s.deliveryUnknown && s.state == provider.SessionLost
+	retained := s.client != nil && s.client.proc == proc && s.turn.Present && s.deliveryUnknown && s.state == provider.SessionLost
 	s.mu.Unlock()
 	if !retained {
 		t.Fatal("unreaped owned process or uncertainty discarded")

@@ -134,16 +134,21 @@ func (a *Adapter) identifyServer(ctx context.Context, server *ownedServer, works
 // observable (Done, Latest), as the Codex adapter does for a failed open;
 // once it ended, as its reason and termination error.
 func abortServer(ctx context.Context, server *ownedServer, cause error) error {
-	decision := server.stop(context.WithoutCancel(ctx))
-	if decision.Confirmed() {
+	outcome := server.stopOutcome(context.WithoutCancel(ctx))
+	if outcome.stop.Confirmed() && outcome.release.Confirmed() {
 		return cause
 	}
 	var stopErr error
 	select {
 	case <-server.cleanup.Done():
-		stopErr = errors.Join(errors.New(decision.Reason), server.cleanup.Latest().TreeTerminationErr)
+		if !outcome.stop.Confirmed() {
+			stopErr = errors.Join(errors.New(outcome.stop.Reason), outcome.state.TreeTerminationErr)
+		}
+		if !outcome.release.Confirmed() {
+			stopErr = errors.Join(stopErr, errors.New(outcome.release.Reason), outcome.state.RootResult.ReleaseErr, outcome.state.PipeCloseErr, outcome.state.StdinCloseErr)
+		}
 	default:
-		stopErr = &CleanupPendingError{Owner: server.cleanup, Cause: errors.New(decision.Reason)}
+		stopErr = &CleanupPendingError{Owner: server.cleanup, Cause: errors.New(outcome.stop.Reason)}
 	}
 	var providerErr *provider.ProviderError
 	if errors.As(cause, &providerErr) {

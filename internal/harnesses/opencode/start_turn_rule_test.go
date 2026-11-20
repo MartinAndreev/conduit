@@ -37,7 +37,7 @@ func TestStartTurnRejectionsDoNotAllocateOrLaunch(t *testing.T) {
 			if !errors.As(err, &pe) || pe.Code != tt.code || pe.Detail != tt.detail || pe.Operation != provider.OperationStartTurn || pe.RemoteEffect != provider.RemoteEffectNotSent {
 				t.Fatalf("error = %#v", err)
 			}
-			if allocated || launcher.starts != 0 || s.turn.Present || s.process != nil || s.assignment != beforeAssignment || s.state != beforeState {
+			if allocated || launcher.starts != 0 || s.turn.Present || s.client != nil || s.assignment != beforeAssignment || s.state != beforeState {
 				t.Fatal("rejection allocated, launched or mutated state")
 			}
 		})
