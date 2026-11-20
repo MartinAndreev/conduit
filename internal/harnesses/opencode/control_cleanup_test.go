@@ -174,7 +174,7 @@ func TestCloseCountsInFlightControlQuery(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		var ops, owners int
-		_ = lockscopeRead(s, func() { ops, owners = s.controlOps, len(s.controlCleanups) })
+		_ = lockscopeRead(s, func() { ops, owners = s.controlOps, len(s.releases) })
 		if ops == 0 && owners == 1 {
 			break
 		}

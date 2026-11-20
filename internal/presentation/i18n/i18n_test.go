@@ -90,7 +90,7 @@ func TestCatalogCopiesCannotMutateTranslations(t *testing.T) {
 func TestStartupDiagnosticCoverage(t *testing.T) {
 	for _, code := range []string{
 		"home_unavailable", "configuration_invalid", "configuration_unreadable", "configuration_future_schema", "configuration_publish_failed",
-		"harness_missing", "harness_override_missing", "harness_probe_failed", "harness_probe_timeout", "harness_version_unknown", "harness_probe_cleanup_unconfirmed",
+		"harness_missing", "harness_override_missing", "harness_probe_failed", "harness_probe_timeout", "harness_version_unknown", "harness_probe_cleanup_unconfirmed", "harness_probe_unsupported_platform",
 		"final_configuration_invalid", "final_configuration_unreadable", "final_configuration_future_schema", "final_configuration_absent",
 		"operation_id_failed", "startup_dependencies_missing", "configuration_publish_invalid_result", "configuration_creation_rejected",
 		"configuration_migration_failed", "configuration_migration_unavailable", "configuration_migration_backup_conflict", "configuration_migration_conflict",

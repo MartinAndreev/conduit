@@ -177,11 +177,13 @@ func TestStartFailureIsOpaque(t *testing.T) {
 }
 
 // scriptedProcess exits at once with exitCode after printing stdout and
-// counts tree kills.
+// counts tree kills and finalizations; finalizeErr is a failed release.
 type scriptedProcess struct {
 	*stuckProcess
-	exitCode int
-	kills    *atomic.Int32
+	exitCode    int
+	kills       *atomic.Int32
+	finalizes   *atomic.Int32
+	finalizeErr error
 }
 
 func newScriptedProcess(stdout string, exitCode int) scriptedProcess {
@@ -192,7 +194,13 @@ func newScriptedProcess(stdout string, exitCode int) scriptedProcess {
 		_ = child.stdoutW.Close()
 		_ = child.stderrW.Close()
 	}()
-	return scriptedProcess{stuckProcess: child, exitCode: exitCode, kills: &atomic.Int32{}}
+	return scriptedProcess{stuckProcess: child, exitCode: exitCode, kills: &atomic.Int32{}, finalizes: &atomic.Int32{}}
+}
+
+// Finalize implements process.Finalizer: the scripted root has exited.
+func (p scriptedProcess) Finalize(context.Context) error {
+	p.finalizes.Add(1)
+	return p.finalizeErr
 }
 
 func (p scriptedProcess) KillTree() error {
@@ -219,7 +227,8 @@ func (l *scriptedLauncher) Start(process.Spec) (process.Process, error) {
 	return l.children[next], nil
 }
 
-// A git process that finished on its own is reaped and never signalled.
+// A git process that finished on its own is finalized (released) and never
+// signalled.
 func TestFinishedGitIsNotSignalled(t *testing.T) {
 	requireGit(t)
 	dir := workspace(t)
@@ -231,8 +240,61 @@ func TestFinishedGitIsNotSignalled(t *testing.T) {
 	if got[0] != presentAs(hash) {
 		t.Fatalf("got %v", got)
 	}
+	if kills, finalizes := child.kills.Load(), child.finalizes.Load(); kills != 0 || finalizes != 1 {
+		t.Fatalf("KillTree called %d times, Finalize %d times", kills, finalizes)
+	}
+}
+
+// A finished git whose release (finalization) fails fails the call with a
+// completed GitCleanup that carries the release error; nothing is signalled.
+func TestFinishedGitReleaseFailureIsAnError(t *testing.T) {
+	requireGit(t)
+	dir := workspace(t)
+	write(t, dir, "a.go", "a\n")
+	child := newScriptedProcess(strings.Repeat("a", 40)+"\n", 0)
+	reapErr := errors.New("reap failed")
+	child.finalizeErr = reapErr
+	launcher := &scriptedLauncher{children: []scriptedProcess{child}}
+	observed, err := NewWorkspaceSnapshots(launcher).ObserveFiles(context.Background(), compose.SnapshotRef(dir), []string{"a.go"})
+	var cleanup *GitCleanup
+	if !errors.Is(err, ErrGitCleanup) || !errors.Is(err, reapErr) || !errors.As(err, &cleanup) || observed != nil {
+		t.Fatalf("observed %v, err %v", observed, err)
+	}
+	if state := cleanup.State(); !state.Complete || state.RootReaped || state.TreeTerminationRequested || !errors.Is(state.RootResult.ReleaseErr, reapErr) {
+		t.Fatalf("state = %+v", state)
+	}
 	if kills := child.kills.Load(); kills != 0 {
 		t.Fatalf("KillTree called %d times", kills)
+	}
+}
+
+// A git run longer than the cleanup budget (a slow clean or LFS filter) that
+// then finishes and releases quickly succeeds: the budget measures only the
+// cleanup after git finished, not git's own run.
+func TestSlowGitRunDoesNotSpendCleanupBudget(t *testing.T) {
+	requireGit(t)
+	dir := workspace(t)
+	write(t, dir, "a.go", "a\n")
+	hash := strings.Repeat("a", 40)
+	child := scriptedProcess{stuckProcess: newStuckProcess(), kills: &atomic.Int32{}, finalizes: &atomic.Int32{}}
+	reader := NewWorkspaceSnapshots(&scriptedLauncher{children: []scriptedProcess{child}})
+	reader.cleanupBudget = 50 * time.Millisecond
+	go func() {
+		time.Sleep(4 * reader.cleanupBudget)
+		_, _ = io.WriteString(child.stdoutW, hash+"\n")
+		_ = child.stdoutW.Close()
+		_ = child.stderrW.Close()
+		close(child.release)
+	}()
+	observed, err := reader.ObserveFiles(context.Background(), compose.SnapshotRef(dir), []string{"a.go"})
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if len(observed) != 1 || observed[0] != presentAs(hash) {
+		t.Fatalf("observed %v", observed)
+	}
+	if kills, finalizes := child.kills.Load(), child.finalizes.Load(); kills != 0 || finalizes != 1 {
+		t.Fatalf("KillTree called %d times, Finalize %d times", kills, finalizes)
 	}
 }
 
@@ -257,11 +319,26 @@ func TestMalformedGitOutputIsAnError(t *testing.T) {
 	}
 }
 
-// exitedOpenProcess has exited and been reaped, but a descendant still holds
-// stdout, so its pipes have not ended; it counts tree kills.
+// exitedOpenProcess has exited, but a descendant still holds stdout, so its
+// pipes have not ended. Like production on Linux and Darwin its root stays
+// unreaped until Finalize, so its group can still be killed. It counts tree
+// kills and finalizations, and records a finalization before any kill.
 type exitedOpenProcess struct {
 	*stuckProcess
-	kills *atomic.Int32
+	kills               *atomic.Int32
+	finalizes           *atomic.Int32
+	finalizedBeforeKill *atomic.Bool
+}
+
+func newExitedOpenProcess(stuck *stuckProcess) exitedOpenProcess {
+	return exitedOpenProcess{stuckProcess: stuck, kills: &atomic.Int32{}, finalizes: &atomic.Int32{}, finalizedBeforeKill: &atomic.Bool{}}
+}
+
+func (p exitedOpenProcess) Finalize(context.Context) error {
+	if p.finalizes.Add(1) == 1 && p.kills.Load() == 0 {
+		p.finalizedBeforeKill.Store(true)
+	}
+	return nil
 }
 
 func (p exitedOpenProcess) RootExited() <-chan struct{} {
@@ -275,9 +352,10 @@ func (p exitedOpenProcess) KillTree() error {
 	return nil
 }
 
-// Cancellation that finds the root already exited does not signal it: the
-// root is only reaped, and the call still fails with the cancellation.
-func TestCancellationAfterRootExitDoesNotSignal(t *testing.T) {
+// Cancellation that finds the root already exited still kills the group (the
+// unreaped root keeps its number reserved), registers finalization after the
+// kill, closes the parent's pipe ends, and fails with the cancellation only.
+func TestCancellationAfterRootExitKillsAndFinalizes(t *testing.T) {
 	requireGit(t)
 	dir := workspace(t)
 	write(t, dir, "a.go", "a\n")
@@ -285,15 +363,15 @@ func TestCancellationAfterRootExitDoesNotSignal(t *testing.T) {
 	close(stuck.release)
 	_ = stuck.stderrW.Close()
 	defer stuck.stdoutW.Close()
-	child := exitedOpenProcess{stuckProcess: stuck, kills: &atomic.Int32{}}
+	child := newExitedOpenProcess(stuck)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	observed, err := NewWorkspaceSnapshots(fixedLauncher{child: child}).ObserveFiles(ctx, compose.SnapshotRef(dir), []string{"a.go"})
 	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrGitCleanup) || observed != nil {
 		t.Fatalf("observed %v, err %v", observed, err)
 	}
-	if kills := child.kills.Load(); kills != 0 {
-		t.Fatalf("KillTree called %d times", kills)
+	if kills, finalizes := child.kills.Load(), child.finalizes.Load(); kills != 1 || finalizes == 0 || child.finalizedBeforeKill.Load() {
+		t.Fatalf("KillTree called %d times, Finalize %d times (before the kill: %v)", kills, finalizes, child.finalizedBeforeKill.Load())
 	}
 	// The writer side is still open: the parent's end was closed by the
 	// reader, not by the test.
@@ -324,8 +402,9 @@ func TestCancellationDuringFilesystemPhase(t *testing.T) {
 	}
 }
 
-// A root found exited after cancellation whose reap is not confirmed in the
-// budget reports both the cancellation and the pending reap, unsignalled.
+// A root found exited after cancellation whose cleanup is not confirmed in
+// the budget reports both the cancellation and the pending cleanup; the
+// owner's single kill was sent.
 func TestCancellationAfterRootExitWithStuckReap(t *testing.T) {
 	requireGit(t)
 	dir := workspace(t)
@@ -333,12 +412,12 @@ func TestCancellationAfterRootExitWithStuckReap(t *testing.T) {
 	stuck := newStuckProcess()
 	_ = stuck.stderrW.Close()
 	defer stuck.stdoutW.Close()
-	child := exitedOpenProcess{stuckProcess: stuck, kills: &atomic.Int32{}}
+	child := newExitedOpenProcess(stuck)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	_, err := NewWorkspaceSnapshots(fixedLauncher{child: child}).ObserveFiles(ctx, compose.SnapshotRef(dir), []string{"a.go"})
 	var cleanup *GitCleanup
-	if !errors.Is(err, context.DeadlineExceeded) || !errors.As(err, &cleanup) || child.kills.Load() != 0 {
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.As(err, &cleanup) || child.kills.Load() != 1 {
 		t.Fatalf("err = %v, kills %d", err, child.kills.Load())
 	}
 	if !strings.Contains(err.Error(), ErrGitCleanup.Error()) {
@@ -423,17 +502,17 @@ func TestSlowPipeCloseIsObservable(t *testing.T) {
 	defer stuck.stdoutW.Close()
 	gate, closeErr := make(chan struct{}), errors.New("close failed late")
 	child := slowCloseProcess{
-		exitedOpenProcess: exitedOpenProcess{stuckProcess: stuck, kills: &atomic.Int32{}},
+		exitedOpenProcess: newExitedOpenProcess(stuck),
 		stdout:            slowClosePipe{trackedPipe: stuck.stdout, gate: gate, err: closeErr},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	_, err := NewWorkspaceSnapshots(fixedLauncher{child: child}).ObserveFiles(ctx, compose.SnapshotRef(dir), []string{"a.go"})
 	var cleanup *GitCleanup
-	if !errors.Is(err, context.DeadlineExceeded) || !errors.As(err, &cleanup) || child.kills.Load() != 0 {
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.As(err, &cleanup) || child.kills.Load() != 1 {
 		t.Fatalf("err = %v, kills %d", err, child.kills.Load())
 	}
-	if state := cleanup.State(); state.Complete || state.StdoutClosure.Complete || state.TreeTerminationRequested {
+	if state := cleanup.State(); state.Complete || state.StdoutClosure.Complete || !state.TreeTerminationRequested {
 		t.Fatalf("state before the close = %+v", state)
 	}
 	close(gate)

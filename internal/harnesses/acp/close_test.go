@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,6 +28,9 @@ func TestCloseIdleSessionReleasesOwnedAgent(t *testing.T) {
 			proc := h.launcher.process(t)
 			if !proc.reaped() || proc.kills.Load() == 0 {
 				t.Fatalf("agent reaped=%v kills=%d", proc.reaped(), proc.kills.Load())
+			}
+			if calls := proc.finalizes.Load(); calls != 1 {
+				t.Fatalf("Close finalized %d times, want once", calls)
 			}
 			if len(h.launcher.framesFor("session/close")) != 1 || len(h.launcher.framesFor("session/cancel")) != 0 {
 				t.Fatalf("frames = %+v", h.launcher.recorded())
@@ -128,5 +132,99 @@ func TestCloseReportsUnprovenQuiescenceWhenAgentCannotBeReaped(t *testing.T) {
 	result, err := closeSession(h, provider.CloseRequireQuiescent)
 	if err != nil || !result.HandleClosed || result.ResourcesReleased || result.ExecutionState != provider.ExecutionUnknown {
 		t.Fatalf("Close = %+v, %v", result, err)
+	}
+}
+
+// Close whose bounded waits end before the root exited (the kill is refused)
+// still hands the release to Finalize: once the root exits later, it is
+// released although Close already returned.
+func TestTimedOutCloseStillReleasesRootAfterLateExit(t *testing.T) {
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	serve := func(conn *agentConn) {
+		for {
+			frame, ok := conn.next()
+			if !ok {
+				return
+			}
+			switch frame.Method {
+			case "initialize":
+				conn.reply(frame.ID, map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{}})
+			case "session/new":
+				conn.reply(frame.ID, map[string]any{"sessionId": testSessionID})
+				<-release
+				return
+			}
+		}
+	}
+	h := openHarnessFull(t, &fakeLauncher{serve: serve, killErr: errors.New("kill refused")}, func(config *Config) { config.StopGrace = 20 * time.Millisecond }, nil)
+	result, err := closeSession(h, provider.CloseRequireQuiescent)
+	if err != nil || result.ResourcesReleased {
+		t.Fatalf("timed-out close = %+v, %v; want resources unconfirmed", result, err)
+	}
+	proc := h.launcher.process(t)
+	if proc.finalizes.Load() == 0 {
+		t.Fatal("timed-out Close did not finalize")
+	}
+	select {
+	case <-proc.released:
+		t.Fatal("root released before it exited")
+	default:
+	}
+	releaseOnce.Do(func() { close(release) })
+	select {
+	case <-proc.released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("root that exited after Close was never released")
+	}
+}
+
+// The transport stop's kill is refused by the OS and finalization then
+// releases the root, so Close's own kill is refused by the finalization
+// gate. That refusal is no termination evidence: Close reports neither
+// quiescence nor released resources.
+func TestFailedStopKillIsNotConfirmedByFinalization(t *testing.T) {
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	serve := func(conn *agentConn) {
+		for {
+			frame, ok := conn.next()
+			if !ok {
+				return
+			}
+			switch frame.Method {
+			case "initialize":
+				conn.reply(frame.ID, map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{}})
+			case "session/new":
+				conn.reply(frame.ID, map[string]any{"sessionId": testSessionID})
+			case "session/prompt":
+				// Stop the transport (stdout ends) and keep running.
+				_ = conn.output.Close()
+				<-release
+				return
+			}
+		}
+	}
+	h := openHarnessFull(t, &fakeLauncher{serve: serve, killErr: errors.New("kill refused")}, func(config *Config) { config.StopGrace = 50 * time.Millisecond }, nil)
+	go func() { _, _ = h.startTurn(context.Background(), "go") }()
+	proc := h.launcher.process(t)
+	deadline := time.Now().Add(2 * time.Second)
+	for proc.finalizes.Load() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("transport stop did not register finalization")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	releaseOnce.Do(func() { close(release) })
+	select {
+	case <-proc.released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("root was not released after its exit")
+	}
+	result, err := closeSession(h, provider.CloseRequireQuiescent)
+	if err != nil || result.ResourcesReleased || result.ExecutionState != provider.ExecutionUnknown {
+		t.Fatalf("Close = %+v, %v; want unconfirmed termination", result, err)
 	}
 }

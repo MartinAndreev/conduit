@@ -31,6 +31,7 @@
   "diagnostic.harness_override_missing": "The configured tool path was not found.",
   "diagnostic.harness_probe_cleanup_unconfirmed": "Local process cleanup is unconfirmed.",
   "diagnostic.harness_probe_failed": "The version check failed.",
+  "diagnostic.harness_probe_unsupported_platform": "The version check is not supported on this platform.",
   "diagnostic.harness_probe_timeout": "The version check timed out.",
   "diagnostic.harness_version_unknown": "The version is unknown.",
   "diagnostic.home_unavailable": "The user home directory is unavailable.",

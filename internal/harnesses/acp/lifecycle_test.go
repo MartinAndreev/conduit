@@ -264,6 +264,17 @@ func TestRootExitWithHeldStdoutLosesTurnAndSession(t *testing.T) {
 	proc := h.launcher.process(t)
 	waitSignal(t, proc.RootExited(), "root exit")
 	assertSessionLost(t, h)
+	// The loss path ends ownership after the transport stop's group kill.
+	deadline := time.Now().Add(2 * time.Second)
+	for proc.finalizes.Load() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("owned agent was never finalized")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if proc.kills.Load() == 0 || proc.finalizes.Load() != 1 {
+		t.Fatalf("kills = %d, Finalize calls = %d", proc.kills.Load(), proc.finalizes.Load())
+	}
 }
 
 // A prompt reply is already being handled (held mid-callback) when root-exit
@@ -370,5 +381,10 @@ func TestTransportStopSettlesWhenKillFails(t *testing.T) {
 	}
 	if h.launcher.process(t).kills.Load() == 0 {
 		t.Fatal("kill was not attempted")
+	}
+	// The stop path's kill is the last signal: finalization is registered
+	// although the agent neither exited nor ended its pipes.
+	if h.launcher.process(t).finalizes.Load() == 0 {
+		t.Fatal("transport stop did not register finalization")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +22,19 @@ type killableProcess struct {
 	stdoutWriter *io.PipeWriter
 	killed       chan struct{}
 	once         sync.Once
+	finalizes    atomic.Int32
+}
+
+// Finalize implements processruntime.Finalizer like production: it waits
+// for the root's exit (here, the kill) and never kills.
+func (p *killableProcess) Finalize(ctx context.Context) error {
+	select {
+	case <-p.killed:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	p.finalizes.Add(1)
+	return nil
 }
 
 func newKillableProcess() *killableProcess {
@@ -82,6 +96,11 @@ func TestInterruptThenCloseStopsOwnedRunClient(t *testing.T) {
 	}
 	if !result.HandleClosed || !result.ResourcesReleased || result.ExecutionState != provider.ExecutionNone {
 		t.Fatalf("close result = %#v; the stopped own server ends native execution", result)
+	}
+	// Close and the run's observation may both end ownership; Finalize is
+	// idempotent, and Close reports the release from it.
+	if proc.finalizes.Load() == 0 {
+		t.Fatal("owned run client was not finalized")
 	}
 	snapshot, _ := session.ObserveState(context.Background(), provider.ObserveStateRequest{Session: session.Ref()})
 	if snapshot.SessionState != provider.SessionClosed || snapshot.ActiveTurn.Present {

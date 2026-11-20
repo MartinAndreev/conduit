@@ -448,6 +448,9 @@ func TestCloseIdleRequireQuiescentClosesStdin(t *testing.T) {
 	if !fake.process().exited() {
 		t.Fatal("owned process did not exit")
 	}
+	if calls := fake.process().finalizes.Load(); calls != 1 {
+		t.Fatalf("Close finalized %d times, want once", calls)
+	}
 	for _, subtype := range fake.controlSubtypes() {
 		if subtype == "interrupt" {
 			t.Fatal("idle close sent an interrupt")

@@ -32,8 +32,12 @@ const (
 	// memory.MaxSnapshotFileBytes, filters included, should take far less.
 	gitTimeout = 2 * time.Minute
 	// gitCleanupBudget bounds the caller's wait for the reap after git
-	// finished, or for termination and reap after cancellation.
-	gitCleanupBudget = 250 * time.Millisecond
+	// finished, or for termination and reap after cancellation. It starts
+	// when git finished or the caller cancelled, never before. On Darwin
+	// process confirms the reap by polling with a backoff whose checks land
+	// near 0, 10, 30, 70, 150 and 310 ms, so a budget near 250 ms would
+	// report a false cleanup failure; one second leaves margin.
+	gitCleanupBudget = time.Second
 	// hashLineBytes is the largest output line per path: a SHA-256 hash and
 	// CRLF. Output beyond lines*hashLineBytes is not read into memory.
 	hashLineBytes = 64 + 2
@@ -43,12 +47,12 @@ const (
 // stdin, and collects at most expectedLines*hashLineBytes of stdout; stderr is
 // drained and discarded. ok reports exit status 0. Exit 0 with stdout over
 // its bound is ErrGitOutput. The caller's wait is bounded by ctx and
-// gitCleanupBudget. When git finished on its own (root exited, pipes ended)
-// it is only reaped, never signalled: its process group may already be gone
-// and its number reused. Only on cancellation, before the root is known to
-// be reaped, is the process tree killed and reaped by a
-// process.CleanupOwner; a root found exited after cancellation is not
-// signalled (releaseExited).
+// the cleanup budget (gitCleanupBudget), which starts only after git
+// finished or ctx ended. When git finished on its own (root exited, pipes ended)
+// it is never signalled, only released (releaseFinished). On cancellation a
+// process.CleanupOwner kills the process tree, which reaches the group also
+// after the root exited (process keeps the exited root unreaped until
+// finalization), closes the parent's pipe ends, and finalizes the root.
 func (w *WorkspaceSnapshots) run(ctx context.Context, dir string, args, stdinLines []string, expectedLines int) ([]byte, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
@@ -76,21 +80,16 @@ func (w *WorkspaceSnapshots) run(ctx context.Context, dir string, args, stdinLin
 		finished = true
 	case <-ctx.Done():
 	}
-	// The owner is created only now: it closes stdin, which the writer
-	// owned until here.
-	owner := process.NewCleanupOwnerWithDrain(child, piped)
-	cleanupCtx, stop := context.WithTimeout(context.Background(), gitCleanupBudget)
+	// The budget starts only now: it measures cleanup, not git's own run.
+	cleanupCtx, stop := context.WithTimeout(context.Background(), w.cleanupBudget)
 	defer stop()
 	if finished {
-		return reapFinished(cleanupCtx, owner, stdout)
+		return releaseFinished(cleanupCtx, child, stdout)
 	}
-	// Cancelled. A root that already exited is not signalled: it may be
-	// reaped already, so its group number may be reused. This narrows, but
-	// does not close, the window between process's independent reap and
-	// KillTree.
-	if closed(rootExited) {
-		return nil, false, releaseExited(ctx, cleanupCtx, child, owner, piped)
-	}
+	// Cancelled. The owner is created only now: it closes stdin, which the
+	// writer owned until here. Its kill is the last signal; it registers
+	// finalization right after it.
+	owner := process.NewCleanupOwnerWithDrain(child, piped)
 	owner.BeginCleanup()
 	state, waitErr := owner.Await(cleanupCtx)
 	if cause := errors.Join(waitErr, state.TreeTerminationErr, state.PipeCloseErr, state.StdinCloseErr, state.RootResult.ReleaseErr); cause != nil {
@@ -99,99 +98,20 @@ func (w *WorkspaceSnapshots) run(ctx context.Context, dir string, args, stdinLin
 	return nil, false, ctx.Err()
 }
 
-// releaseExited ends a cancelled run whose root already exited, without
-// signalling. A descendant (a filter) may still hold git's stdout or stderr,
-// which keeps the drain workers and Wait blocked, so the parent's ends are
-// closed. The closes run in their own goroutine: on Unix they unblock the
-// pending reads at once, while on Windows a close may wait for a read in
-// flight, which only the descendant's exit ends. The caller waits for the
-// closes, the drain and the reap within the cleanup budget; otherwise the
-// GitCleanup observer tracks all three, with each close result. The result
-// is always the cancellation.
-func releaseExited(ctx, cleanupCtx context.Context, child process.Process, owner *process.CleanupOwner, piped <-chan struct{}) error {
-	release := &exitedRelease{owner: owner, done: make(chan struct{})}
-	closing := make(chan struct{})
-	go func() {
-		release.closed(&release.stdout, closeOutput(child.Stdout()))
-		release.closed(&release.stderr, closeOutput(child.Stderr()))
-		close(closing)
-	}()
-	go func() {
-		<-allClosed(closing, allClosed(piped, owner.RootDone()))
-		release.complete()
-	}()
+// releaseFinished collects the result of a git process whose root exited and
+// whose pipes ended, without signalling it: Wait releases the owned
+// resources, then finalization releases the root. An unconfirmed or failed
+// release fails the call with a GitCleanup observer.
+func releaseFinished(ctx context.Context, child process.Process, stdout *boundedBuffer) ([]byte, bool, error) {
+	release := startFinishedRelease(child)
 	select {
 	case <-release.done:
-	case <-cleanupCtx.Done():
-		return errors.Join(ctx.Err(), &GitCleanup{done: release.done, state: release.state, cause: cleanupCtx.Err()})
+	case <-ctx.Done():
+		return nil, false, &GitCleanup{done: release.done, state: release.state, cause: ctx.Err()}
 	}
 	state := release.state()
-	if cause := errors.Join(state.PipeCloseErr, state.RootResult.ReleaseErr); cause != nil {
-		return errors.Join(ctx.Err(), &GitCleanup{done: release.done, state: release.state, cause: cause})
-	}
-	return ctx.Err()
-}
-
-// exitedRelease publishes the non-signalling cleanup of releaseExited: each
-// pipe close result and completion (closes, drain and reap all done). Its
-// state is the owner's (drain, reap, stdin) with these overlaid; complete is
-// set before done closes.
-type exitedRelease struct {
-	owner          *process.CleanupOwner
-	mu             sync.Mutex
-	stdout, stderr process.ClosureState
-	completed      bool
-	done           chan struct{}
-}
-
-func (r *exitedRelease) closed(closure *process.ClosureState, err error) {
-	_ = lockscope.WithMutexLock(&r.mu, func() error {
-		*closure = process.ClosureState{Complete: true, Err: err}
-		return nil
-	})
-}
-
-func (r *exitedRelease) complete() {
-	_ = lockscope.WithMutexLock(&r.mu, func() error {
-		r.completed = true
-		return nil
-	})
-	close(r.done)
-}
-
-func (r *exitedRelease) state() process.CleanupState {
-	state := r.owner.Latest()
-	_ = lockscope.WithMutexLock(&r.mu, func() error {
-		state.StdoutClosure = r.stdout
-		state.StderrClosure = r.stderr
-		state.PipeCloseErr = errors.Join(r.stdout.Err, r.stderr.Err)
-		state.PipesClosed = r.stdout.Complete && r.stderr.Complete && state.PipeCloseErr == nil
-		state.Complete = r.completed
-		return nil
-	})
-	return state
-}
-
-// closeOutput closes the parent's end of an output pipe; one already closed
-// by its drain worker is not an error.
-func closeOutput(pipe io.Closer) error {
-	if err := pipe.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
-		return err
-	}
-	return nil
-}
-
-// reapFinished collects the result of a git process whose root exited and
-// whose pipes ended, without signalling it.
-func reapFinished(ctx context.Context, owner *process.CleanupOwner, stdout *boundedBuffer) ([]byte, bool, error) {
-	select {
-	case <-owner.RootDone():
-	case <-ctx.Done():
-		return nil, false, &GitCleanup{done: owner.RootDone(), state: reapState(owner), cause: ctx.Err()}
-	}
-	state := owner.Latest()
 	if err := state.RootResult.ReleaseErr; err != nil {
-		return nil, false, &GitCleanup{done: owner.RootDone(), state: reapState(owner), cause: err}
+		return nil, false, &GitCleanup{done: release.done, state: release.state, cause: err}
 	}
 	ok := state.RootResult.Err == nil && state.RootResult.ExitCode == 0
 	data, exceeded := stdout.result()
@@ -199,6 +119,43 @@ func reapFinished(ctx context.Context, owner *process.CleanupOwner, stdout *boun
 		return nil, false, ErrGitOutput
 	}
 	return data, ok, nil
+}
+
+// finishedRelease publishes the non-signalling release of a finished git
+// process: Wait's result, then finalization's terminal outcome joined into
+// RootResult.ReleaseErr. RootReaped and Complete are set before done closes.
+type finishedRelease struct {
+	mu     sync.Mutex
+	latest process.CleanupState
+	done   chan struct{}
+}
+
+func startFinishedRelease(child process.Process) *finishedRelease {
+	release := &finishedRelease{done: make(chan struct{})}
+	go func() {
+		result := child.Wait()
+		// git was never signalled: finalization only ends ownership and
+		// releases the root.
+		finalizeErr := process.Finalize(context.Background(), child)
+		_ = lockscope.WithMutexLock(&release.mu, func() error {
+			release.latest.RootResult = result
+			release.latest.RootResult.ReleaseErr = errors.Join(result.ReleaseErr, finalizeErr)
+			release.latest.RootReaped = finalizeErr == nil
+			release.latest.ReadersDone = true
+			release.latest.Complete = true
+			return nil
+		})
+		close(release.done)
+	}()
+	return release
+}
+
+func (r *finishedRelease) state() (state process.CleanupState) {
+	_ = lockscope.WithMutexLock(&r.mu, func() error {
+		state = r.latest
+		return nil
+	})
+	return state
 }
 
 // pipe writes stdin and drains stdout and stderr; the returned channel closes
@@ -235,16 +192,6 @@ func pipe(child process.Process, stdinLines []string, stdout io.Writer) <-chan s
 	return done
 }
 
-// closed reports, without blocking, whether channel is closed.
-func closed(channel <-chan struct{}) bool {
-	select {
-	case <-channel:
-		return true
-	default:
-		return false
-	}
-}
-
 // allClosed closes once both channels closed.
 func allClosed(first, second <-chan struct{}) <-chan struct{} {
 	done := make(chan struct{})
@@ -265,28 +212,18 @@ type GitCleanup struct {
 	cause error
 }
 
-// reapState is the state of a finished process's reap: the owner's, complete
-// once the root was reaped (nothing else is outstanding).
-func reapState(owner *process.CleanupOwner) func() process.CleanupState {
-	return func() process.CleanupState {
-		state := owner.Latest()
-		state.Complete = state.RootReaped
-		return state
-	}
-}
-
 func (e *GitCleanup) Error() string   { return ErrGitCleanup.Error() }
 func (e *GitCleanup) Unwrap() []error { return []error{ErrGitCleanup, e.cause} }
 
-// Done closes when the outstanding work finished: the reap of a finished
+// Done closes when the outstanding work finished: the release of a finished
 // process, or the owner's single cleanup attempt after cancellation.
 func (e *GitCleanup) Done() <-chan struct{} { return e.done }
 
-// State is the latest state of the outstanding work. After cancellation of a
-// running process it is the owner's (tree kill, pipe closes, reap). For a
-// root found exited it also carries each pipe close result (StdoutClosure,
-// StderrClosure, PipeCloseErr, PipesClosed). Complete is set before Done
-// closes.
+// State is the latest state of the outstanding work. After cancellation it
+// is the owner's (tree kill, pipe closes, drain, finalization). For a process
+// that finished on its own it is the release: RootResult (with the release
+// error) and RootReaped once finalization ended; no termination is requested.
+// Complete is set before Done closes.
 func (e *GitCleanup) State() process.CleanupState { return e.state() }
 
 // boundedBuffer keeps at most limit bytes and records whether more arrived;

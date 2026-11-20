@@ -143,6 +143,9 @@ type fakeLauncher struct {
 	result processruntime.Result
 	delay  time.Duration
 	last   *fakeProcess
+	// finalizeErr and finalizeBlock script the started process's release.
+	finalizeErr   error
+	finalizeBlock chan struct{}
 }
 
 func (f *fakeLauncher) Start(spec processruntime.Spec) (processruntime.Process, error) {
@@ -152,7 +155,7 @@ func (f *fakeLauncher) Start(spec processruntime.Spec) (processruntime.Process, 
 	if delay == 0 {
 		delay = 50 * time.Millisecond
 	}
-	f.last = &fakeProcess{stdout: io.NopCloser(strings.NewReader(f.output)), stderr: io.NopCloser(strings.NewReader("")), result: f.result, delay: delay}
+	f.last = &fakeProcess{stdout: io.NopCloser(strings.NewReader(f.output)), stderr: io.NopCloser(strings.NewReader("")), result: f.result, delay: delay, finalizeErr: f.finalizeErr, finalizeBlock: f.finalizeBlock}
 	return f.last, nil
 }
 
@@ -161,6 +164,9 @@ type fakeProcess struct {
 	result         processruntime.Result
 	delay          time.Duration
 	kills          atomic.Int32
+	finalizes      atomic.Int32
+	finalizeErr    error
+	finalizeBlock  chan struct{}
 }
 
 func (*fakeProcess) PID() int                { return 1 }
@@ -171,8 +177,23 @@ func (p *fakeProcess) Wait() processruntime.Result {
 	time.Sleep(p.delay)
 	return p.result
 }
-func (*fakeProcess) Interrupt() error        { return nil }
-func (p *fakeProcess) KillTree() error       { p.kills.Add(1); return nil }
+func (*fakeProcess) Interrupt() error  { return nil }
+func (p *fakeProcess) KillTree() error { p.kills.Add(1); return nil }
+
+// Finalize implements processruntime.Finalizer; the scripted run has exited
+// once Wait returned. finalizeBlock holds the release pending until ctx ends;
+// finalizeErr is a failed release.
+func (p *fakeProcess) Finalize(ctx context.Context) error {
+	p.finalizes.Add(1)
+	if p.finalizeBlock != nil {
+		select {
+		case <-p.finalizeBlock:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return p.finalizeErr
+}
 func (*fakeProcess) TreeKillSupported() bool { return true }
 
 type nopWriteCloser struct{ io.Writer }
@@ -340,6 +361,11 @@ func TestOversizedJSONLMarksSessionLost(t *testing.T) {
 	snapshot, _ := opened.Session.ObserveState(context.Background(), provider.ObserveStateRequest{Session: opened.Session.Ref()})
 	if snapshot.SessionState != provider.SessionLost {
 		t.Fatalf("oversized JSONL did not lose session: %s", snapshot.SessionState)
+	}
+	// The kill registers finalization; readRun's bounded wait on the same
+	// (idempotent) release follows.
+	if kills, calls := launcher.last.kills.Load(), launcher.last.finalizes.Load(); kills == 0 || calls == 0 {
+		t.Fatalf("failed run: kills = %d, Finalize calls = %d, want finalization after the kill", kills, calls)
 	}
 }
 

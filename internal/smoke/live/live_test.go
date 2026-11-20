@@ -176,11 +176,8 @@ func (l *trackedLauncher) cleanup() bool {
 	l.mu.Unlock()
 	good := true
 	for _, p := range processes {
-		select {
-		case <-p.done:
-			continue
-		default:
-		}
+		// KillTree is refused (os.ErrProcessDone) once the adapter finalized
+		// the process; the release is checked independently of Wait.
 		err := p.KillTree()
 		if err != nil && !errors.Is(err, os.ErrProcessDone) {
 			good = false
@@ -191,15 +188,41 @@ func (l *trackedLauncher) cleanup() bool {
 		case <-time.After(3 * time.Second):
 			good = false
 		}
+		if processruntime.FinalizeWithin(p, 3*time.Second) != nil {
+			good = false
+		}
 	}
-	return good
+	return good && processruntime.UnfinalizedProcesses() == 0
 }
 
+// trackedProcess decorates a launched process. A decorator must forward
+// the optional lifecycle interfaces, or adapters lose them: Finalize (else
+// the root is never released) and RootExitObserver (else root exit is seen
+// only after the pipes end). The assertions below keep that compiled in.
 type trackedProcess struct {
 	processruntime.Process
 	once   sync.Once
 	done   chan struct{}
 	result processruntime.Result
+}
+
+var (
+	_ processruntime.Finalizer        = (*trackedProcess)(nil)
+	_ processruntime.RootExitObserver = (*trackedProcess)(nil)
+)
+
+func (p *trackedProcess) Finalize(ctx context.Context) error {
+	return processruntime.Finalize(ctx, p.Process)
+}
+
+func (p *trackedProcess) RootExited() <-chan struct{} {
+	exited, _ := processruntime.ObserveRootExit(p.Process)
+	return exited
+}
+
+func (p *trackedProcess) RootResult() processruntime.Result {
+	_, result := processruntime.ObserveRootExit(p.Process)
+	return result()
 }
 
 func (p *trackedProcess) Wait() processruntime.Result {

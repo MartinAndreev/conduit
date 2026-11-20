@@ -25,6 +25,7 @@ func TestOwnedProcessGroupKillsAndReapsDescendant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	ownProcess(t, proc)
 	if !proc.TreeKillSupported() {
 		t.Fatal("Unix process does not report process-group termination support")
 	}
@@ -93,6 +94,7 @@ func TestReplaceEnvRemovesInheritedVariables(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Start: %v", err)
 		}
+		ownProcess(t, proc)
 		_ = proc.Stdin().Close()
 		go io.Copy(io.Discard, proc.Stderr())
 		output, err := io.ReadAll(proc.Stdout())
@@ -130,6 +132,7 @@ func TestRootExitIsObservedWhileDescendantHoldsPipes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	ownProcess(t, proc)
 	go io.Copy(io.Discard, proc.Stderr())
 	reader := bufio.NewReader(proc.Stdout())
 	line, err := reader.ReadString('\n')

@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/MartinAndreev/conduit/internal/harnesses/opencode/rules"
 	processruntime "github.com/MartinAndreev/conduit/internal/process"
 	"github.com/MartinAndreev/conduit/internal/sessions/provider"
 )
@@ -338,7 +340,9 @@ func (c *cliControl) run(ctx context.Context, server ServerEndpoint, dir string,
 	drained := make(chan struct{})
 	go func() { wg.Wait(); close(drained) }()
 	// One cleanup owner per command; it is used only when the caller stops
-	// waiting, and then stays observable if the cleanup does not finish.
+	// waiting (its kill is then the last signal and it finalizes), and then
+	// stays observable if the cleanup does not finish. A finished command
+	// sends no signal and is finalized directly below.
 	owner := processruntime.NewCleanupOwnerWithDrain(proc, drained)
 	done := make(chan processruntime.Result, 1)
 	go func() { result := proc.Wait(); <-drained; done <- result }()
@@ -346,14 +350,28 @@ func (c *cliControl) run(ctx context.Context, server ServerEndpoint, dir string,
 	case <-ctx.Done():
 		return commandOutput{}, true, errors.Join(ctx.Err(), c.abandon(owner))
 	case result := <-done:
+		// A finished command is released within the caller's context and the
+		// cleanup budget; past that the process keeps ownership of the
+		// release, and the unconfirmed release fails the command.
+		finalizeCtx, cancel := context.WithTimeout(ctx, controlCleanupBudget)
+		defer cancel()
+		// Wait's own release error (for example a Windows Job Object close)
+		// fails the release as a failed finalization does.
+		if err := errors.Join(result.ReleaseErr, processruntime.Finalize(finalizeCtx, proc)); err != nil {
+			// The release keeps going (or failed); the session keeps observing
+			// it so Close accounts for it.
+			return commandOutput{}, true, &releasePendingError{release: startFinishedRelease(proc, result), cause: fmt.Errorf("%w: %w", errControlCleanup, err)}
+		}
 		return commandOutput{stdout: stdout.Bytes(), succeeded: result.Err == nil && result.ExitCode == 0}, true, nil
 	}
 }
 
 // abandon terminates a command the caller stopped waiting for and waits for
 // its cleanup within the stop grace. An unfinished cleanup is returned as a
-// *CleanupPendingError whose Owner keeps it observable; a finished one
-// returns only a refused termination.
+// *CleanupPendingError whose Owner keeps it observable. A finished one
+// returns a refused termination and, when rules.DecideRelease does not
+// confirm the release (failed reap, failed pipe close), errControlCleanup
+// with those errors in a releasePendingError the session keeps.
 func (c *cliControl) abandon(owner *processruntime.CleanupOwner) error {
 	owner.BeginCleanup()
 	grace := c.stopGrace
@@ -366,7 +384,14 @@ func (c *cliControl) abandon(owner *processruntime.CleanupOwner) error {
 	if err != nil {
 		return &CleanupPendingError{Owner: owner, Cause: errors.New("cancelled OpenCode control command was not confirmed stopped")}
 	}
-	return state.TreeTerminationErr
+	if rules.DecideRelease(cleanupReleaseFacts(state)).Confirmed() {
+		return state.TreeTerminationErr
+	}
+	unconfirmed := &releasePendingError{
+		release: ownerRelease{owner: owner},
+		cause:   errors.Join(errControlCleanup, state.RootResult.ReleaseErr, state.PipeCloseErr, state.StdinCloseErr),
+	}
+	return errors.Join(state.TreeTerminationErr, unconfirmed)
 }
 
 // clientSpec is one client command of the session's own server: the
@@ -376,6 +401,14 @@ func clientSpec(executable string, server ServerEndpoint, dir, subcommand string
 	full := append(append([]string{subcommand}, server.clientArgs()...), args...)
 	return processruntime.Spec{Path: executable, Args: full, Dir: dir, Env: server.clientEnv()}
 }
+
+// controlCleanupBudget bounds the release of a finished control command.
+const controlCleanupBudget = 2 * time.Second
+
+// errControlCleanup reports a control command whose release (root reap and,
+// after cancellation, pipe close) was not confirmed within its bound or
+// failed.
+var errControlCleanup = errors.New("OpenCode control command release was not confirmed")
 
 type limitedBuffer struct{ bytes.Buffer }
 

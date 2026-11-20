@@ -51,8 +51,48 @@ storage, result acceptance, CLI wiring, or live model calls.
 ## Shared owned-process boundary
 
 - `internal/process` starts a fresh owned process group on Unix. `KillTree` sends
-  the signal to that group and `Wait` reaps the root only after both output pipes
-  have reached EOF or were closed.
+  the signal to that group. `Wait` returns once the root exited and both output
+  pipes reached EOF or were closed; it does **not** reap the root.
+- Finalization boundary (2026-11-15): on Linux and Darwin the exited root stays
+  an unreaped zombie, so its PID and process-group number cannot be reused and
+  `KillTree` keeps reaching the group (also after `Wait`), until the owner
+  declares with `process.Finalize` / `RequestFinalize` that it sends no more
+  signals. Each owner registers finalization right after its last signal,
+  independently of `Wait` and the pipes: Close and failed-open cleanup after
+  their kill; the claude/codex loss path after its loss kill; the ACP
+  transport stop after its kill; the OpenCode failed run after its kill (unless
+  Close already claimed the client), a clean run when its observation ends,
+  and a control command after its kill or completion. Once the root exited,
+  finalization refuses every later `Interrupt`/`KillTree`
+  (`process.ErrSignalsFinalized`, which wraps `os.ErrProcessDone`, no
+  syscall) and reaps the root as soon as it is authoritatively waitable
+  (Linux `waitid(WNOHANG|WNOWAIT)`, Darwin sysctl zombie state); the
+  per-process worker keeps that responsibility after a caller's bounded wait.
+  Once the root exited, every finalization ends in one terminal outcome
+  returned to all callers: released, a failed reap, or
+  `ErrReleaseUnavailable` (waitability cannot be established: Linux without
+  `waitid`, or a Darwin state query that fails permanently or keeps failing
+  transiently; the root stays unreaped). Only a negative answer while the
+  exit is still completing is retried; until the root exits, finalization
+  stays in progress. The
+  last two keep signals refused and are reported, never treated as released.
+  A refusal by finalization is not termination evidence
+  (`process.KillConfirmed`): Close keeps the outcome of the earlier kill that
+  ended signalling. `ResourcesReleased`-style results require confirmed
+  termination, the reap and the pipes' end. Decorators of a `Process` must
+  forward `Finalizer` (and `RootExitObserver`).
+- Fallback Unix (aix, dragonfly, freebsd, netbsd, openbsd, solaris;
+  `process.RootRetentionSupported() == false`) reaps the root at exit and
+  refuses group signals from then on. A harness session's `KillTree` after
+  its root exited is refused (`ErrSignalsFinalized`), so a close or loss
+  after a root exit reports unconfirmed termination (`ExecutionUnknown`,
+  resources not released) and descendants are no longer reachable. Startup
+  probes are not run there at all (see the startup contract). Windows
+  signals only through handles and keeps the guarantee.
+- Exit errors: `RootResult` and `Wait` report an unsuccessful exit observed
+  before the reap with an internal error whose text matches
+  `*exec.ExitError` ("exit status 3", "signal: killed"); it is no longer an
+  `*exec.ExitError`, so callers must not type-assert it.
 - On Windows each owned child starts suspended, is assigned to a kill-on-close
   Job Object, and only then resumes, so `KillTree` terminates the whole job and
   `TreeKillSupported` is true. If job assignment fails, `Start` fails instead of
@@ -155,12 +195,46 @@ storage, result acceptance, CLI wiring, or live model calls.
   is bounded by `MaxEventLineBytes` (default 8 MiB), separately from the
   per-field `MaxTextBytes` text bound, so a large tool output is truncated per
   field; only a line above the line bound loses the session.
-- Close with an active turn: `explicit_detach` closes only the handle and leaves
-  the run client running; `interrupt_then_close` terminates this session's own
-  `opencode run` process group and reports `ResourcesReleased` only when its root
-  is reaped within `StopGrace` (default 2 s); `require_quiescent` is refused.
-  Execution state stays `unknown` in every case because native server work is
-  not observed.
+- Close (`rules.DecideClose`): every accepted close closes the handle and stops
+  the session's own `opencode serve`, where its tools execute. Without an
+  active turn only the server is stopped. With an active turn
+  `interrupt_then_close` and `explicit_detach` both terminate this session's
+  own `opencode run` process group and then the server: the server belongs to
+  the session, so detach cannot leave the work running; any other policy
+  (`require_quiescent`) is refused. Close's kill of the run client is sent
+  once; a repeated Close awaits the same release without a new kill. The
+  execution state is `none` only when `rules.DecideServerStop` confirms the
+  server stop (group kill confirmed, root reaped, tree kill supported),
+  otherwise `unknown`. `ResourcesReleased` additionally requires the run
+  client's confirmed kill and reap within `StopGrace` (default 2 s), `Wait`'s
+  release without error, and every tracked release confirmed (below).
+- OpenCode release accounting (2026-11-18): the session's own server is
+  stopped through its `process.CleanupOwner`, which registers finalization
+  right after the group kill; the stop is confirmed only when that owner
+  completed with the root reaped and the kill confirmed. The session also
+  tracks every client release it stopped waiting for: a run client or
+  finished control command whose `Finalize` failed or did not end within its
+  bound or whose `Wait` reported a release error (observed by a background
+  `Finalize` until its terminal outcome), a run client killed after its stdin
+  close failed (finalization registered right after that kill), and
+  a cancelled control command's cleanup owner (pending, or completed without a
+  confirmed reap or pipe close; its release and pipe errors are returned with
+  the cancellation). Close waits for them within `StopGrace` and reports
+  `ResourcesReleased` only when `rules.DecideRelease` confirms every tracked
+  release; a pending or failed one keeps it false, also for a later Close.
+- Known OpenCode release limits (2026-11-20, accepted by Martin for the PR #19
+  merge; follow-up: one per-client termination and release owner shared by
+  `readRun`, Close, `watchServer` and the failed-run kill):
+  - A run client that `readRun` finalizes just before Close claims it makes
+    Close's kill fail with `ErrSignalsFinalized`; that Close and every later
+    one report `ResourcesReleased=false` although the release succeeded.
+  - Each repeated Close starts its own `Wait`; while an escaped descendant
+    holds a pipe, those goroutines stay blocked.
+  - `watchServer` kills the run client on server loss without registering
+    finalization; a client whose root exited 0 while a descendant holds a
+    pipe stays unreaped until Close.
+  - The server stop does not include its `Wait` release error or pipe-close
+    errors, so Close can report `ResourcesReleased=true` despite them.
 - The shared OpenCode service is not owned by the adapter and is never killed by
   close. With no proven final phase or native schema field, the adapter withholds
   `ResultCandidate` in this slice.

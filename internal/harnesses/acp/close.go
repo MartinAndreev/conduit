@@ -3,12 +3,12 @@ package acp
 import (
 	"context"
 	"errors"
-	"os"
 	"time"
 
 	"github.com/MartinAndreev/conduit/internal/harnesses/acp/rules"
 	"github.com/MartinAndreev/conduit/internal/harnesses/internal/adaptererror"
 	"github.com/MartinAndreev/conduit/internal/lockscope"
+	processruntime "github.com/MartinAndreev/conduit/internal/process"
 	"github.com/MartinAndreev/conduit/internal/sessions/provider"
 )
 
@@ -90,17 +90,23 @@ func (s *session) shutdown(native string, cancelUnresolved bool) {
 	killAttempted := termination.Kind == rules.OwnedProcessKillRequired
 	var killErr error
 	if killAttempted {
-		killErr = s.process.KillTree()
+		killErr = s.closeKillOutcome(s.process.KillTree())
 	}
 	if !reaped {
 		reaped = s.waitExit(grace)
 	}
 	s.waitTransportStopped(grace)
+	// Close is the last signaller (the transport stop kills before it ends):
+	// Finalize runs unconditionally (it owns the eventual release even when
+	// this bounded wait ends first), and only it, not Wait, establishes the
+	// reap.
+	released := processruntime.FinalizeWithin(s.process, grace) == nil
+	reaped = reaped && released
 
 	treeKill := s.process.TreeKillSupported()
 	quiescence := rules.DecideQuiescence(rules.QuiescenceFacts{
 		RootReaped: reaped, TreeKillSupported: treeKill, KillAttempted: killAttempted,
-		KillConfirmed: killErr == nil || errors.Is(killErr, os.ErrProcessDone),
+		KillConfirmed: processruntime.KillConfirmed(killErr),
 	})
 	s.completeClose(quiescence)
 }
@@ -175,4 +181,20 @@ func (s *session) completeClose(quiescence rules.QuiescenceDecision) {
 	s.emit(provider.SessionStateEvent{Previous: previous, Current: provider.SessionClosed})
 	s.broker.Finish(nil)
 	close(s.closeDone)
+}
+
+// closeKillOutcome is the termination evidence of Close's kill. When
+// finalization refused it (the transport stop ended signalling first), that
+// stop's kill outcome stands; a refusal without one confirms nothing.
+func (s *session) closeKillOutcome(killErr error) error {
+	if !errors.Is(killErr, processruntime.ErrSignalsFinalized) {
+		return killErr
+	}
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		if s.stopKilled {
+			killErr = s.stopKillOutcome
+		}
+		return nil
+	})
+	return killErr
 }

@@ -120,6 +120,7 @@ func (l *fakeLauncher) Start(spec processruntime.Spec) (processruntime.Process, 
 		stdin: clientInput, stdout: clientOutput, stderr: io.NopCloser(eofReader{}),
 		serverInput: serverInput, serverOutput: serverOutput, done: make(chan struct{}),
 		killed: make(chan struct{}), rootExited: make(chan struct{}), killErr: l.killErr,
+		released: make(chan struct{}),
 	}
 	_ = lockscope.WithMutexLock(&l.mu, func() error {
 		l.specs = append(l.specs, spec)
@@ -231,6 +232,12 @@ type fakeProcess struct {
 	killOnce     sync.Once
 	kills        atomic.Int32
 	waits        atomic.Int32
+	// finalizes counts Finalize calls. Like production, the first call owns
+	// the release: released closes once the root exited, also after every
+	// caller stopped waiting.
+	finalizes    atomic.Int32
+	finalizeOnce sync.Once
+	released     chan struct{}
 }
 
 func (*fakeProcess) PID() int                { return 4242 }
@@ -242,6 +249,12 @@ func (*fakeProcess) TreeKillSupported() bool { return true }
 
 func (p *fakeProcess) KillTree() error {
 	p.kills.Add(1)
+	// Like production, finalization refuses every later signal.
+	select {
+	case <-p.released:
+		return processruntime.ErrSignalsFinalized
+	default:
+	}
 	if p.killErr != nil {
 		return p.killErr
 	}
@@ -256,6 +269,25 @@ func (p *fakeProcess) KillTree() error {
 		_ = p.serverOutput.Close()
 	})
 	return nil
+}
+
+// Finalize implements processruntime.Finalizer like production: the first
+// call registers the release, which completes once the root exited; callers
+// wait for it bounded by ctx. It never kills.
+func (p *fakeProcess) Finalize(ctx context.Context) error {
+	p.finalizes.Add(1)
+	p.finalizeOnce.Do(func() {
+		go func() {
+			<-p.rootExited
+			close(p.released)
+		}()
+	})
+	select {
+	case <-p.released:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (p *fakeProcess) Wait() processruntime.Result {

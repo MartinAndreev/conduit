@@ -48,8 +48,10 @@ type WorkspaceSnapshots struct {
 	launcher process.Launcher
 	// maxBytes overrides memory.MaxSnapshotFileBytes in tests.
 	maxBytes int64
-	files    fileSystem
-	cache    *snapshotCache
+	// cleanupBudget is gitCleanupBudget; tests shorten it.
+	cleanupBudget time.Duration
+	files         fileSystem
+	cache         *snapshotCache
 	// now is the clock of the racy rule and the cache's TTL; tests set it.
 	now func() time.Time
 }
@@ -67,11 +69,12 @@ func NewWorkspaceSnapshots(launcher process.Launcher) *WorkspaceSnapshots {
 		launcher = process.ExecLauncher{}
 	}
 	return &WorkspaceSnapshots{
-		launcher: launcher,
-		maxBytes: memory.MaxSnapshotFileBytes,
-		files:    fileSystem{lstat: os.Lstat, evalSymlinks: filepath.EvalSymlinks},
-		cache:    newSnapshotCache(snapshotCacheEntries, snapshotCacheTTL),
-		now:      time.Now,
+		launcher:      launcher,
+		maxBytes:      memory.MaxSnapshotFileBytes,
+		cleanupBudget: gitCleanupBudget,
+		files:         fileSystem{lstat: os.Lstat, evalSymlinks: filepath.EvalSymlinks},
+		cache:         newSnapshotCache(snapshotCacheEntries, snapshotCacheTTL),
+		now:           time.Now,
 	}
 }
 

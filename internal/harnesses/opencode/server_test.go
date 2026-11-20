@@ -693,7 +693,12 @@ func TestPasswordEnvWinsOverInherited(t *testing.T) {
 		_ = proc.Stdin().Close()
 		go io.Copy(io.Discard, proc.Stderr())
 		out, _ := io.ReadAll(proc.Stdout())
-		if result := proc.Wait(); result.ExitCode != 0 {
+		result := proc.Wait()
+		// The helper is never signalled; finalization releases its root.
+		if err := processruntime.FinalizeWithin(proc, 5*time.Second); err != nil {
+			t.Fatalf("helper release: %v", err)
+		}
+		if result.ExitCode != 0 {
 			t.Fatalf("helper exit = %d", result.ExitCode)
 		}
 		return strings.TrimSpace(string(out))

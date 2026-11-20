@@ -129,6 +129,20 @@ type heldPipeProcess struct {
 	rootDone  chan struct{}
 	pipesDone chan struct{}
 	kills     atomic.Int32
+	finalizes atomic.Int32
+}
+
+// Finalize implements processruntime.Finalizer like production: every call
+// registers the release (counted here) and waits for the root's exit,
+// bounded by ctx; it never kills.
+func (p *heldPipeProcess) Finalize(ctx context.Context) error {
+	p.finalizes.Add(1)
+	select {
+	case <-p.rootDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func newHeldPipeProcess() *heldPipeProcess {
@@ -169,6 +183,9 @@ func TestRootExitWithHeldPipesKillsGroupAndCompletesWait(t *testing.T) {
 	<-done
 	if kills := proc.kills.Load(); kills != 1 {
 		t.Fatalf("KillTree calls = %d, want 1", kills)
+	}
+	if calls := proc.finalizes.Load(); calls != 1 {
+		t.Fatalf("loss path finalized %d times, want once after the kill", calls)
 	}
 	if lost := lossEvents(t, s); len(lost) != 1 || lost[0].NativeStatus != "app_server_process_exit" {
 		t.Fatalf("loss publications = %#v", lost)
@@ -237,5 +254,141 @@ func TestRootExitPublishesBufferedFinalEventsBeforeLoss(t *testing.T) {
 		if terminal < 0 || lost < terminal {
 			t.Fatalf("run %d: terminal at %d, loss at %d", run, terminal, lost)
 		}
+	}
+}
+
+// lateExitProcess ignores KillTree and exits only when the test says so. Its
+// Finalize models production: the first call owns the release, which
+// completes once the root exited.
+type lateExitProcess struct {
+	rpcTestProcess
+	rootDone     chan struct{}
+	finalizes    atomic.Int32
+	finalizeOnce sync.Once
+	released     chan struct{}
+}
+
+func (p *lateExitProcess) Wait() processruntime.Result { <-p.rootDone; return processruntime.Result{} }
+func (p *lateExitProcess) Finalize(ctx context.Context) error {
+	p.finalizes.Add(1)
+	p.finalizeOnce.Do(func() {
+		go func() {
+			<-p.rootDone
+			close(p.released)
+		}()
+	})
+	select {
+	case <-p.released:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Close whose bounded waits end before the root exited still hands the
+// release to Finalize: once the root exits later, it is released although
+// Close already returned.
+func TestTimedOutCloseStillReleasesRootAfterLateExit(t *testing.T) {
+	s := normalizationSession(t)
+	s.config.CloseGrace = 20 * time.Millisecond
+	proc := &lateExitProcess{rpcTestProcess: rpcTestProcess{stdin: &recordingWriteCloser{}, stdout: io.NopCloser(&emptyReader{}), stderr: io.NopCloser(&emptyReader{})}, rootDone: make(chan struct{}), released: make(chan struct{})}
+	s.process = proc
+	s.terminateOwnedProcess()
+	if s.closeResult.ResourcesReleased {
+		t.Fatalf("timed-out close = %#v; want resources unconfirmed", s.closeResult)
+	}
+	if proc.finalizes.Load() == 0 {
+		t.Fatal("timed-out Close did not finalize")
+	}
+	select {
+	case <-proc.released:
+		t.Fatal("root released before it exited")
+	default:
+	}
+	close(proc.rootDone)
+	select {
+	case <-proc.released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("root that exited after Close was never released")
+	}
+}
+
+// escapedPipeProcess keeps its pipes after the group kill (a descendant
+// outside the group holds them), so Wait stays blocked.
+type escapedPipeProcess struct{ *heldPipeProcess }
+
+func (p escapedPipeProcess) KillTree() error { p.kills.Add(1); return nil }
+
+// The loss path registers finalization right after its kill, independently
+// of Wait, which stays blocked here.
+func TestLossFinalizesWithoutWaitingForPipes(t *testing.T) {
+	s := normalizationSession(t)
+	held := newHeldPipeProcess()
+	proc := escapedPipeProcess{held}
+	withRoutedReader(s, proc)
+	go s.observeProcessExit()
+	deadline := time.Now().Add(2 * time.Second)
+	for held.finalizes.Load() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("loss path did not register finalization while Wait is blocked")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if held.kills.Load() == 0 {
+		t.Fatal("finalization registered before the loss kill")
+	}
+	select {
+	case <-s.exitDone:
+		t.Fatal("Wait returned although the pipes are held")
+	default:
+	}
+	close(held.pipesDone)
+}
+
+// deniedKillProcess: the OS refuses the group kill; once finalization was
+// registered and the root exited, KillTree is refused by the finalization
+// gate, like production.
+type deniedKillProcess struct {
+	*heldPipeProcess
+	registered atomic.Bool
+}
+
+func (p *deniedKillProcess) KillTree() error {
+	p.kills.Add(1)
+	if p.registered.Load() {
+		return processruntime.ErrSignalsFinalized
+	}
+	return errors.New("kill denied")
+}
+
+func (p *deniedKillProcess) Finalize(ctx context.Context) error {
+	p.registered.Store(true)
+	return p.heldPipeProcess.Finalize(ctx)
+}
+
+// The loss kill fails, then finalization refuses Close's kill. That refusal
+// is no termination evidence, so Close reports neither quiescence nor
+// released resources.
+func TestFailedLossKillIsNotConfirmedByFinalization(t *testing.T) {
+	s := normalizationSession(t)
+	s.config.CloseGrace = 50 * time.Millisecond
+	proc := &deniedKillProcess{heldPipeProcess: newHeldPipeProcess()}
+	withRoutedReader(s, proc)
+	go s.observeProcessExit()
+	deadline := time.Now().Add(2 * time.Second)
+	for !proc.registered.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("loss path did not register finalization")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(proc.pipesDone)
+	<-s.exitDone
+	s.terminateOwnedProcess()
+	if s.closeResult.ResourcesReleased || s.closeResult.ExecutionState != provider.ExecutionUnknown {
+		t.Fatalf("close = %#v; want unconfirmed termination", s.closeResult)
+	}
+	if !s.lossKilled || s.lossKillErr == nil {
+		t.Fatalf("loss kill outcome not recorded: killed %v, err %v", s.lossKilled, s.lossKillErr)
 	}
 }

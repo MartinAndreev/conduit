@@ -87,12 +87,22 @@ func TestCancellationKillsAndReapsGit(t *testing.T) {
 	}
 }
 
-// killCounting wraps a real process, counting tree kills and keeping the
-// root-exit observer.
+// killCounting wraps a real process, counting tree kills and forwarding the
+// root-exit observer and finalization (a decorator that dropped Finalize
+// would leave the root unreleased).
 type killCounting struct {
 	process.Process
 	observer process.RootExitObserver
 	kills    *atomic.Int32
+}
+
+var (
+	_ process.Finalizer        = killCounting{}
+	_ process.RootExitObserver = killCounting{}
+)
+
+func (p killCounting) Finalize(ctx context.Context) error {
+	return process.Finalize(ctx, p.Process)
 }
 
 func (p killCounting) KillTree() error {
@@ -117,8 +127,9 @@ func (l *killCountingLauncher) Start(spec process.Spec) (process.Process, error)
 }
 
 // Git exits while a filter's background child still holds git's stderr; the
-// cancelled call does not signal the exited root, closes the parent's pipe
-// ends, and returns promptly with the drain and reap finished.
+// cancelled call kills the group of the exited (still unreaped) root, which
+// reaches that child, closes the parent's pipe ends, and returns promptly
+// with the drain and the root's release finished.
 func TestCancellationAfterExitWithDescendantHoldingOutput(t *testing.T) {
 	requireGit(t)
 	dir := newRepo(t)
@@ -158,14 +169,27 @@ func TestCancellationAfterExitWithDescendantHoldingOutput(t *testing.T) {
 	if elapsed := time.Since(started); elapsed > 5*time.Second {
 		t.Fatalf("returned after %v", elapsed)
 	}
-	if kills := launcher.kills.Load(); kills != 0 {
+	if kills := launcher.kills.Load(); kills != 1 {
 		t.Fatalf("KillTree called %d times", kills)
 	}
-	if _, err := os.Stat(pidFile); err != nil {
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
 		t.Fatalf("filter never started its background child: %v", err)
 	}
-	// Wait needs the root reaped and both pipes ended: it returns at once
-	// only if the drain finished while the sleeper still holds stderr.
+	sleeperPID, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		if err := syscall.Kill(sleeperPID, 0); errors.Is(err, syscall.ESRCH) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the group kill did not reach the background child")
+		}
+	}
+	// Wait needs the root's exit and both pipes ended: it returns at once
+	// only if the drain finished.
 	waited := make(chan process.Result, 1)
 	go func() { waited <- (<-child).Wait() }()
 	select {

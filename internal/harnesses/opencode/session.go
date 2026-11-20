@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"github.com/MartinAndreev/conduit/internal/harnesses/opencode/rules"
 	"io"
-	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -39,6 +38,17 @@ type session struct {
 	assignment   provider.AssignmentRef
 	turn         provider.Optional[provider.TurnRef]
 	process      processruntime.Process
+	// closeOwned is the run client Close claimed to terminate; its finalization
+	// then belongs to Close, after its kill.
+	closeOwned processruntime.Process
+	// runKilled is the run client whose failed observation sent its group
+	// kill, with runKillErr its outcome; Close uses it when finalization
+	// refuses its own kill.
+	runKilled  processruntime.Process
+	runKillErr error
+	// closeKilled is Close's kill of the run client it claimed; a repeated
+	// Close reuses its outcome instead of a kill finalization would refuse.
+	closeKilled  *closeKillRecord
 	state        provider.SessionState
 	closed       bool
 	steerPending bool
@@ -59,11 +69,13 @@ type session struct {
 	// steerReconcileApplied is a test seam called after an unresolved-steer
 	// reconciliation was applied; it is nil in production.
 	steerReconcileApplied func(rules.SteerReconcileKind)
-	// controlCleanups are the cleanup owners of control commands the session
-	// stopped waiting for before their cleanup finished. Close waits for
-	// them within its bound and reports resources released only when they
-	// completed.
-	controlCleanups []*processruntime.CleanupOwner
+	// releases are the releases of owned client processes the session
+	// stopped waiting for before they were confirmed: control commands whose
+	// cleanup was pending or whose release was unconfirmed, and run clients
+	// whose finalization was not confirmed. Close waits for them within its
+	// bound and reports resources released only when rules.DecideRelease
+	// confirms every one; unconfirmed ones stay tracked.
+	releases []processRelease
 	// controlOps counts control operations in flight; controlIdle, when
 	// set, closes once it reaches zero.
 	controlOps  int
@@ -202,6 +214,9 @@ func (s *session) StartTurn(ctx context.Context, request provider.StartTurnReque
 // handleStartStdinCloseFailure preserves the launched prompt's uncertainty and
 // cleans up only its owned CLI. Cleanup is bounded; ownership remains recorded
 // until the background reaper observes actual exit, even after cleanup failure.
+// The kill is the last signal: finalization is registered right after it,
+// independently of Wait. The client's release is tracked before the client
+// is forgotten, so Close accounts for it until it is confirmed.
 func (s *session) handleStartStdinCloseFailure(request provider.StartTurnRequest, proc processruntime.Process, cause error) error {
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
 		s.deliveryUnknown = true
@@ -215,9 +230,12 @@ func (s *session) handleStartStdinCloseFailure(request provider.StartTurnRequest
 	go func() { defer drains.Done(); _, _ = io.Copy(io.Discard, proc.Stdout()) }()
 	go func() { defer drains.Done(); _, _ = io.Copy(io.Discard, proc.Stderr()) }()
 	killErr := proc.KillTree()
+	processruntime.RequestFinalize(proc)
+	release := startClientRelease(proc)
+	s.trackRelease(release)
 	done := make(chan processruntime.Result, 1)
 	go func() {
-		result := proc.Wait()
+		<-release.Done()
 		drains.Wait()
 		_ = lockscope.WithMutexLock(&s.mu, func() error {
 			if s.process == proc {
@@ -225,7 +243,7 @@ func (s *session) handleStartStdinCloseFailure(request provider.StartTurnRequest
 			}
 			return nil
 		})
-		done <- result
+		done <- release.result
 	}()
 	if killErr != nil {
 		cause = errors.Join(cause, fmt.Errorf("terminate owned OpenCode CLI: %w", killErr), proc.Stdout().Close(), proc.Stderr().Close())
@@ -274,6 +292,7 @@ func (s *session) Close(ctx context.Context, request provider.CloseSessionReques
 		}
 		if decision.StopsClient() {
 			client = s.process
+			s.closeOwned = client
 		}
 		server = s.server
 		s.closed, s.state = true, provider.SessionClosed
@@ -290,7 +309,7 @@ func (s *session) Close(ctx context.Context, request provider.CloseSessionReques
 	result := provider.CloseSessionResult{HandleClosed: true, ExecutionState: provider.ExecutionUnknown}
 	if server != nil && server.stop(ctx).Confirmed() {
 		result.ExecutionState = provider.ExecutionNone
-		result.ResourcesReleased = clientReleased && s.awaitControlCleanups(ctx)
+		result.ResourcesReleased = clientReleased && s.awaitReleases(ctx)
 	}
 	return result, nil
 }
@@ -299,14 +318,14 @@ func (s *session) Close(ctx context.Context, request provider.CloseSessionReques
 // reconciliation queries) are registered in controlOps under the state
 // mutex, in the same critical section that decides they may start; the
 // session refuses new ones once closed (Steer and the reconcile triggers
-// check closed). endControlOp unregisters one and keeps the cleanup owner of
-// a command whose cleanup was still pending when its caller stopped waiting.
+// check closed). endControlOp unregisters one and keeps the release its
+// error carries: a command whose cleanup was still pending when its caller
+// stopped waiting, or whose release was not confirmed.
 func (s *session) endControlOp(err error) {
-	var pending *CleanupPendingError
-	retain := errors.As(err, &pending) && pending.Owner != nil
+	release, retain := trackedRelease(err)
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
 		if retain {
-			s.controlCleanups = append(s.controlCleanups, pending.Owner)
+			s.releases = append(s.releases, release)
 		}
 		s.controlOps--
 		if s.controlOps == 0 && s.controlIdle != nil {
@@ -317,13 +336,21 @@ func (s *session) endControlOp(err error) {
 	})
 }
 
-// awaitControlCleanups waits, bounded by ctx and StopGrace, for in-flight
-// control operations to end and for every retained cleanup owner to
-// complete, including owners an operation added while Close waited. It
-// reports true only when no operation is in flight and every owner
-// completed; completed owners are dropped, pending ones stay retained so a
-// later Close can report them released.
-func (s *session) awaitControlCleanups(ctx context.Context) bool {
+// trackRelease keeps an unconfirmed client release for Close's accounting.
+func (s *session) trackRelease(release processRelease) {
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		s.releases = append(s.releases, release)
+		return nil
+	})
+}
+
+// awaitReleases waits, bounded by ctx and StopGrace, for in-flight control
+// operations to end and for every tracked release to finish, including
+// releases added while Close waited. It reports true only when no operation
+// is in flight and rules.DecideRelease confirms every tracked release;
+// confirmed ones are dropped, the others stay tracked so a later Close
+// accounts for them again.
+func (s *session) awaitReleases(ctx context.Context) bool {
 	waitCtx, cancel := context.WithTimeout(ctx, s.config.StopGrace)
 	defer cancel()
 	var idle chan struct{}
@@ -342,25 +369,28 @@ func (s *session) awaitControlCleanups(ctx context.Context) bool {
 		case <-waitCtx.Done():
 		}
 	}
-	var owners []*processruntime.CleanupOwner
+	var tracked []processRelease
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
-		owners = append(owners, s.controlCleanups...)
+		tracked = append(tracked, s.releases...)
 		return nil
 	})
-	for _, owner := range owners {
-		_, _ = owner.Await(waitCtx)
+	confirmed := make(map[processRelease]bool, len(tracked))
+	for _, release := range tracked {
+		select {
+		case <-release.Done():
+		case <-waitCtx.Done():
+		}
+		confirmed[release] = rules.DecideRelease(release.releaseFacts()).Confirmed()
 	}
 	released := false
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
-		kept := s.controlCleanups[:0]
-		for _, owner := range s.controlCleanups {
-			select {
-			case <-owner.Done():
-			default:
-				kept = append(kept, owner)
+		kept := s.releases[:0]
+		for _, release := range s.releases {
+			if !confirmed[release] {
+				kept = append(kept, release)
 			}
 		}
-		s.controlCleanups = kept
+		s.releases = kept
 		released = s.controlOps == 0 && len(kept) == 0
 		return nil
 	})
@@ -371,19 +401,26 @@ func (s *session) awaitControlCleanups(ctx context.Context) bool {
 // group and reports whether its root was reaped within the bound. The client
 // executes no tool; the server's stop decides native execution.
 func (s *session) stopOwnedClient(ctx context.Context, proc processruntime.Process) bool {
-	killErr := proc.KillTree()
-	if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+	killErr := s.closeKill(proc)
+	// Release needs the reap (Finalize) and the pipes' end with Wait's own
+	// release (Result.ReleaseErr), each bounded by the same grace. A repeated
+	// Close awaits the same release again.
+	waited := make(chan processruntime.Result, 1)
+	go func() { waited <- proc.Wait() }()
+	if !processruntime.KillConfirmed(killErr) {
 		return false
 	}
-	reaped := make(chan struct{})
-	go func() { _ = proc.Wait(); close(reaped) }()
-	timer := time.NewTimer(s.config.StopGrace)
-	defer timer.Stop()
-	select {
-	case <-reaped:
-	case <-timer.C:
+	finalizeCtx, cancel := context.WithTimeout(ctx, s.config.StopGrace)
+	defer cancel()
+	if processruntime.Finalize(finalizeCtx, proc) != nil {
 		return false
-	case <-ctx.Done():
+	}
+	select {
+	case result := <-waited:
+		if result.ReleaseErr != nil {
+			return false
+		}
+	case <-finalizeCtx.Done():
 		return false
 	}
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
@@ -400,7 +437,7 @@ func (s *session) readRun(proc processruntime.Process, turn provider.TurnRef) {
 	// killRun terminates this run client's own process group at most once
 	// after its observation failed: a descendant may hold stdout open, and a
 	// root that exited on its own does not prove its descendants are gone.
-	killRun := sync.OnceFunc(func() { _ = proc.KillTree() })
+	killRun := sync.OnceFunc(func() { s.killRunClient(proc) })
 	watchDone := make(chan struct{})
 	go func() {
 		defer close(watchDone)
@@ -424,6 +461,38 @@ func (s *session) readRun(proc processruntime.Process, turn provider.TurnRef) {
 	failed := scanErr != nil || result.Err != nil || result.ExitCode != 0
 	if failed {
 		killRun()
+	}
+	// The run's observation sent its last signal and finalizes, unless Close
+	// already claimed this client's termination: Close then finalizes after
+	// its own kill. The claim is read under the same lock Close takes it in;
+	// a Close that comes later finds a finalized client and gets
+	// os.ErrProcessDone from its kill. The session state is changed only by
+	// the final transition below, together with its event.
+	closeOwns := false
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		closeOwns = s.closeOwned == proc
+		return nil
+	})
+	// The release is bounded by StopGrace so the run's final events and
+	// steer reconciliation still follow; past that the process keeps
+	// ownership, and an unconfirmed or failed release is reported.
+	var releaseErr error
+	if !closeOwns {
+		releaseCtx, cancel := context.WithTimeout(context.Background(), s.config.StopGrace)
+		releaseErr = processruntime.Finalize(releaseCtx, proc)
+		cancel()
+	}
+	if !closeOwns {
+		// Wait's own release error fails the release as a failed
+		// finalization does.
+		releaseErr = errors.Join(result.ReleaseErr, releaseErr)
+	}
+	if releaseErr != nil {
+		// The turn ends below and forgets the client; its release stays
+		// tracked so Close does not report resources released before it is
+		// confirmed.
+		s.trackRelease(startFinishedRelease(proc, result))
+		s.emit(provider.ProtocolWarningEvent{Code: "opencode_run_release", Detail: boundedtext.String("OpenCode run client release was not confirmed; its root process may remain unreaped", s.config.MaxTextBytes)})
 	}
 	if scanErr != nil {
 		s.emit(provider.ProtocolWarningEvent{Code: "opencode_jsonl_read", Detail: boundedtext.String("OpenCode JSONL exceeded the configured bound or could not be read", s.config.MaxTextBytes)})
@@ -488,6 +557,75 @@ func (s *session) watchServer(server *ownedServer) {
 	if client != nil {
 		_ = client.KillTree()
 	}
+}
+
+// killRunClient sends a failed run's single group kill and records its
+// outcome for Close. The kill is the run's last signal: unless Close already
+// claimed the client's termination (Close then finalizes after its own
+// kill), finalization is registered at once, independently of Wait, which a
+// descendant outside the group can block.
+func (s *session) killRunClient(proc processruntime.Process) {
+	err := proc.KillTree()
+	claimed := false
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		s.runKilled = proc
+		s.runKillErr = err
+		claimed = s.closeOwned == proc
+		return nil
+	})
+	if !claimed {
+		processruntime.RequestFinalize(proc)
+	}
+}
+
+// closeKillRecord is Close's single group kill of one run client; err, its
+// termination evidence, is read after done closed.
+type closeKillRecord struct {
+	proc processruntime.Process
+	done chan struct{}
+	err  error
+}
+
+// closeKill sends Close's group kill of proc once and registers
+// finalization right after it, also when the kill failed, independently of
+// Wait, which a descendant outside the group can block. A repeated Close of
+// the same client sends nothing (finalization would refuse it) and reuses
+// that kill's outcome.
+func (s *session) closeKill(proc processruntime.Process) error {
+	var record *closeKillRecord
+	first := false
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		if s.closeKilled == nil || s.closeKilled.proc != proc {
+			s.closeKilled = &closeKillRecord{proc: proc, done: make(chan struct{})}
+			first = true
+		}
+		record = s.closeKilled
+		return nil
+	})
+	if first {
+		record.err = s.closeKillOutcome(proc, proc.KillTree())
+		processruntime.RequestFinalize(proc)
+		close(record.done)
+	}
+	<-record.done
+	return record.err
+}
+
+// closeKillOutcome is the termination evidence of Close's kill. When
+// finalization refused it (the run's failed observation ended signalling
+// first), that kill's own outcome stands; a refusal without one confirms
+// nothing.
+func (s *session) closeKillOutcome(proc processruntime.Process, killErr error) error {
+	if !errors.Is(killErr, processruntime.ErrSignalsFinalized) {
+		return killErr
+	}
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		if s.runKilled == proc {
+			killErr = s.runKillErr
+		}
+		return nil
+	})
+	return killErr
 }
 
 // watchRunRootExit waits for the run client's root to exit, independently of

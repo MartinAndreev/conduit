@@ -63,8 +63,12 @@ type session struct {
 	closeDone      chan struct{}
 	exitResult     processruntime.Result
 	stopKillErr    error
-	exitDone       chan struct{}
-	exitOnce       sync.Once
+	// stopKilled and stopKillOutcome record the transport stop's raw kill
+	// result, which Close uses when finalization refuses its own kill.
+	stopKilled      bool
+	stopKillOutcome error
+	exitDone        chan struct{}
+	exitOnce        sync.Once
 
 	// turnMu serializes turn lifecycle publication (activation, interrupt
 	// mark, terminal) so each check and its events stay in order. It is
@@ -321,7 +325,8 @@ func (s *session) observeProcessExit() {
 	}
 }
 
-// awaitResourceRelease records full reaping of the owned process.
+// awaitResourceRelease records the end of the owned process (root exit and
+// both pipes).
 func (s *session) awaitResourceRelease() {
 	result := s.process.Wait()
 	s.exitOnce.Do(func() {
@@ -371,17 +376,29 @@ func (s *session) handleTransportClosed(cause error) {
 // pipe ends are closed regardless: closing stdin fails a blocked write, and
 // closing stdout ends the reader. A kill failure is kept for the loss cause.
 func (s *session) terminateOnTransportStop(error) {
-	killErr := s.process.KillTree()
+	outcome := s.process.KillTree()
+	killErr := outcome
 	if errors.Is(killErr, os.ErrProcessDone) {
 		killErr = nil
 	}
 	if killErr != nil {
 		killErr = fmt.Errorf("terminate owned ACP agent: %w", killErr)
 	}
+	closing := false
 	_ = lockscope.WithMutexLock(&s.mu, func() error {
 		s.stopKillErr = killErr
+		s.stopKilled = true
+		s.stopKillOutcome = outcome
+		closing = s.closing
 		return nil
 	})
+	// Outside a close or failed open this kill is the owner's last signal:
+	// finalization is registered now, independently of Wait, which a
+	// descendant outside the group can block. Close or a failed open
+	// finalizes what it shuts down.
+	if !closing {
+		processruntime.RequestFinalize(s.process)
+	}
 	_ = s.rpc.closeInput()
 	_ = s.process.Stdout().Close()
 	s.at(hookTransportStopping)
@@ -397,7 +414,16 @@ func (s *session) abortOpen(ctx context.Context, cause error) error {
 		s.closing = true
 		return nil
 	})
-	owner := processruntime.NewCleanupOwnerWithDrain(s.process, s.rpc.finished)
+	// A loss path that already killed and ended signalling hands its kill
+	// outcome to the owner, whose own kill finalization then refuses.
+	var options []processruntime.CleanupOption
+	_ = lockscope.WithMutexLock(&s.mu, func() error {
+		if s.stopKilled {
+			options = append(options, processruntime.WithPriorKill(s.stopKillOutcome))
+		}
+		return nil
+	})
+	owner := processruntime.NewCleanupOwnerWithDrain(s.process, s.rpc.finished, options...)
 	owner.BeginCleanup()
 	waitCtx, cancel := context.WithTimeout(ctx, s.config.StopGrace)
 	defer cancel()
