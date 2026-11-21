@@ -182,7 +182,8 @@ func TestUnknownUpdatesAndNotificationsWarnOncePerKind(t *testing.T) {
 	h := openHarness(t, promptAgent(func(conn *agentConn, frame clientFrame) {
 		for range 2 {
 			conn.update(testSessionID, map[string]any{"sessionUpdate": "plan", "entries": []any{}})
-			conn.update(testSessionID, map[string]any{"sessionUpdate": "current_mode_update", "currentModeId": "ask"})
+			conn.update(testSessionID, map[string]any{"sessionUpdate": "future_update", "detail": "extra"})
+			conn.update(testSessionID, map[string]any{"sessionUpdate": "current_mode_update", "currentModeId": "auto"})
 			conn.update(testSessionID, map[string]any{"sessionUpdate": "user_message_chunk", "content": map[string]any{"type": "text", "text": "echo"}})
 			conn.update(testSessionID, map[string]any{"sessionUpdate": "config_option_update", "configOptions": []any{}})
 			conn.notify("_vendor/progress", map[string]any{})
@@ -198,7 +199,7 @@ func TestUnknownUpdatesAndNotificationsWarnOncePerKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	unknown := warnings(events, "unknown_session_update")
-	if len(unknown) != 2 || unknown[0].OffendingNativeKind != "plan" || unknown[1].OffendingNativeKind != "current_mode_update" {
+	if len(unknown) != 2 || unknown[0].OffendingNativeKind != "plan" || unknown[1].OffendingNativeKind != "future_update" {
 		t.Fatalf("unknown updates = %+v", unknown)
 	}
 	if len(warnings(events, "unknown_notification")) != 1 || len(warnings(events, "uncorrelated_session_update")) != 1 {

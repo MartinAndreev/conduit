@@ -17,7 +17,7 @@ Protocol (ACP), JSON-RPC 2.0 с по един JSON обект на ред. За�
 | fx | `fx acp` | собствен (`fx status --json` за проверка) | `_meta.fx.steering:true`; `loadSession`, `session/resume`, `session/close` |
 | Grok Build | `grok agent stdio` | собствен xAI login | много `_x.ai/*` разширения: queue, background задачи, monitor, subagents, `prompt_complete` |
 | Cursor | `agent acp` (по-стари версии: `cursor-agent`) | `cursor_login` auth method или предварителен login | блокиращи `cursor/ask_question` и `cursor/create_plan`; според външни източници няма `session/list`, `resume` или `set_model` |
-| Antigravity | `agy-acp-server` (отделен binary) | изолиран login на ACP сървъра | само binary, инсталиран от потребителя; най-малко evidence |
+| Antigravity | `agy acp` (вграден в `agy` CLI) | споделен CLI login (`agy` / `agy acp --login`) | `thought_level` вместо `effort`, `mode=auto`, `current_mode_update`; live запис на `agy 1.5.13` (виж `013-antigravity-harness`) |
 
 ## Предложен ownership
 
@@ -71,7 +71,7 @@ Protocol (ACP), JSON-RPC 2.0 с по един JSON обект на ред. За�
   | `tool_call` / `tool_call_update` | tool, command или file activity според `kind` (`execute`, `edit`, `read`…) и `status` (`pending`, `in_progress`, `completed`, `failed`) |
   | `usage_update` | usage |
   | `user_message_chunk` | ехо, без събитие |
-  | `available_commands_update`, `session_info_update`, `config_option_update` | игнорирани administrative наблюдения |
+  | `available_commands_update`, `session_info_update`, `config_option_update`, `current_mode_update` | игнорирани administrative наблюдения |
   | неизвестен | warning веднъж за вид |
 
 - **ResultCandidate.** ACP няма native schema поле. Кандидат не се създава
@@ -91,12 +91,12 @@ fixtures се пишат наново и санитизирани по тези 
 дословно. За Cursor и Antigravity няма записи. Нито един от четирите binary-та
 не е инсталиран на машината за разработка.
 
-## Ред на работа (предложение)
+## Ред на работа (актуализиран на 2026-11-21)
 
-1. Общ ACP клиент + fx дескриптор. fx е най-чистото съвпадение и има fixtures.
-2. Grok дескриптор, с разширенията за queue/steer след това.
-3. Cursor дескриптор, след live запис на `agent acp`.
-4. Antigravity, след инсталиране и запис.
+1. Общ ACP клиент + fx дескриптор (реализиран).
+2. Antigravity дескриптор (`agy acp`), изтеглен преди Grok и Cursor след live запис на `agy 1.5.13` (реализиран, виж `specs/013-antigravity-harness/spec.md`).
+3. Grok дескриптор, с разширенията за queue/steer след това.
+4. Cursor дескриптор, след live запис на `agent acp`.
 
 Оценка: ACP клиентът е 1–2 седмици, fx 2–3 дни, Grok 3–5 дни, Cursor и
 Antigravity около седмица всеки. Всеки харнес изисква live запис, преди да се

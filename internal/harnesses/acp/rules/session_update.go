@@ -36,7 +36,7 @@ func DecideSessionUpdate(f SessionUpdateFacts) SessionUpdateDecision {
 		return SessionUpdateDecision{Kind: SessionUpdateUsage, Reason: "session usage observation"}
 	case "user_message_chunk":
 		return SessionUpdateDecision{Kind: SessionUpdateEcho, Reason: "echo of client input; no event"}
-	case "available_commands_update", "session_info_update", "config_option_update":
+	case "available_commands_update", "session_info_update", "config_option_update", "current_mode_update":
 		return SessionUpdateDecision{Kind: SessionUpdateAdministrative, Reason: "administrative observation is ignored"}
 	default:
 		return SessionUpdateDecision{Kind: SessionUpdateUnknown, Reason: "session update kind is not mapped"}

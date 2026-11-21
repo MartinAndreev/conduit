@@ -36,6 +36,8 @@ func TestProbeHelper(t *testing.T) {
 		fmt.Print("2.1.316 (Claude Code)\n")
 	case "fx":
 		fmt.Print("fx 1.4.0\n")
+	case "antigravity":
+		fmt.Print("1.5.13\n")
 	case "unknown":
 		fmt.Print("unsafe secret output")
 	case "failed":
@@ -71,7 +73,7 @@ func TestProbeOutcomesBoundedCapture(t *testing.T) {
 		h       configuration.HarnessID
 		kind    configuration.DiscoveryKind
 		version string
-	}{{"codex", configuration.Codex, configuration.Found, "0.159.3"}, {"opencode", configuration.OpenCode, configuration.Found, "1.2.3"}, {"claude", configuration.Claude, configuration.Found, "2.1.316"}, {"fx", configuration.FX, configuration.Found, "1.4.0"}, {"unknown", configuration.Codex, configuration.Found, ""}, {"unknown", configuration.FX, configuration.Found, ""}, {"failed", configuration.FX, configuration.ProbeFailed, ""}, {"failed", configuration.Codex, configuration.ProbeFailed, ""}, {"overflow", configuration.Codex, configuration.ProbeFailed, ""}, {"sleep", configuration.Codex, configuration.ProbeTimeout, ""}} {
+	}{{"codex", configuration.Codex, configuration.Found, "0.159.3"}, {"opencode", configuration.OpenCode, configuration.Found, "1.2.3"}, {"claude", configuration.Claude, configuration.Found, "2.1.316"}, {"fx", configuration.FX, configuration.Found, "1.4.0"}, {"antigravity", configuration.Antigravity, configuration.Found, "1.5.13"}, {"unknown", configuration.Codex, configuration.Found, ""}, {"unknown", configuration.FX, configuration.Found, ""}, {"unknown", configuration.Antigravity, configuration.Found, ""}, {"failed", configuration.FX, configuration.ProbeFailed, ""}, {"failed", configuration.Antigravity, configuration.ProbeFailed, ""}, {"failed", configuration.Codex, configuration.ProbeFailed, ""}, {"overflow", configuration.Codex, configuration.ProbeFailed, ""}, {"sleep", configuration.Codex, configuration.ProbeTimeout, ""}} {
 		t.Run(tc.mode+"/"+string(tc.h), func(t *testing.T) {
 			launcher := &helperLauncher{mode: tc.mode}
 			detector := Detector{Launcher: launcher, LookPath: func(string) (string, error) { return os.Executable() }, Timeout: 2 * time.Second}

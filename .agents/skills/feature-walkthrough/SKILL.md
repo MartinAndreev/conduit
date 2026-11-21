@@ -25,6 +25,6 @@ Use the language of the current conversation unless the user explicitly requests
 - Highlight hotspots: code requiring careful human review, its invariants, consequences of changing it, and applicable audit findings. Clearly distinguish critical code with no known defect from known problems. Prioritize risk and decision value, not volume.
 - State what was verified, by whom or from which evidence, what remains untested, known limitations, and decisions still required. Explain important design tradeoffs only when supported by code or recorded decisions; label inferred rationale.
 
-Use plain language and small examples where they help. Do not load the personal mentoring skill automatically, turn this into a full language tutorial, or expose secrets/raw credential-bearing logs in examples.
+Use plain language and small examples where they help. Do not load the `mentoring` skill automatically, turn this into a full language tutorial, or expose secrets/raw credential-bearing logs in examples.
 
 Before handoff, verify links, diagram syntax/labels, and correspondence between the diagram and code. A walkthrough is not proof that an audit passed. If asked to save it, use the agreed feature-document destination; otherwise present it in the task. Do not invent a permanent documentation location.

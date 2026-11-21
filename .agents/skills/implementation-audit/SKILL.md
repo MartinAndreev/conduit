@@ -11,7 +11,7 @@ Provide an evidence-based advisory review before the human review, with the most
 
 Run the review in a fresh agent that did not implement the feature. The orchestrator supplies a bounded assignment without inherited conversation history (use `fork_turns: "none"` when supported): this skill, repository path, approved feature documents, exact implementation scope, revision/diff or identified uncommitted files, and permitted validation. Do not initially supply the implementer's conclusions, earlier audit verdicts, or a preferred answer. After the independent pass, compare relevant implementation notes if available and distinguish newly learned evidence.
 
-If already assigned as that fresh reviewer, perform the audit; do not recursively delegate another audit. If a fresh context is unavailable, disclose the limitation and ask how to proceed instead of claiming independence. The Sol delegation agreement remains applicable; this skill does not authorize paid/live harness experiments or outside communication.
+If already assigned as that fresh reviewer, perform the audit; do not recursively delegate another audit. If a fresh context is unavailable, disclose the limitation and ask how to proceed instead of claiming independence. This skill does not authorize implementation changes, paid/live harness experiments, or outside communication.
 
 ## Load only relevant evidence
 

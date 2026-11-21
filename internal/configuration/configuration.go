@@ -15,15 +15,16 @@ import (
 type HarnessID string
 
 const (
-	Codex    HarnessID = "codex"
-	OpenCode HarnessID = "opencode"
-	Claude   HarnessID = "claude"
-	FX       HarnessID = "fx"
+	Codex       HarnessID = "codex"
+	OpenCode    HarnessID = "opencode"
+	Claude      HarnessID = "claude"
+	FX          HarnessID = "fx"
+	Antigravity HarnessID = "antigravity"
 )
 
 // Supported lists harnesses with implemented adapters. Consumers derive counts
 // from it; new IDs are added here only when their adapter is ready.
-func Supported() []HarnessID { return []HarnessID{Codex, OpenCode, Claude, FX} }
+func Supported() []HarnessID { return []HarnessID{Codex, OpenCode, Claude, FX, Antigravity} }
 
 // SchemaV1 and CurrentSchema are the schema versions this build understands.
 // Only v1 is accepted as a migration source; any version above CurrentSchema is

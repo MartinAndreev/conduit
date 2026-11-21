@@ -1,0 +1,171 @@
+{
+  "initialize": {
+    "protocolVersion": 1,
+    "agentCapabilities": {
+      "loadSession": true,
+      "load_session": true,
+      "promptCapabilities": {
+        "image": true,
+        "audio": false,
+        "embeddedContext": true
+      },
+      "sessionCapabilities": {
+        "resume": {},
+        "close": {},
+        "load": {},
+        "list": {},
+        "additionalDirectories": {}
+      },
+      "auth": {
+        "logout": {}
+      },
+      "_meta": {
+        "antigravity": {
+          "tier": true,
+          "systemPrompt": {
+            "append": true
+          }
+        }
+      }
+    },
+    "agentInfo": {
+      "name": "Antigravity ACP Server",
+      "version": "1.5.13"
+    },
+    "authMethods": [
+      {
+        "id": "oauth-personal",
+        "name": "Log in with Google",
+        "description": "Log in with your Google account"
+      },
+      {
+        "id": "oauth-business",
+        "name": "Log in with Gemini Enterprise",
+        "description": "Log in with your Gemini Enterprise account"
+      }
+    ]
+  },
+  "session/new": {
+    "sessionId": "agy-session-01",
+    "models": {
+      "availableModels": [
+        {"modelId": "gemini-4-neon-high", "name": "Gemini 4 Neon (High)"},
+        {"modelId": "gemini-4-neon-xhigh", "name": "Gemini 4 Neon (XHigh)"},
+        {"modelId": "gemini-3.8-flash-high", "name": "Gemini 3.8 Flash (High)"},
+        {"modelId": "gemini-3.8-flash-low", "name": "Gemini 3.8 Flash (Low)"}
+      ],
+      "currentModelId": "gemini-4-neon-high"
+    },
+    "modes": {
+      "currentModeId": "default",
+      "availableModes": [
+        {"id": "default", "name": "Default"},
+        {"id": "accept-edits", "name": "Accept edits"},
+        {"id": "auto", "name": "Auto"},
+        {"id": "plan", "name": "Plan"}
+      ]
+    },
+    "configOptions": [
+      {
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "type": "select",
+        "currentValue": "gemini-4-neon",
+        "options": [
+          {"value": "gemini-4-neon", "name": "Gemini 4 Neon"},
+          {"value": "gemini-3.8-flash", "name": "Gemini 3.8 Flash"}
+        ]
+      },
+      {
+        "id": "thought_level",
+        "name": "Thinking Level",
+        "category": "thought_level",
+        "type": "select",
+        "currentValue": "high",
+        "options": [
+          {"value": "low", "name": "Low"},
+          {"value": "medium", "name": "Medium"},
+          {"value": "high", "name": "High"},
+          {"value": "xhigh", "name": "Extra"}
+        ]
+      },
+      {
+        "id": "mode",
+        "name": "Mode",
+        "category": "mode",
+        "type": "select",
+        "currentValue": "default",
+        "options": [
+          {"value": "default", "name": "Default"},
+          {"value": "accept-edits", "name": "Accept edits"},
+          {"value": "auto", "name": "Auto"},
+          {"value": "plan", "name": "Plan"}
+        ]
+      }
+    ]
+  },
+  "session/prompt:updates": [
+    {"sessionUpdate": "current_mode_update", "currentModeId": "auto"},
+    {"sessionUpdate": "available_commands_update", "availableCommands": [{"name": "plan", "description": "Plan before executing."}]},
+    {"sessionUpdate": "session_info_update", "title": "Fixture Turn"},
+    {"sessionUpdate": "usage_update", "used": 9993, "size": 1048576},
+    {"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "checking fixture steps"}},
+    {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "call-edit-1",
+      "name": "write_file",
+      "status": "in_progress",
+      "kind": "edit",
+      "title": "File hello.txt",
+      "locations": [{"path": "/workspace/hello.txt"}],
+      "rawInput": {"Content": "ok", "Overwrite": true, "Path": "/workspace/hello.txt"}
+    },
+    {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "call-edit-1",
+      "name": "write_file",
+      "status": "completed",
+      "kind": "edit",
+      "title": "File hello.txt",
+      "locations": [{"path": "/workspace/hello.txt"}],
+      "rawInput": {"Content": "ok", "Overwrite": true, "Path": "/workspace/hello.txt"},
+      "rawOutput": {},
+      "content": [{"type": "diff", "path": "/workspace/hello.txt", "newText": "ok"}]
+    },
+    {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "call-cmd-1",
+      "name": "run_command",
+      "status": "in_progress",
+      "kind": "execute",
+      "title": "echo hi",
+      "rawInput": {"CommandLine": "echo hi", "WaitMsBeforeAsync": 5000, "toolSummary": "Echo hi"}
+    },
+    {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "call-cmd-1",
+      "name": "run_command",
+      "status": "completed",
+      "kind": "execute",
+      "title": "echo hi",
+      "rawInput": {"CommandLine": "echo hi", "WaitMsBeforeAsync": 5000, "toolSummary": "Echo hi"},
+      "rawOutput": {"output": "hi\n", "exit_code": 0},
+      "content": [{"type": "content", "content": {"type": "text", "text": "hi\n"}}]
+    },
+    {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "done"}},
+    {"sessionUpdate": "usage_update", "used": 10254, "size": 1048576}
+  ],
+  "session/prompt": {
+    "stopReason": "end_turn",
+    "usage": {
+      "inputTokens": 12202,
+      "outputTokens": 113,
+      "cachedReadTokens": 7833,
+      "cachedWriteTokens": 0,
+      "thoughtTokens": 376,
+      "totalTokens": 20148
+    }
+  },
+  "session/close": {}
+}
