@@ -65,6 +65,7 @@ func TestDecideSessionUpdate(t *testing.T) {
 		"available_commands_update": SessionUpdateAdministrative,
 		"session_info_update":       SessionUpdateAdministrative,
 		"config_option_update":      SessionUpdateAdministrative,
+		"current_mode_update":       SessionUpdateAdministrative,
 		"plan":                      SessionUpdateUnknown,
 	}
 	for kind, want := range cases {

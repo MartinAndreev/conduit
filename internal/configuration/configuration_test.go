@@ -14,7 +14,7 @@ func fixture() string {
 	return "schema_version: 1\nharnesses:\n  codex: {}\n  opencode: {}\nassignments: {}\n"
 }
 func fixtureV2() string {
-	return "schema_version: 2\nharnesses:\n  codex: {}\n  opencode: {}\n  claude: {}\n  fx: {}\nassignments: {}\n"
+	return "schema_version: 2\nharnesses:\n  codex: {}\n  opencode: {}\n  claude: {}\n  fx: {}\n  antigravity: {}\nassignments: {}\n"
 }
 func TestStrictDecode(t *testing.T) {
 	cases := []string{
@@ -42,7 +42,13 @@ func TestStrictDecode(t *testing.T) {
 	}
 }
 func TestInitialRoundTripNoAssignments(t *testing.T) {
-	observations := map[HarnessID]Observation{Codex: {Kind: Found, Path: filepath.Join(t.TempDir(), "codex"), Version: "0.159.3"}, OpenCode: {Kind: Missing}, Claude: {Kind: Found, Path: filepath.Join(t.TempDir(), "claude"), Version: "2.1.316"}, FX: {Kind: Found, Path: filepath.Join(t.TempDir(), "fx")}}
+	observations := map[HarnessID]Observation{
+		Codex:       {Kind: Found, Path: filepath.Join(t.TempDir(), "codex"), Version: "0.159.3"},
+		OpenCode:    {Kind: Missing},
+		Claude:      {Kind: Found, Path: filepath.Join(t.TempDir(), "claude"), Version: "2.1.316"},
+		FX:          {Kind: Found, Path: filepath.Join(t.TempDir(), "fx")},
+		Antigravity: {Kind: Found, Path: filepath.Join(t.TempDir(), "agy"), Version: "1.5.13"},
+	}
 	data, err := Encode(Initial(observations))
 	if err != nil {
 		t.Fatal(err)
@@ -95,8 +101,8 @@ func TestFutureSchemaStillRejectsUnsafeStructure(t *testing.T) {
 }
 
 func TestSupportedHarnesses(t *testing.T) {
-	want := []HarnessID{Codex, OpenCode, Claude, FX}
-	if !slices.Equal(Supported(), want) || Claude != "claude" || FX != "fx" {
+	want := []HarnessID{Codex, OpenCode, Claude, FX, Antigravity}
+	if !slices.Equal(Supported(), want) || Claude != "claude" || FX != "fx" || Antigravity != "antigravity" {
 		t.Fatal(Supported())
 	}
 }
@@ -159,11 +165,12 @@ func TestMigrateV1UsesDiscoveryOnlyForMissingHarnesses(t *testing.T) {
 		t.Fatal(err)
 	}
 	discovered := map[HarnessID]Observation{
-		Codex:  {Kind: Found, Path: filepath.Join(t.TempDir(), "new-codex"), Version: "9.9.9"},
-		Claude: {Kind: Found, Path: filepath.Join(t.TempDir(), "claude"), Version: "2.1.316"},
-		FX:     {Kind: Missing},
+		Codex:       {Kind: Found, Path: filepath.Join(t.TempDir(), "new-codex"), Version: "9.9.9"},
+		Claude:      {Kind: Found, Path: filepath.Join(t.TempDir(), "claude"), Version: "2.1.316"},
+		FX:          {Kind: Missing},
+		Antigravity: {Kind: Found, Path: filepath.Join(t.TempDir(), "agy"), Version: "1.5.13"},
 	}
-	if got := MissingHarnesses(v1); !slices.Equal(got, []HarnessID{Claude, FX}) {
+	if got := MissingHarnesses(v1); !slices.Equal(got, []HarnessID{Claude, FX, Antigravity}) {
 		t.Fatal(got)
 	}
 	next, err := MigrateV1(v1, discovered)
@@ -176,7 +183,7 @@ func TestMigrateV1UsesDiscoveryOnlyForMissingHarnesses(t *testing.T) {
 	if !reflect.DeepEqual(next.Harnesses[Codex], v1.Harnesses[Codex]) || !reflect.DeepEqual(next.Harnesses[OpenCode], v1.Harnesses[OpenCode]) {
 		t.Fatal("existing entries changed", next.Harnesses)
 	}
-	if *next.Harnesses[Claude].InitialDiscovery != discovered[Claude] || *next.Harnesses[FX].InitialDiscovery != discovered[FX] {
+	if *next.Harnesses[Claude].InitialDiscovery != discovered[Claude] || *next.Harnesses[FX].InitialDiscovery != discovered[FX] || *next.Harnesses[Antigravity].InitialDiscovery != discovered[Antigravity] {
 		t.Fatal(next.Harnesses)
 	}
 	if _, err := Encode(next); err != nil {
@@ -249,7 +256,7 @@ func TestStorageRoundTripsAndIsAbsentAfterV1Migration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	migrated, err := MigrateV1(v1, map[HarnessID]Observation{Claude: {Kind: Missing}, FX: {Kind: Missing}})
+	migrated, err := MigrateV1(v1, map[HarnessID]Observation{Claude: {Kind: Missing}, FX: {Kind: Missing}, Antigravity: {Kind: Missing}})
 	if err != nil || migrated.Storage != nil || migrated.MultiprocessWAL() {
 		t.Fatalf("migrated = %#v, %v", migrated, err)
 	}

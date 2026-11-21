@@ -38,6 +38,13 @@ func TestParseVersion(t *testing.T) {
 		{"fx unrecorded format", configuration.FX, "fx version 1.4.0\n", ""},
 		{"fx incomplete", configuration.FX, "fx 1.4\n", ""},
 		{"fx empty", configuration.FX, "", ""},
+		{"antigravity live output", configuration.Antigravity, "1.5.13\n", "1.5.13"},
+		{"antigravity name prefix", configuration.Antigravity, "agy 1.5.13\n", "1.5.13"},
+		{"antigravity v prefix", configuration.Antigravity, "v1.5.13-rc.1\n", "1.5.13-rc.1"},
+		{"antigravity both prefixes", configuration.Antigravity, "agy v1.5.13\n", ""},
+		{"antigravity unrecorded format", configuration.Antigravity, "agy version 1.5.13\n", ""},
+		{"antigravity incomplete", configuration.Antigravity, "agy 1.5\n", ""},
+		{"antigravity empty", configuration.Antigravity, "", ""},
 		{"unsupported harness", configuration.HarnessID("unsupported"), "2.0.22", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

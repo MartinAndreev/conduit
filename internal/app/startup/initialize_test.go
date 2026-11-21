@@ -88,7 +88,7 @@ func TestFirstRunOrder(t *testing.T) {
 	if result.Snapshot.Status != Ready || !result.Published {
 		t.Fatal(result)
 	}
-	if !reflect.DeepEqual(*events, []string{"resolve", "read", "codex:", "opencode:", "claude:", "fx:", "publish", "read"}) {
+	if !reflect.DeepEqual(*events, []string{"resolve", "read", "codex:", "opencode:", "claude:", "fx:", "antigravity:", "publish", "read"}) {
 		t.Fatal(*events)
 	}
 	if len(r.proposed.Assignments) != 0 {
@@ -387,14 +387,14 @@ func TestV1MigrationRecordsOnlyMissingHarnesses(t *testing.T) {
 	}
 	// One discovery pass per supported harness, then the migration write and
 	// the final reread. No extra probes run for the migration.
-	if !reflect.DeepEqual(*events, []string{"resolve", "read", "codex:" + explicitCodex, "opencode:", "claude:", "fx:", "migrate", "read"}) {
+	if !reflect.DeepEqual(*events, []string{"resolve", "read", "codex:" + explicitCodex, "opencode:", "claude:", "fx:", "antigravity:", "migrate", "read"}) {
 		t.Fatal(*events)
 	}
 	original := v1Config()
 	if m.next.SchemaVersion != configuration.CurrentSchema || !reflect.DeepEqual(m.next.Harnesses[configuration.Codex], original.Harnesses[configuration.Codex]) || !reflect.DeepEqual(m.next.Harnesses[configuration.OpenCode], original.Harnesses[configuration.OpenCode]) {
 		t.Fatal("existing v1 entries changed", m.next)
 	}
-	for _, id := range []configuration.HarnessID{configuration.Claude, configuration.FX} {
+	for _, id := range []configuration.HarnessID{configuration.Claude, configuration.FX, configuration.Antigravity} {
 		o := m.next.Harnesses[id].InitialDiscovery
 		if o == nil || o.Kind != configuration.Found || o.Path != filepath.Join(testRoot, "tools", string(id)) {
 			t.Fatal(id, o)
@@ -525,15 +525,15 @@ func TestV1MigrationSourceChangedRereadsOnce(t *testing.T) {
 		events   []string
 	}{
 		"other instance migrated": {current, []MigrationKind{MigrationSourceChanged}, Ready, "", 1,
-			[]string{"resolve", "read", "codex:" + explicitCodex, "opencode:", "claude:", "fx:", "migrate", "read", "read"}},
+			[]string{"resolve", "read", "codex:" + explicitCodex, "opencode:", "claude:", "fx:", "antigravity:", "migrate", "read", "read"}},
 		"still v1 then replaced": {v1Read(), []MigrationKind{MigrationSourceChanged, MigrationReplaced}, Ready, "", 2,
-			[]string{"resolve", "read", "codex:" + explicitCodex, "opencode:", "claude:", "fx:", "migrate", "read", "migrate", "read"}},
+			[]string{"resolve", "read", "codex:" + explicitCodex, "opencode:", "claude:", "fx:", "antigravity:", "migrate", "read", "migrate", "read"}},
 		"changed twice": {v1Read(), []MigrationKind{MigrationSourceChanged}, Blocked, "configuration_migration_conflict", 2,
-			[]string{"resolve", "read", "codex:" + explicitCodex, "opencode:", "claude:", "fx:", "migrate", "read", "migrate"}},
+			[]string{"resolve", "read", "codex:" + explicitCodex, "opencode:", "claude:", "fx:", "antigravity:", "migrate", "read", "migrate"}},
 		"now invalid": {ReadResult{Kind: Invalid, Err: configuration.ErrInvalid}, []MigrationKind{MigrationSourceChanged}, Blocked, "configuration_invalid", 1,
-			[]string{"resolve", "read", "codex:" + explicitCodex, "opencode:", "claude:", "fx:", "migrate", "read"}},
+			[]string{"resolve", "read", "codex:" + explicitCodex, "opencode:", "claude:", "fx:", "antigravity:", "migrate", "read"}},
 		"now deleted": {ReadResult{Kind: Absent}, []MigrationKind{MigrationSourceChanged}, Ready, "", 1,
-			[]string{"resolve", "read", "codex:" + explicitCodex, "opencode:", "claude:", "fx:", "migrate", "read", "publish", "read"}},
+			[]string{"resolve", "read", "codex:" + explicitCodex, "opencode:", "claude:", "fx:", "antigravity:", "migrate", "read", "publish", "read"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r, d, events := setup(t)

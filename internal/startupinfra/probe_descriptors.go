@@ -43,11 +43,23 @@ var probeDescriptors = map[configuration.HarnessID]probeDescriptor{
 	// for a failed or over-limit process, decided by rules.DecideProbe before
 	// any parser runs.
 	configuration.FX: {"fx", []string{"--version"}, parseFXVersion},
+	// Recorded live output (2026-11-21): "1.5.13". Accept bare semver or one
+	// optional "agy " or "v" prefix; any other successful output yields ""
+	// (Found without version, never ProbeFailed).
+	configuration.Antigravity: {"agy", []string{"--version"}, parseAntigravityVersion},
 }
 
 func parseFXVersion(output string) string {
 	value := strings.TrimSpace(output)
 	if trimmed, ok := strings.CutPrefix(value, "fx "); ok {
+		return parseVersionValue(trimmed)
+	}
+	return parseVersionValue(strings.TrimPrefix(value, "v"))
+}
+
+func parseAntigravityVersion(output string) string {
+	value := strings.TrimSpace(output)
+	if trimmed, ok := strings.CutPrefix(value, "agy "); ok {
 		return parseVersionValue(trimmed)
 	}
 	return parseVersionValue(strings.TrimPrefix(value, "v"))
